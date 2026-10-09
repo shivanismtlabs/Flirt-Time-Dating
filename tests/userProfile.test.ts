@@ -41,8 +41,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   describe('1. Successful Profile Onboarding Flow', () => {
     it('should allow authenticated user to save profile and mark profile as complete', async () => {
       const payload = {
-        firstName: 'Mike',
-        lastName: 'Hussey',
+        fullName: 'Mike Hussey',
         nickName: 'Mikey',
         dateOfBirth: '1996-10-09',
         gender: 'male',
@@ -60,8 +59,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data).toBeDefined();
 
       expect(res.body.data.id).toBe(testUser.id);
-      expect(res.body.data.firstName).toBe('Mike');
-      expect(res.body.data.lastName).toBe('Hussey');
+      expect(res.body.data.fullName).toBe('Mike Hussey');
       expect(res.body.data.nickName).toBe('Mikey');
       expect(res.body.data.dateOfBirth).toBe('1996-10-09');
       expect(res.body.data.gender).toBe('male');
@@ -71,8 +69,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
 
       // Verify in DB
       const updatedDbUser = await User.findByPk(testUser.id);
-      expect(updatedDbUser?.firstName).toBe('Mike');
-      expect(updatedDbUser?.lastName).toBe('Hussey');
+      expect(updatedDbUser?.fullName).toBe('Mike Hussey');
       expect(updatedDbUser?.nickName).toBe('Mikey');
       expect(updatedDbUser?.dateOfBirth).toBe('1996-10-09');
       expect(updatedDbUser?.gender).toBe('male');
@@ -83,8 +80,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   describe('2. Authentication & Authorization Security Assertions', () => {
     it('should reject unauthenticated request with 401', async () => {
       const res = await request(app).patch('/api/v1/users/profile').send({
-        firstName: 'Mike',
-        lastName: 'Hussey',
+        fullName: 'Mike Hussey',
         nickName: 'Mikey',
         dateOfBirth: '1996-10-09',
         gender: 'male',
@@ -99,8 +95,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', 'Bearer invalid_jwt_token_12345')
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -125,8 +120,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .send({
           userId: secondUser.id,
           id: secondUser.id,
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -137,7 +131,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
 
       // Verify second user was NOT updated
       const secondDbUser = await User.findByPk(secondUser.id);
-      expect(secondDbUser?.firstName).toBeNull();
+      expect(secondDbUser?.fullName).toBeNull();
     });
 
     it('should handle token for non-existent user with 404', async () => {
@@ -151,8 +145,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${fakeToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -164,13 +157,12 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   describe('3. Request Field Validation Assertions', () => {
-    it('should reject missing required fields (firstName, lastName, nickName, dateOfBirth, gender)', async () => {
+    it('should reject missing required fields (fullName, nickName, dateOfBirth, gender)', async () => {
       const res = await request(app)
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          // lastName missing
+          // fullName missing
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -185,8 +177,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: '   ',
-          lastName: 'Hussey',
+          fullName: '   ',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -204,8 +195,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
           .patch('/api/v1/users/profile')
           .set('Authorization', `Bearer ${authToken}`)
           .send({
-            firstName: 'Mike',
-            lastName: 'Hussey',
+            fullName: 'Mike Hussey',
             nickName: 'Mikey',
             dateOfBirth: invalidDate,
             gender: 'male',
@@ -221,8 +211,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '2099-01-01',
           gender: 'male',
@@ -242,8 +231,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: underageDob,
           gender: 'male',
@@ -259,8 +247,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'alien',
@@ -277,8 +264,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -297,8 +283,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -310,8 +295,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1995-05-05',
           gender: 'male',
@@ -328,8 +312,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -341,8 +324,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'female',
@@ -359,8 +341,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Mike',
-          lastName: 'Hussey',
+          fullName: 'Mike Hussey',
           nickName: 'Mikey',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -372,8 +353,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          firstName: 'Michael',
-          lastName: 'Hussey',
+          fullName: 'Michael Hussey',
           nickName: 'Mikey10',
           dateOfBirth: '1996-10-09',
           gender: 'male',
@@ -381,7 +361,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         });
 
       expect(res.status).toBe(200);
-      expect(res.body.data.firstName).toBe('Michael');
+      expect(res.body.data.fullName).toBe('Michael Hussey');
       expect(res.body.data.nickName).toBe('Mikey10');
       expect(res.body.data.about).toBe('Updated about section');
     });
@@ -390,8 +370,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   describe('5. Idempotency & System Compatibility Assertions', () => {
     it('should handle repeated Continue button requests safely without creating duplicates', async () => {
       const payload = {
-        firstName: 'Mike',
-        lastName: 'Hussey',
+        fullName: 'Mike Hussey',
         nickName: 'Mikey',
         dateOfBirth: '1996-10-09',
         gender: 'male',

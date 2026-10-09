@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { register, login, getProfile } from '../controllers/auth.controller';
 import { appleAuth } from '../controllers/authApple.controller';
+import { firebaseAuth } from '../controllers/authFirebase.controller';
 import { requestPhoneOtp } from '../controllers/authPhoneRequest.controller';
 import { verifyPhoneOtp } from '../controllers/authPhoneVerify.controller';
 import { resendPhoneOtp } from '../controllers/authPhoneResend.controller';
@@ -12,6 +13,7 @@ import {
   registerSchema,
   loginSchema,
   appleAuthSchema,
+  firebaseAuthSchema,
   requestPhoneOtpSchema,
   requestEmailOtpSchema,
   verifyPhoneOtpSchema,
@@ -27,7 +29,10 @@ const router = Router();
 router.post('/register', validate(registerSchema), register);
 router.post('/login', validate(loginSchema), login);
 router.post('/apple', validate(appleAuthSchema), appleAuth);
+router.post('/firebase', validate(firebaseAuthSchema), firebaseAuth);
+router.post('/firebase-phone', validate(firebaseAuthSchema), firebaseAuth);
 router.get('/me', authenticate, getProfile);
+
 
 // Phone Auth Routes
 router.post('/phone/request-otp', validate(requestPhoneOtpSchema), requestPhoneOtp);

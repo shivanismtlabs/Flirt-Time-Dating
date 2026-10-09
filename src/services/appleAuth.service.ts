@@ -285,21 +285,25 @@ export const authenticateWithApple = async (input: AppleAuthInput) => {
           const randomSuffix = crypto.randomBytes(3).toString('hex');
           const username = `user_apple_${appleSub.slice(0, 6)}_${randomSuffix}`;
 
-          const firstName = input.user?.name?.firstName?.trim() || null;
-          const lastName = input.user?.name?.lastName?.trim() || null;
+          const nameParts = [input.user?.name?.firstName, input.user?.name?.lastName]
+            .filter(Boolean)
+            .map((s) => s?.trim());
+          const fullName = nameParts.length > 0 ? nameParts.join(' ') : null;
 
           user = await User.create(
             {
               username,
               email: appleEmail,
-              firstName,
-              lastName,
+              fullName,
+              firstName: input.user?.name?.firstName?.trim() || null,
+              lastName: input.user?.name?.lastName?.trim() || null,
               role: 'user',
               isActive: true,
               isProfileComplete: false,
             },
             { transaction }
           );
+
         }
 
         // Create linked UserIdentity

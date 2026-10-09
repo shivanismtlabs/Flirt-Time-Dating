@@ -18,8 +18,8 @@ if (process.env.NODE_ENV !== 'test') {
   app.use(morgan('dev'));
 }
 
-// Health check endpoint
-app.get('/health', async (_req, res) => {
+// Health check endpoint (supports /health, /api/health, and /api/v1/health for reverse proxy compatibility)
+app.get(['/health', '/api/health', '/api/v1/health'], async (_req, res) => {
   let dbStatus = 'disconnected';
   try {
     await sequelize.authenticate();

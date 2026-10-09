@@ -10,6 +10,7 @@ export interface UserAttributes {
   password?: string | null;
   role: 'user' | 'admin';
   isActive: boolean;
+  fullName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   nickName?: string | null;
@@ -17,6 +18,9 @@ export interface UserAttributes {
   gender?: string | null;
   about?: string | null;
   isProfileComplete?: boolean;
+  isFaceVerified?: boolean;
+  faceVerifiedAt?: Date | null;
+  profilePicture?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -32,6 +36,7 @@ export interface UserCreationAttributes
     | 'isPhoneVerified'
     | 'password'
     | 'username'
+    | 'fullName'
     | 'firstName'
     | 'lastName'
     | 'nickName'
@@ -39,6 +44,9 @@ export interface UserCreationAttributes
     | 'gender'
     | 'about'
     | 'isProfileComplete'
+    | 'isFaceVerified'
+    | 'faceVerifiedAt'
+    | 'profilePicture'
   > {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
@@ -51,6 +59,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public role: 'user' | 'admin';
   declare public isActive: boolean;
 
+  declare public fullName: string | null;
   declare public firstName: string | null;
   declare public lastName: string | null;
   declare public nickName: string | null;
@@ -58,6 +67,10 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public gender: string | null;
   declare public about: string | null;
   declare public isProfileComplete: boolean;
+  declare public isFaceVerified: boolean;
+  declare public faceVerifiedAt: Date | null;
+  declare public profilePicture: string | null;
+
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -120,10 +133,15 @@ User.init(
       defaultValue: true,
       allowNull: false,
     },
+    fullName: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
     firstName: {
       type: DataTypes.STRING(50),
       allowNull: true,
     },
+
     lastName: {
       type: DataTypes.STRING(50),
       allowNull: true,
@@ -148,6 +166,19 @@ User.init(
       type: DataTypes.BOOLEAN,
       defaultValue: false,
       allowNull: false,
+    },
+    isFaceVerified: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
+    faceVerifiedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    profilePicture: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
     },
   },
   {

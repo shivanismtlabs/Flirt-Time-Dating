@@ -7,6 +7,8 @@ module.exports = {
     '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.json' }],
   },
   moduleFileExtensions: ['ts', 'js', 'json', 'node'],
+  cacheDirectory: '<rootDir>/.tmp/jest-cache',
   verbose: true,
   testTimeout: 30000,
 };
+

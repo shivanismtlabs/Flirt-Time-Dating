@@ -52,16 +52,12 @@ export const dateOfBirthSchema = z
 
 export const updateProfileSchema = z.object({
   body: z.object({
-    firstName: z
-      .string({ required_error: 'firstName is required' })
+    fullName: z
+      .string({ required_error: 'fullName is required' })
       .trim()
-      .min(1, 'firstName cannot be empty')
-      .max(50, 'firstName must not exceed 50 characters'),
-    lastName: z
-      .string({ required_error: 'lastName is required' })
-      .trim()
-      .min(1, 'lastName cannot be empty')
-      .max(50, 'lastName must not exceed 50 characters'),
+      .min(1, 'fullName cannot be empty')
+      .max(100, 'fullName must not exceed 100 characters'),
+
     nickName: z
       .string({ required_error: 'nickName is required' })
       .trim()

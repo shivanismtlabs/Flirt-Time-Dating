@@ -109,3 +109,13 @@ export const appleAuthSchema = z.object({
   }),
 });
 
+export const firebaseAuthSchema = z.object({
+  body: z.object({
+    idToken: z
+      .string({ required_error: 'idToken is required' })
+      .trim()
+      .min(1, 'idToken cannot be empty'),
+  }),
+});
+
+

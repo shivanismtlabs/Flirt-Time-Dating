@@ -1,8 +1,7 @@
 import { User } from '../models/user.model';
 
 export interface UpdateProfileInput {
-  firstName: string;
-  lastName: string;
+  fullName: string;
   nickName: string;
   dateOfBirth: string;
   gender: string;
@@ -49,8 +48,7 @@ export const updateUserProfile = async (
   }
 
   // 3. Update profile fields
-  user.firstName = data.firstName.trim();
-  user.lastName = data.lastName.trim();
+  user.fullName = data.fullName.trim();
   user.nickName = data.nickName.trim();
 
   if (!user.dateOfBirth) {
@@ -71,8 +69,7 @@ export const updateUserProfile = async (
     username: user.username,
     email: user.email,
     phone: user.phone,
-    firstName: user.firstName,
-    lastName: user.lastName,
+    fullName: user.fullName,
     nickName: user.nickName,
     dateOfBirth: user.dateOfBirth,
     gender: user.gender,
@@ -84,3 +81,4 @@ export const updateUserProfile = async (
     updatedAt: user.updatedAt,
   };
 };
+

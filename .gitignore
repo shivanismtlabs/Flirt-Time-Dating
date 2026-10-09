@@ -33,3 +33,10 @@ storage/
 logs/
 
 test.sqlite
+.tmp/
+
+# Secret Keys & Credentials
+*firebase*.json
+serviceAccountKey*.json
+*.p8
+*.pem

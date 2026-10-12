@@ -986,6 +986,65 @@
       ]
     },
     {
+      "name": "Connections & Push Notifications",
+      "item": [
+        {
+          "name": "Send Connect Request (Connect Button)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "connections", "request"]
+            },
+            "description": "Triggered when user taps the Connect (+) button on a profile detail screen. Creates a connection request, in-app notification, and dispatches a Firebase Cloud Messaging (FCM) push notification to the recipient's active devices."
+          },
+          "response": []
+        },
+        {
+          "name": "Register FCM Device Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_sample_device_registration_token_xyz\",\n  \"platform\": \"android\",\n  \"deviceId\": \"pixel_7_pro\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/device-token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "device-token"]
+            },
+            "description": "Registers or refreshes the authenticated user's FCM device token for receiving push notifications. Platforms: 'ios' | 'android' | 'web'."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Interests Catalog",
       "item": [
         {

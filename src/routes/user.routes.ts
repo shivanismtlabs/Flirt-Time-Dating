@@ -22,11 +22,16 @@ import {
 } from '../schemas/user.schema';
 import { getUserMomentsHandler } from '../controllers/moment.controller';
 import { getUserMomentsSchema } from '../schemas/moment.schema';
+import { registerDeviceTokenHandler } from '../controllers/connection.controller';
+import { registerDeviceTokenSchema } from '../schemas/connection.schema';
 
 const router = Router();
 
 // All user management routes require authentication
 router.use(authenticate);
+
+// Device token registration for push notifications
+router.post('/device-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
 
 // Profile Onboarding Endpoints
 router.get('/profile', getProfile);

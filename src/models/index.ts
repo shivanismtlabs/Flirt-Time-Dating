@@ -16,6 +16,9 @@ import { MomentMedia } from './momentMedia.model';
 import { MomentReaction } from './momentReaction.model';
 import { Conversation } from './conversation.model';
 import { ChatMessage } from './chatMessage.model';
+import { ConnectionRequest } from './connectionRequest.model';
+import { UserDevice } from './userDevice.model';
+import { Notification } from './notification.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -291,6 +294,58 @@ ChatMessage.belongsTo(User, {
   as: 'recipient',
 });
 
+// User <-> ConnectionRequest
+User.hasMany(ConnectionRequest, {
+  foreignKey: 'requesterId',
+  as: 'sentConnectionRequests',
+  onDelete: 'CASCADE',
+});
+
+ConnectionRequest.belongsTo(User, {
+  foreignKey: 'requesterId',
+  as: 'requester',
+});
+
+User.hasMany(ConnectionRequest, {
+  foreignKey: 'targetUserId',
+  as: 'receivedConnectionRequests',
+  onDelete: 'CASCADE',
+});
+
+ConnectionRequest.belongsTo(User, {
+  foreignKey: 'targetUserId',
+  as: 'targetUser',
+});
+
+// User <-> UserDevice
+User.hasMany(UserDevice, {
+  foreignKey: 'userId',
+  as: 'devices',
+  onDelete: 'CASCADE',
+});
+
+UserDevice.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// User <-> Notification
+User.hasMany(Notification, {
+  foreignKey: 'recipientId',
+  as: 'notifications',
+  onDelete: 'CASCADE',
+});
+
+Notification.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
+Notification.belongsTo(User, {
+  foreignKey: 'senderId',
+  as: 'sender',
+});
+
 export {
   sequelize,
   User,
@@ -310,6 +365,9 @@ export {
   MomentReaction,
   Conversation,
   ChatMessage,
+  ConnectionRequest,
+  UserDevice,
+  Notification,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -459,11 +517,19 @@ export const initDb = async (force = false): Promise<void> => {
     }
 
     try {
-      await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
+      if (sequelize.getDialect() === 'sqlite') {
+        await sequelize.sync({ force: isForce });
+      } else {
+        await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
+      }
     } catch (syncError: any) {
-      // In PostgreSQL, Sequelize's alter mode may fail on pre-existing constraint names
-      // Fall back to safe sync since pre-migration SQL has already reconciled all columns
-      if (syncError.name === 'SequelizeUnknownConstraintError' || syncError.original?.code === '42704') {
+      // In PostgreSQL/SQLite, Sequelize's alter mode may fail on pre-existing constraint names or index duplicates
+      if (
+        syncError.name === 'SequelizeUnknownConstraintError' ||
+        syncError.original?.code === '42704' ||
+        syncError.original?.code === 'SQLITE_ERROR' ||
+        syncError.message?.includes('already exists')
+      ) {
         console.warn('⚠️ Standardizing schema without dropping constraint aliases...');
         await sequelize.sync({ force: isForce, alter: false });
       } else {

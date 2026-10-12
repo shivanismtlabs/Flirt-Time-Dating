@@ -2,6 +2,10 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { momentService, MomentServiceError } from '../services/moment.service';
+import {
+  moderationService,
+  ModerationServiceError,
+} from '../services/moderation.service';
 
 /**
  * Controller to create and publish a new Quick Moment
@@ -206,5 +210,42 @@ export const replyMomentHandler = async (
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Error replying to moment', 500);
+  }
+};
+
+/**
+ * Controller to securely report a Quick Moment
+ * POST /api/v1/moments/:momentId/report
+ */
+export const reportMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const reporterId = req.user?.id;
+    if (!reporterId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { reason, description } = req.body || {};
+
+    const result = await moderationService.reportMoment(
+      reporterId,
+      momentId,
+      reason,
+      description
+    );
+
+    return sendSuccess(res, 'Moment reported successfully', result, 201);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(
+      res,
+      error.message || 'Error submitting Moment report',
+      error.statusCode || 500
+    );
   }
 };

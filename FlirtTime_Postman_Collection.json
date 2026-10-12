@@ -36,8 +36,12 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/health",
-              "host": ["{{baseUrl}}"],
-              "path": ["health"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
             },
             "description": "Checks server health and database status."
           },
@@ -64,8 +68,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/email/request-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "email", "request-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "email",
+                "request-otp"
+              ]
             }
           },
           "response": []
@@ -86,8 +98,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/email/verify-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "email", "verify-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "email",
+                "verify-otp"
+              ]
             }
           },
           "response": []
@@ -108,8 +128,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/email/resend-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "email", "resend-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "email",
+                "resend-otp"
+              ]
             }
           },
           "response": []
@@ -135,8 +163,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/phone/request-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "phone", "request-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "phone",
+                "request-otp"
+              ]
             }
           },
           "response": []
@@ -157,8 +193,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/phone/verify-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "phone", "verify-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "phone",
+                "verify-otp"
+              ]
             }
           },
           "response": []
@@ -179,8 +223,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/phone/resend-otp",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "phone", "resend-otp"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "phone",
+                "resend-otp"
+              ]
             }
           },
           "response": []
@@ -206,8 +258,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/apple",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "apple"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "apple"
+              ]
             }
           },
           "response": []
@@ -233,8 +292,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/register",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "register"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "register"
+              ]
             }
           },
           "response": []
@@ -255,8 +321,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/login",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "login"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
             }
           },
           "response": []
@@ -273,8 +346,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/auth/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "auth", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
             }
           },
           "response": []
@@ -304,8 +384,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", "profile"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile"
+              ]
             }
           },
           "response": []
@@ -327,8 +414,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", "profile"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile"
+              ]
             },
             "description": "Retrieves the authenticated user's profile details including profile image."
           },
@@ -354,8 +448,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", "profile"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile"
+              ]
             },
             "description": "Updates introduce-yourself onboarding profile details."
           },
@@ -373,8 +474,14 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
             }
           },
           "response": []
@@ -391,8 +498,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":id"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":id"
+              ],
               "variable": [
                 {
                   "key": "id",
@@ -423,8 +537,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":id"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":id"
+              ],
               "variable": [
                 {
                   "key": "id",
@@ -447,8 +568,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:id",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":id"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":id"
+              ],
               "variable": [
                 {
                   "key": "id",
@@ -492,8 +620,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/gesture-upload",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "gesture-upload"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "gesture-upload"
+              ]
             },
             "description": "Uploads user selfie and compares against registered primary profile photo using AWS Rekognition."
           },
@@ -527,8 +661,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/face-verification/upload",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "face-verification", "upload"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "face-verification",
+                "upload"
+              ]
             }
           },
           "response": []
@@ -550,8 +691,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/discovery/people?page=1&limit=10",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "discovery", "people"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "people"
+              ],
               "query": [
                 {
                   "key": "page",
@@ -579,8 +727,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/discovery/people?interestId=<INTEREST_ID>&page=1&limit=10",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "discovery", "people"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "people"
+              ],
               "query": [
                 {
                   "key": "interestId",
@@ -621,8 +776,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/discovery/actions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "discovery", "actions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "actions"
+              ]
             },
             "description": "Submits a Like (Interested) swipe on target discovery candidate. Returns isMatched=true and matchId if reciprocal like exists."
           },
@@ -648,8 +810,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/discovery/actions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "discovery", "actions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "actions"
+              ]
             },
             "description": "Submits a Nope (Not my vibe / Not interested) swipe on target discovery candidate. Never creates a match."
           },
@@ -675,8 +844,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/discovery/actions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "discovery", "actions"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "actions"
+              ]
             },
             "description": "Submits a Super Like (Connect star button) swipe on target candidate. Returns match if reciprocal like/super-like exists."
           },
@@ -694,8 +870,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:userId/profile",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":userId", "profile"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "profile"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -728,8 +912,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:userId/block",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":userId", "block"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "block"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -762,8 +954,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:userId/report",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":userId", "report"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "report"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -820,8 +1020,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ]
             },
             "description": "Publishes a new Quick Moment with 1 to 5 images. Automatically calculates a 24-hour expiry timer on the server."
           },
@@ -839,8 +1045,14 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/moments?page=1&limit=20&type=feed",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "moments"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ],
               "query": [
                 {
                   "key": "page",
@@ -875,8 +1087,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:userId/moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", ":userId", "moments"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "moments"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -901,8 +1121,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/moments/:momentId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "moments", ":momentId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -935,8 +1162,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/moments/:momentId/reactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "moments", ":momentId", "reactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "reactions"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -969,8 +1204,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/moments/:momentId/replies",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "moments", ":momentId", "replies"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "replies"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -982,6 +1225,56 @@
             "description": "Sends a direct reply to the moment creator, delivering it through the direct chat messaging conversation thread."
           },
           "response": []
+        },
+        {
+          "name": "Report Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"inappropriate_content\",\n  \"description\": \"This Moment contains inappropriate content.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "report"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "UUID of the target Quick Moment"
+                }
+              ]
+            },
+            "description": "Securely submits a report against a Quick Moment with pending review status. Supported reasons: inappropriate_content, nudity, harassment, violence, spam, fake_content, other. Description is optional (max 1000 characters). Deduplicates submissions and prevents self-reporting."
+          },
+          "response": [
+            {
+              "name": "Report Created Successfully",
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "body": "{\n  \"success\": true,\n  \"message\": \"Moment reported successfully\",\n  \"data\": {\n    \"reportId\": \"798418f7-7b24-4f01-9252-7e77b620b7ea\",\n    \"momentId\": \"c3f8730b-9372-4d2c-8ff8-e67c9d924151\",\n    \"status\": \"pending\"\n  }\n}"
+            }
+          ]
         }
       ]
     },
@@ -1008,8 +1301,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/connections/request",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "connections", "request"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "connections",
+                "request"
+              ]
             },
             "description": "Triggered when user taps the Connect (+) button on a profile detail screen. Creates a connection request, in-app notification, and dispatches a Firebase Cloud Messaging (FCM) push notification to the recipient's active devices."
           },
@@ -1035,8 +1335,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/device-token",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "users", "device-token"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "device-token"
+              ]
             },
             "description": "Registers or refreshes the authenticated user's FCM device token for receiving push notifications. Platforms: 'ios' | 'android' | 'web'."
           },
@@ -1054,8 +1361,14 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/interests",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "interests"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interests"
+              ]
             },
             "description": "Lists all available interest tags with their icons, categories, and IDs."
           },
@@ -1078,8 +1391,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/preferences",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "preferences"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "preferences"
+              ]
             }
           },
           "response": []
@@ -1104,8 +1424,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/preferences",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "preferences"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "preferences"
+              ]
             }
           },
           "response": []
@@ -1122,8 +1449,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/gender-preference",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "gender-preference"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "gender-preference"
+              ]
             }
           },
           "response": []
@@ -1148,8 +1482,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/gender-preference",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "gender-preference"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "gender-preference"
+              ]
             }
           },
           "response": []
@@ -1166,8 +1507,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/religion",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "religion"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "religion"
+              ]
             }
           },
           "response": []
@@ -1192,8 +1540,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/religion",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "religion"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "religion"
+              ]
             }
           },
           "response": []
@@ -1210,8 +1565,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/interests",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "interests"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "interests"
+              ]
             }
           },
           "response": []
@@ -1236,8 +1598,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/interests",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "interests"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "interests"
+              ]
             }
           },
           "response": []
@@ -1254,8 +1623,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/photos",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "photos"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "photos"
+              ]
             }
           },
           "response": []
@@ -1283,8 +1659,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/profile-photo",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "profile-photo"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "profile-photo"
+              ]
             },
             "description": "Dedicated profile photo upload endpoint for camera or gallery capture. Automatically validates magic bytes, stores to S3, demotes existing primary photo, and sets as primary profile photo."
           },
@@ -1318,8 +1701,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/photos",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "photos"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "photos"
+              ]
             }
           },
           "response": []
@@ -1336,8 +1726,17 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/photos/:photoId/primary",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "photos", ":photoId", "primary"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "photos",
+                ":photoId",
+                "primary"
+              ],
               "variable": [
                 {
                   "key": "photoId",
@@ -1360,8 +1759,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/photos/:photoId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "photos", ":photoId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "photos",
+                ":photoId"
+              ],
               "variable": [
                 {
                   "key": "photoId",
@@ -1401,8 +1808,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/audio",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "audio"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "audio"
+              ]
             }
           },
           "response": []
@@ -1419,8 +1833,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/audio",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "audio"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "audio"
+              ]
             }
           },
           "response": []
@@ -1437,8 +1858,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/audio",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "audio"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "audio"
+              ]
             }
           },
           "response": []
@@ -1455,8 +1883,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/onboarding/progress",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "onboarding", "progress"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "onboarding",
+                "progress"
+              ]
             }
           },
           "response": []

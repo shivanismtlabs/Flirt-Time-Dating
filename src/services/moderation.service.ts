@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { sequelize, User, UserBlock, UserReport } from '../models';
+import { sequelize, User, UserBlock, UserReport, Moment } from '../models';
 import { ReportReason } from '../models/userReport.model';
 
 export interface BlockUserResult {
@@ -9,6 +9,12 @@ export interface BlockUserResult {
 
 export interface ReportUserResult {
   reportId: string;
+  status: string;
+}
+
+export interface ReportMomentResult {
+  reportId: string;
+  momentId: string;
   status: string;
 }
 
@@ -178,6 +184,179 @@ export class ModerationService {
       } catch {
         // ignore rollback errors
       }
+      throw err;
+    }
+  }
+
+  /**
+   * Reports a specific Moment for policy or community guideline violations.
+   * - Validates moment existence, active status, and non-expiration.
+   * - Prevents users from reporting their own Moment.
+   * - Enforces bidirectional block constraints if applicable.
+   * - Deduplicates pending reports from the same reporter on this Moment idempotently.
+   * - Safely associates the report with both the moment (momentId) and its creator (targetUserId).
+   * - Sets initial status to 'pending' without auto-banning or deleting.
+   */
+  public async reportMoment(
+    reporterId: string,
+    momentId: string,
+    reason: ReportReason,
+    description?: string | null
+  ): Promise<ReportMomentResult> {
+    // 1. Fetch moment and validate existence
+    const moment = await Moment.findByPk(momentId);
+    if (!moment) {
+      throw new ModerationServiceError(
+        'Moment not found or unavailable',
+        404,
+        'MOMENT_NOT_FOUND'
+      );
+    }
+
+    // 2. Reject deleted moments
+    if (moment.status === 'deleted') {
+      throw new ModerationServiceError(
+        'Moment has been deleted or is unavailable',
+        400,
+        'MOMENT_UNAVAILABLE'
+      );
+    }
+
+    // 3. Reject expired moments
+    const isExpired =
+      moment.status === 'expired' ||
+      new Date(moment.expiresAt).getTime() <= Date.now();
+    if (isExpired) {
+      throw new ModerationServiceError(
+        'Moment has expired and cannot be reported',
+        400,
+        'MOMENT_EXPIRED'
+      );
+    }
+
+    // 4. Prevent self-reporting
+    if (moment.userId === reporterId) {
+      throw new ModerationServiceError(
+        'You cannot report your own Moment',
+        400,
+        'SELF_REPORT_NOT_ALLOWED'
+      );
+    }
+
+    // 5. Verify creator account status
+    const creator = await User.findByPk(moment.userId);
+    if (!creator || !creator.isActive) {
+      throw new ModerationServiceError(
+        'Moment creator account is no longer active',
+        404,
+        'CREATOR_UNAVAILABLE'
+      );
+    }
+
+    // 6. Check block status
+    const canInteract = await this.canUsersInteract(reporterId, moment.userId);
+    if (!canInteract) {
+      throw new ModerationServiceError(
+        'Unable to report this Moment due to block or privacy settings',
+        403,
+        'USER_BLOCKED'
+      );
+    }
+
+    // 7. Fast-path idempotency check before opening transaction
+    const fastExisting = await UserReport.findOne({
+      where: {
+        reporterId,
+        momentId,
+        status: 'pending',
+      },
+    });
+    if (fastExisting) {
+      return {
+        reportId: fastExisting.id,
+        momentId: fastExisting.momentId || moment.id,
+        status: fastExisting.status,
+      };
+    }
+
+    // 8. Deduplicate and persist safely in transaction
+    const isSqlite = sequelize.getDialect() === 'sqlite';
+    const t = await sequelize.transaction();
+    try {
+      const existingReport = await UserReport.findOne({
+        where: {
+          reporterId,
+          momentId,
+          status: 'pending',
+        },
+        transaction: t,
+        lock: !isSqlite && t.LOCK ? t.LOCK.UPDATE : undefined,
+      });
+
+      if (existingReport) {
+        await t.commit();
+        return {
+          reportId: existingReport.id,
+          momentId: existingReport.momentId || moment.id,
+          status: existingReport.status,
+        };
+      }
+
+      const newReport = await UserReport.create(
+        {
+          reporterId,
+          targetUserId: moment.userId,
+          targetType: 'moment',
+          momentId: moment.id,
+          reason,
+          description: description ? description.trim() : null,
+          status: 'pending',
+        },
+        { transaction: t }
+      );
+
+      await t.commit();
+
+      return {
+        reportId: newReport.id,
+        momentId: newReport.momentId || moment.id,
+        status: newReport.status,
+      };
+    } catch (err: any) {
+      try {
+        await t.rollback();
+      } catch {
+        // ignore rollback errors
+      }
+
+      // Handle concurrency race conditions and busy locks gracefully
+      if (
+        err.name === 'SequelizeTimeoutError' ||
+        err.original?.code === 'SQLITE_BUSY' ||
+        err.message?.includes('SQLITE_BUSY') ||
+        err.name === 'SequelizeUniqueConstraintError' ||
+        err.name?.includes('UniqueConstraint') ||
+        err.original?.code === 'SQLITE_CONSTRAINT' ||
+        err.original?.code === '23505'
+      ) {
+        // Give concurrent transaction a brief moment to commit
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        const raceExisting = await UserReport.findOne({
+          where: {
+            reporterId,
+            momentId,
+            status: 'pending',
+          },
+        });
+        if (raceExisting) {
+          return {
+            reportId: raceExisting.id,
+            momentId: raceExisting.momentId || moment.id,
+            status: raceExisting.status,
+          };
+        }
+      }
+
       throw err;
     }
   }

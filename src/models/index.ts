@@ -190,6 +190,18 @@ UserReport.belongsTo(User, {
   as: 'targetUser',
 });
 
+// Moment <-> UserReport associations
+Moment.hasMany(UserReport, {
+  foreignKey: 'momentId',
+  as: 'reports',
+  onDelete: 'CASCADE',
+});
+
+UserReport.belongsTo(Moment, {
+  foreignKey: 'momentId',
+  as: 'moment',
+});
+
 // User <-> Moment
 User.hasMany(Moment, {
   foreignKey: 'userId',
@@ -553,17 +565,24 @@ export const initDb = async (force = false): Promise<void> => {
 export const seedDefaultInterests = async (): Promise<void> => {
   try {
     const defaultInterests = [
-      { name: 'Gaming', icon: '🎮', category: 'Entertainment' },
       { name: 'Cooking', icon: '🍳', category: 'Lifestyle' },
+      { name: 'Lyrics Music', icon: '🎵', category: 'Entertainment' },
+      { name: 'Dance', icon: '💃', category: 'Arts' },
+      { name: 'Fitness', icon: '💪', category: 'Fitness' },
+      { name: 'Gaming', icon: '🎮', category: 'Entertainment' },
+      { name: 'Party', icon: '🎉', category: 'Social' },
+      { name: 'Pets', icon: '🐶', category: 'Lifestyle' },
       { name: 'Photography', icon: '📷', category: 'Creativity' },
+      { name: 'Reading', icon: '📚', category: 'Lifestyle' },
       { name: 'Shopping', icon: '🛍️', category: 'Lifestyle' },
+      { name: 'Sports', icon: '⚽', category: 'Sports' },
+      { name: 'Travelling', icon: '✈️', category: 'Travel' },
       { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
       { name: 'Yoga', icon: '🧘', category: 'Fitness' },
       { name: 'Tennis', icon: '🎾', category: 'Sports' },
       { name: 'Running', icon: '🏃', category: 'Sports' },
       { name: 'Swimming', icon: '🏊', category: 'Sports' },
       { name: 'Art', icon: '🎨', category: 'Creativity' },
-      { name: 'Travelling', icon: '✈️', category: 'Travel' },
       { name: 'Exercise', icon: '🏋️', category: 'Fitness' },
       { name: 'Music', icon: '🎵', category: 'Entertainment' },
       { name: 'Drinks', icon: '🍹', category: 'Social' },

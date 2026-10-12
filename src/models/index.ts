@@ -552,6 +552,14 @@ export const initDb = async (force = false): Promise<void> => {
     // Seed initial interests catalog
     await seedDefaultInterests();
 
+    // Seed 50 dummy discovery people profiles
+    try {
+      const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
+      await seed50DiscoveryUsers();
+    } catch (seedErr: any) {
+      console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+    }
+
     console.log('✅ Database models synchronized successfully.');
   } catch (error) {
     console.error('❌ Error synchronizing database models:', error);

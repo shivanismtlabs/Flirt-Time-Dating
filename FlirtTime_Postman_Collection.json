@@ -680,6 +680,32 @@
       "name": "Discovery Feed",
       "item": [
         {
+          "name": "Seed 50 Dummy Discovery Users (Production / Local)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/seed-dummy-data",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "seed-dummy-data"
+              ]
+            },
+            "description": "Seeds 50 realistic, high-quality dating profiles (25 women & 25 men) with portrait photos, Indian cities, bios, verified badges, and interests into the production/local database."
+          },
+          "response": []
+        },
+        {
           "name": "Get Discovery People (Default Feed)",
           "request": {
             "method": "GET",

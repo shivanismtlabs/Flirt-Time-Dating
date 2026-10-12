@@ -7,6 +7,7 @@ import {
   getDiscoveryInterests,
   getInterestUsers,
   getFeaturedInterests,
+  seedDummyUsersHandler,
 } from '../controllers/discovery.controller';
 import {
   getDiscoveryInterestsSchema,
@@ -15,6 +16,9 @@ import {
 } from '../schemas/discovery.schema';
 
 const router = Router();
+
+// POST /api/v1/discovery/seed-dummy-data (Seeds 50 dummy discovery users)
+router.post('/seed-dummy-data', seedDummyUsersHandler);
 
 // GET /api/v1/discovery/people (and /api/discovery/people)
 router.get('/people', authenticate, getDiscoveryPeople);

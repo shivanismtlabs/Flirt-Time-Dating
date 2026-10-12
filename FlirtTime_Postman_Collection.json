@@ -316,6 +316,52 @@
       "name": "User Management",
       "item": [
         {
+          "name": "Get User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "profile"]
+            },
+            "description": "Retrieves the authenticated user's profile details including profile image."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Profile (Introduce Yourself)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"Meera Patel\",\n  \"nickName\": \"Meera\",\n  \"dateOfBirth\": \"1998-05-15\",\n  \"gender\": \"female\",\n  \"about\": \"Travel enthusiast and food lover looking for genuine vibes:)\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "profile"]
+            },
+            "description": "Updates introduce-yourself onboarding profile details."
+          },
+          "response": []
+        },
+        {
           "name": "Get All Users (Admin Only)",
           "request": {
             "method": "GET",
@@ -483,6 +529,839 @@
               "raw": "{{baseUrl}}/api/v1/face-verification/upload",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "face-verification", "upload"]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Discovery Feed",
+      "item": [
+        {
+          "name": "Get Discovery People (Default Feed)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/people?page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "people"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Returns candidate dating profiles filtered by sexual/gender preferences with age, city, distanceKm, sharedInterests, interestTags, and vibeScore."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Discovery People (Filtered by Interest - e.g. Gaming)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/people?interestId=<INTEREST_ID>&page=1&limit=10",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "people"],
+              "query": [
+                {
+                  "key": "interestId",
+                  "value": "<INTEREST_ID>",
+                  "description": "UUID of interest category (e.g. Gaming, Cooking)"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Filters discovery candidates who possess the specified interest (e.g. Showing 🎮 Gaming ⓧ) without altering user's own onboarding interests."
+          },
+          "response": []
+        },
+        {
+          "name": "Discovery Action: Like (Interested)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"like\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Like (Interested) swipe on target discovery candidate. Returns isMatched=true and matchId if reciprocal like exists."
+          },
+          "response": []
+        },
+        {
+          "name": "Discovery Action: Nope (Not My Vibe)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"nope\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Nope (Not my vibe / Not interested) swipe on target discovery candidate. Never creates a match."
+          },
+          "response": []
+        },
+        {
+          "name": "Discovery Action: Super Like (Connect)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"super_like\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Super Like (Connect star button) swipe on target candidate. Returns match if reciprocal like/super-like exists."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Other User Profile Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", ":userId", "profile"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "UUID of the user whose profile is being viewed"
+                }
+              ]
+            },
+            "description": "Retrieves the target user's full profile detail screen (e.g. Meera, 26) including profile photo, verified status, city, distance, Why This Vibe? score and explanation, bio, voice intro audio, moments gallery, interests, shared interests, and bottom action state (myAction, isMatched, canConnect)."
+          },
+          "response": []
+        },
+        {
+          "name": "Block User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Inappropriate behavior\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/block",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", ":userId", "block"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "UUID of the user to block"
+                }
+              ]
+            },
+            "description": "Blocks target user. Excludes target from discovery feed, prevents swipes/likes/connections, and restricts mutual profile visibility."
+          },
+          "response": []
+        },
+        {
+          "name": "Report User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"fake_profile\",\n  \"description\": \"This profile appears to be using someone else's photos.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", ":userId", "report"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "UUID of the user to report"
+                }
+              ]
+            },
+            "description": "Reports target user for policy violations. Supported reasons: fake_profile, harassment, inappropriate_content, spam, scam, underage, other."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Quick Moments",
+      "item": [
+        {
+          "name": "Create Quick Moment (1-5 Images)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "images",
+                  "type": "file",
+                  "src": [],
+                  "description": "1 to 5 image files (Max 5MB each, JPEG/PNG/WebP)"
+                },
+                {
+                  "key": "caption",
+                  "value": "Exploring cozy cafes in Bandra ☕🌿",
+                  "type": "text"
+                },
+                {
+                  "key": "audience",
+                  "value": "everyone",
+                  "type": "text",
+                  "description": "everyone | matches_only | close_friends"
+                },
+                {
+                  "key": "locationLabel",
+                  "value": "Bandra, Mumbai",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments"]
+            },
+            "description": "Publishes a new Quick Moment with 1 to 5 images. Automatically calculates a 24-hour expiry timer on the server."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Visible Moments Thumbnails",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/moments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", ":userId", "moments"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "UUID of the user whose moments are requested"
+                }
+              ]
+            },
+            "description": "Returns active, non-expired Quick Moment thumbnails for the profile detail screen."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Full-Screen Moment Detail",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments", ":momentId"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "UUID of the Quick Moment"
+                }
+              ]
+            },
+            "description": "Returns complete full-screen viewer data: creator info, all images in order, caption, relative age, viewer reaction, reaction counts, and reply capability."
+          },
+          "response": []
+        },
+        {
+          "name": "React to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reaction\": \"heart\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/reactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments", ":momentId", "reactions"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "UUID of the Quick Moment"
+                }
+              ]
+            },
+            "description": "Adds or updates an emoji reaction. Supported reactions: heart, love_eyes, fire, laugh, surprised, clap."
+          },
+          "response": []
+        },
+        {
+          "name": "Reply to Quick Moment (Direct Message)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"This looks delicious! Which cafe is this?\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/replies",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments", ":momentId", "replies"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "UUID of the Quick Moment"
+                }
+              ]
+            },
+            "description": "Sends a direct reply to the moment creator, delivering it through the direct chat messaging conversation thread."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Interests Catalog",
+      "item": [
+        {
+          "name": "Get All Active Interests",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "interests"]
+            },
+            "description": "Lists all available interest tags with their icons, categories, and IDs."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Onboarding Preferences & Media",
+      "item": [
+        {
+          "name": "Screen 21: Get Dating Preferences (lookingFor)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "preferences"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 21: Update Dating Preferences (lookingFor)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lookingFor\": \"relationship\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/preferences",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "preferences"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 22: Get Gender Preference",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/gender-preference",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "gender-preference"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 22: Update Gender Preference",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"genderPreference\": \"men\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/gender-preference",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "gender-preference"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 23: Get Religion Belief",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/religion",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "religion"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 23: Update Religion Belief (or Skip)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"religion\": \"hindu\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/religion",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "religion"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 24: Get User Saved Interests",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/interests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "interests"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 24: Update User Selected Interests",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"interestIds\": [\n    \"<INTEREST_ID_1>\",\n    \"<INTEREST_ID_2>\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/interests",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "interests"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Get User Photos",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/photos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "photos"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Upload Profile Photo (POST /api/v1/onboarding/profile-photo)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "profilePhoto",
+                  "type": "file",
+                  "src": [],
+                  "description": "Profile photo image file (JPEG, PNG, WebP <= 5MB)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/profile-photo",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "profile-photo"]
+            },
+            "description": "Dedicated profile photo upload endpoint for camera or gallery capture. Automatically validates magic bytes, stores to S3, demotes existing primary photo, and sets as primary profile photo."
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Upload Photo to Gallery",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photo",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file (JPEG, PNG, WebP <= 5MB)"
+                },
+                {
+                  "key": "isPrimary",
+                  "value": "false",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/photos",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "photos"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Set Photo As Primary",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/photos/:photoId/primary",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "photos", ":photoId", "primary"],
+              "variable": [
+                {
+                  "key": "photoId",
+                  "value": "<PHOTO_ID>"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Delete Photo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/photos/:photoId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "photos", ":photoId"],
+              "variable": [
+                {
+                  "key": "photoId",
+                  "value": "<PHOTO_ID>"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Voice Prompt: Upload Audio Recording",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "audio",
+                  "type": "file",
+                  "src": [],
+                  "description": "Audio file (MP3, M4A, WAV, AAC, OGG <= 10MB)"
+                },
+                {
+                  "key": "duration",
+                  "value": "25",
+                  "type": "text",
+                  "description": "Duration in seconds (max 60)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/audio",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "audio"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Voice Prompt: Get Audio Recording",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/audio",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "audio"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Voice Prompt: Delete Audio Recording",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/audio",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "audio"]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Onboarding Progress",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/onboarding/progress",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "onboarding", "progress"]
             }
           },
           "response": []

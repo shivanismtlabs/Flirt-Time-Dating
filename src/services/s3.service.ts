@@ -36,8 +36,30 @@ export class S3Service {
     mimeType = 'image/jpeg',
     folder = 'verifications'
   ): Promise<string> {
+    return this.uploadMedia(buffer, userId, mimeType, folder);
+  }
+
+  /**
+   * Universal S3 upload for photos, audio recordings, and verification documents
+   */
+  public async uploadMedia(
+    buffer: Buffer,
+    userId: string,
+    mimeType = 'image/jpeg',
+    folder = 'uploads'
+  ): Promise<string> {
     const s3 = getS3Client();
-    const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
+    let ext = 'bin';
+    if (mimeType.includes('png')) ext = 'png';
+    else if (mimeType.includes('webp')) ext = 'webp';
+    else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+    else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) ext = 'mp3';
+    else if (mimeType.includes('m4a') || mimeType.includes('mp4')) ext = 'm4a';
+    else if (mimeType.includes('wav')) ext = 'wav';
+    else if (mimeType.includes('aac')) ext = 'aac';
+    else if (mimeType.includes('ogg')) ext = 'ogg';
+    else if (mimeType.includes('webm')) ext = 'webm';
+
     const uniqueId = crypto.randomBytes(16).toString('hex');
     const key = `${folder}/${userId}/${Date.now()}_${uniqueId}.${ext}`;
 
@@ -47,7 +69,6 @@ export class S3Service {
         Key: key,
         Body: buffer,
         ContentType: mimeType,
-        // Ensure the uploaded object remains strictly private
         ServerSideEncryption: 'AES256',
       });
 
@@ -56,7 +77,7 @@ export class S3Service {
     } catch (error: any) {
       console.error(`[S3 Upload Error] Failed to upload ${key}:`, error.message);
       throw new S3ServiceError(
-        `Failed to store verification image in secure storage: ${error.message || 'S3 error'}`,
+        `Failed to store media file in secure storage: ${error.message || 'S3 error'}`,
         500,
         'S3_UPLOAD_FAILED'
       );

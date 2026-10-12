@@ -83,9 +83,8 @@ export const formatRelativeAge = (publishedAt: Date): string => {
 
 export class MomentService {
   /**
-   * Publishes a new Quick Moment with 1 to 5 images.
-   * Calculates automatic 24-hour expiry strictly on server, ensures atomic persistence,
-   * and cleans up orphaned S3 uploads on failure.
+   * Publishes a new Moment with 1 to 5 images.
+   * Ensures atomic persistence and cleans up orphaned S3 uploads on failure.
    */
   public async createMoment(input: {
     creatorId: string;
@@ -99,7 +98,7 @@ export class MomentService {
     // 1. Validate images presence (1 to 5 required)
     if (!files || files.length === 0) {
       throw new MomentServiceError(
-        'At least 1 image is required to create a Quick Moment',
+        'At least 1 image is required to create a Moment',
         400,
         'NO_IMAGES_PROVIDED'
       );
@@ -107,7 +106,7 @@ export class MomentService {
 
     if (files.length > 5) {
       throw new MomentServiceError(
-        'Maximum 5 images allowed per Quick Moment',
+        'Maximum 5 images allowed per Moment',
         400,
         'TOO_MANY_IMAGES'
       );
@@ -172,9 +171,9 @@ export class MomentService {
       throw uploadErr;
     }
 
-    // 5. Automatic 24-hour expiry calculation strictly on server (UTC)
+    // 5. Permanent Moment - no 24-hour expiry
     const publishedAt = new Date();
-    const expiresAt = new Date(publishedAt.getTime() + 24 * 60 * 60 * 1000);
+    const expiresAt = null;
 
     // 6. Atomic database persistence
     const t = await sequelize.transaction();
@@ -186,7 +185,7 @@ export class MomentService {
           audience,
           status: 'active',
           publishedAt,
-          expiresAt,
+          expiresAt: null,
           locationLabel: locationLabel?.trim() || creator.city || null,
         },
         { transaction: t }
@@ -236,7 +235,7 @@ export class MomentService {
 
   /**
    * Retrieves visible active Moment thumbnails for a user's profile detail screen.
-   * Enforces 24-hour expiry check, block restrictions, and audience permissions.
+   * Enforces block restrictions and audience permissions.
    */
   public async getUserMoments(viewerId: string, targetUserId: string) {
     // 1. Check target existence
@@ -279,13 +278,11 @@ export class MomentService {
       isMatched = !!match;
     }
 
-    // 4. Query active, non-expired Moments
-    const now = new Date();
+    // 4. Query active Moments (permanent posts)
     const moments = await Moment.findAll({
       where: {
         userId: targetUserId,
         status: 'active',
-        expiresAt: { [Op.gt]: now },
       },
       include: [
         {
@@ -313,28 +310,23 @@ export class MomentService {
           (a: any, b: any) => a.displayOrder - b.displayOrder
         );
         const firstMedia = sortedMedia[0];
-        const timeRemainingMinutes = Math.max(
-          0,
-          Math.round((m.expiresAt.getTime() - Date.now()) / (60 * 1000))
-        );
-
         return {
           momentId: m.id,
           thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
           mediaCount: sortedMedia.length,
           caption: m.caption,
           publishedAt: m.publishedAt,
-          expiresAt: m.expiresAt,
-          timeRemainingMinutes,
+          expiresAt: m.expiresAt || null,
+          timeRemainingMinutes: null,
         };
       }),
     };
   }
 
   /**
-   * Retrieves active Quick Moments for the discovery / feed screen.
+   * Retrieves active Moments for the discovery / feed screen.
    * Supports both flat feed mode and stories tray grouped by user.
-   * Enforces 24-hour expiry check, mutual block exclusion, and audience privacy.
+   * Enforces mutual block exclusion and audience privacy.
    */
   public async getAllMoments(
     viewerId: string,
@@ -371,11 +363,9 @@ export class MomentService {
     }
     const matchIdsArray = Array.from(matchedUserIds);
 
-    // 3. Construct where clause
-    const now = new Date();
+    // 3. Construct where clause (no 24-hour expiry check)
     const whereConditions: any[] = [
       { status: 'active' },
-      { expiresAt: { [Op.gt]: now } },
       {
         [Op.or]: [
           { userId: viewerId },
@@ -564,7 +554,7 @@ export class MomentService {
         caption: m.caption,
         audience: m.audience,
         publishedAt: m.publishedAt,
-        expiresAt: m.expiresAt,
+        expiresAt: m.expiresAt || null,
         relativeAge: formatRelativeAge(m.publishedAt),
         locationLabel: m.locationLabel,
         creator: creator
@@ -643,15 +633,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Check automatic 24-hour expiry
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'This Quick Moment has expired',
-        410,
-        'MOMENT_EXPIRED'
       );
     }
 
@@ -737,11 +718,6 @@ export class MomentService {
       creator.nickName ||
       creator.username;
 
-    const timeRemainingMinutes = Math.max(
-      0,
-      Math.round((moment.expiresAt.getTime() - Date.now()) / (60 * 1000))
-    );
-
     return {
       momentId: moment.id,
       creator: {
@@ -756,19 +732,19 @@ export class MomentService {
       audience: moment.audience,
       publishedAt: moment.publishedAt,
       relativeAge: formatRelativeAge(moment.publishedAt),
-      expiresAt: moment.expiresAt,
-      timeRemainingMinutes,
+      expiresAt: moment.expiresAt || null,
+      timeRemainingMinutes: null,
       locationLabel: moment.locationLabel || creator.city || null,
       myReaction,
       totalReactions: reactions.length,
       reactionCounts,
-      canReply: !isSelf && moment.expiresAt > new Date(),
+      canReply: !isSelf,
     };
   }
 
   /**
-   * Adds or updates a viewer's emoji reaction on a Quick Moment.
-   * Enforces 1 reaction per viewer (updates if changing emoji), blocks check, and expiry check.
+   * Adds or updates a viewer's emoji reaction on a Moment.
+   * Enforces 1 reaction per viewer (updates if changing emoji) and blocks check.
    */
   public async reactToMoment(
     viewerId: string,
@@ -781,15 +757,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Expiry check
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'Cannot react to an expired Moment',
-        400,
-        'MOMENT_EXPIRED'
       );
     }
 
@@ -908,15 +875,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Expiry check
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'Cannot reply to an expired Moment',
-        400,
-        'MOMENT_EXPIRED'
       );
     }
 

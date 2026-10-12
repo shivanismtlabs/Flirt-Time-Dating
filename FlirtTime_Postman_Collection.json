@@ -1897,6 +1897,326 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Moments",
+      "item": [
+        {
+          "name": "Get Moments Feed (Discovery)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments?page=1&limit=20&type=feed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "type",
+                  "value": "feed"
+                }
+              ]
+            },
+            "description": "Retrieves the active Moments feed for discovery screen."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Stories Tray",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments?type=stories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "stories"
+                }
+              ]
+            },
+            "description": "Retrieves active Moments grouped by user as stories tray."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "caption",
+                  "value": "Enjoying the evening vibes! ✨",
+                  "type": "text"
+                },
+                {
+                  "key": "audience",
+                  "value": "everyone",
+                  "type": "text",
+                  "description": "everyone | matches_only | close_friends"
+                },
+                {
+                  "key": "locationLabel",
+                  "value": "Bandra, Mumbai",
+                  "type": "text"
+                },
+                {
+                  "key": "images",
+                  "type": "file",
+                  "src": [],
+                  "description": "Upload 1 to 5 images (JPEG, PNG, WebP, max 5MB each)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ]
+            },
+            "description": "Creates and publishes a new Moment (1 to 5 images)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Moments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/user/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                "user",
+                ":userId"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<USER_ID>",
+                  "description": "Target user UUID"
+                }
+              ]
+            },
+            "description": "Retrieves visible active Moment thumbnails for a user profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Retrieves full-screen details for a single Moment."
+          },
+          "response": []
+        },
+        {
+          "name": "React to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reaction\": \"heart\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/reactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "reactions"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Adds or updates viewer reaction emoji: heart, fire, clap, laugh, wow."
+          },
+          "response": []
+        },
+        {
+          "name": "Reply to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Looking amazing! Love this! 🔥\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/replies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "replies"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Sends a direct reply to a Moment through the chat conversation system."
+          },
+          "response": []
+        },
+        {
+          "name": "Report Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"inappropriate_content\",\n  \"description\": \"Violates community standards\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "report"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Reports an inappropriate Moment for admin moderation."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

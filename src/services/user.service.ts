@@ -269,7 +269,6 @@ export const getOtherUserProfile = async (
     where: {
       userId: targetUserId,
       status: 'active',
-      expiresAt: { [Op.gt]: new Date() },
     },
     include: [{ model: MomentMediaModel, as: 'media' }],
     order: [

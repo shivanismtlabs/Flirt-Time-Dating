@@ -33,7 +33,7 @@ router.get(
   getAllMomentsHandler
 );
 
-// 2. Create Quick Moment (1-5 images)
+// 2. Create Moment (1-5 images)
 router.post(
   '/',
   handleUploadMomentImages,
@@ -55,21 +55,21 @@ router.get(
   getMomentDetailHandler
 );
 
-// 4. React to Quick Moment
+// 4. React to Moment
 router.post(
   '/:momentId/reactions',
   validate(reactMomentSchema),
   reactMomentHandler
 );
 
-// 5. Reply to Quick Moment
+// 5. Reply to Moment
 router.post(
   '/:momentId/replies',
   validate(replyMomentSchema),
   replyMomentHandler
 );
 
-// 6. Report Quick Moment
+// 6. Report Moment
 router.post(
   '/:momentId/report',
   validate(reportMomentSchema),

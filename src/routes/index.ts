@@ -20,6 +20,7 @@ router.use('/onboarding', onboardingRoutes);
 router.use('/discovery', discoveryRoutes);
 router.use('/interests', interestRoutes);
 router.use('/moments', momentRoutes);
+router.use('/quick-moments', momentRoutes);
 router.use('/connections', connectionRoutes);
 
 // Direct Laravel-compatible gesture-upload endpoint: POST /api/v1/gesture-upload (and /api/gesture-upload)

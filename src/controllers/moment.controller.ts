@@ -8,7 +8,7 @@ import {
 } from '../services/moderation.service';
 
 /**
- * Controller to create and publish a new Quick Moment
+ * Controller to create and publish a new Moment
  * POST /api/v1/moments
  */
 export const createMomentHandler = async (
@@ -47,14 +47,14 @@ export const createMomentHandler = async (
       files,
     });
 
-    return sendSuccess(res, 'Quick Moment published successfully', result, 201);
+    return sendSuccess(res, 'Moment published successfully', result, 201);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(
       res,
-      error.message || 'Error publishing Quick Moment',
+      error.message || 'Error publishing Moment',
       error.statusCode || 500
     );
   }
@@ -150,7 +150,7 @@ export const getMomentDetailHandler = async (
 };
 
 /**
- * Controller to react to a Quick Moment
+ * Controller to react to a Moment
  * POST /api/v1/moments/:momentId/reactions
  */
 export const reactMomentHandler = async (
@@ -182,7 +182,7 @@ export const reactMomentHandler = async (
 };
 
 /**
- * Controller to send a direct reply to a Quick Moment
+ * Controller to send a direct reply to a Moment
  * POST /api/v1/moments/:momentId/replies
  */
 export const replyMomentHandler = async (
@@ -214,7 +214,7 @@ export const replyMomentHandler = async (
 };
 
 /**
- * Controller to securely report a Quick Moment
+ * Controller to securely report a Moment
  * POST /api/v1/moments/:momentId/report
  */
 export const reportMomentHandler = async (

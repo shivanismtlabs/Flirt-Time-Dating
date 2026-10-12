@@ -139,11 +139,8 @@ describe('Quick Moments Feature APIs', () => {
       expect(res.body.data.media).toHaveLength(1);
       expect(res.body.data.media[0].displayOrder).toBe(0);
 
-      // Verify 24-hour expiry strictly calculated on server
-      const published = new Date(res.body.data.publishedAt);
-      const expires = new Date(res.body.data.expiresAt);
-      const diffHours = (expires.getTime() - published.getTime()) / (1000 * 60 * 60);
-      expect(diffHours).toBeCloseTo(24, 0);
+      // Verify moment does not have a 24-hour expiry
+      expect(res.body.data.expiresAt).toBeNull();
     });
 
     it('should successfully create a moment with 5 images and preserve ordering', async () => {
@@ -225,7 +222,7 @@ describe('Quick Moments Feature APIs', () => {
       expect(res.body.data.userId).toBe(creatorUser.id);
       expect(res.body.data.moments).toHaveLength(1);
       expect(res.body.data.moments[0].momentId).toBe(momentId);
-      expect(res.body.data.moments[0].timeRemainingMinutes).toBeGreaterThan(0);
+      expect(res.body.data.moments[0].timeRemainingMinutes).toBeNull();
     });
 
     it('should retrieve all users active moments feed via GET /api/v1/moments', async () => {
@@ -272,73 +269,70 @@ describe('Quick Moments Feature APIs', () => {
     });
   });
 
-  describe('4. Automatic 24-Hour Expiry (Immediate Exclusion)', () => {
-    let expiredMomentId: string;
+  describe('4. Permanent Moments (No 24-Hour Expiry)', () => {
+    let pastMomentId: string;
 
     beforeEach(async () => {
-      // Create a moment that expired 1 hour ago
+      // Create a moment published 25 hours ago
       const publishedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
-      const expiresAt = new Date(Date.now() - 1 * 60 * 60 * 1000);
 
       const m = await Moment.create({
         userId: creatorUser.id,
-        caption: 'Expired moment',
+        caption: 'Past moment (permanent)',
         audience: 'everyone',
         status: 'active',
         publishedAt,
-        expiresAt,
+        expiresAt: null,
       });
 
       await MomentMedia.create({
         momentId: m.id,
-        mediaUrl: 'moments/test_expired.jpg',
+        mediaUrl: 'moments/test_past.jpg',
         mediaType: 'image',
         displayOrder: 0,
       });
 
-      expiredMomentId = m.id;
+      pastMomentId = m.id;
     });
 
-    it('should exclude expired moments from GET /api/v1/users/:userId/moments', async () => {
+    it('should include moments older than 24 hours in GET /api/v1/users/:userId/moments', async () => {
       const res = await request(app)
         .get(`/api/v1/users/${creatorUser.id}/moments`)
         .set('Authorization', `Bearer ${viewerToken}`);
 
       expect(res.status).toBe(200);
       const ids = res.body.data.moments.map((item: any) => item.momentId);
-      expect(ids).not.toContain(expiredMomentId);
+      expect(ids).toContain(pastMomentId);
     });
 
-    it('should reject GET /api/v1/moments/:momentId for expired moment with 410', async () => {
+    it('should successfully retrieve GET /api/v1/moments/:momentId for moments older than 24 hours', async () => {
       const res = await request(app)
-        .get(`/api/v1/moments/${expiredMomentId}`)
+        .get(`/api/v1/moments/${pastMomentId}`)
         .set('Authorization', `Bearer ${viewerToken}`);
 
-      expect(res.status).toBe(410);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBe(pastMomentId);
     });
 
-    it('should reject reactions on expired moments with 400', async () => {
+    it('should allow reactions on moments older than 24 hours', async () => {
       const res = await request(app)
-        .post(`/api/v1/moments/${expiredMomentId}/reactions`)
+        .post(`/api/v1/moments/${pastMomentId}/reactions`)
         .set('Authorization', `Bearer ${viewerToken}`)
         .send({ reaction: 'heart' });
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
 
-    it('should reject replies on expired moments with 400', async () => {
+    it('should allow replies on moments older than 24 hours', async () => {
       const res = await request(app)
-        .post(`/api/v1/moments/${expiredMomentId}/replies`)
+        .post(`/api/v1/moments/${pastMomentId}/replies`)
         .set('Authorization', `Bearer ${viewerToken}`)
         .send({ message: 'Nice!' });
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
   });
 

@@ -85,9 +85,55 @@ export class S3Service {
   }
 
   /**
-   * Retrieves an image buffer from S3 using its object key
+   * Retrieves an image buffer from S3 using its object key or full URL
    */
-  public async getObjectBuffer(key: string): Promise<Buffer> {
+  public async getObjectBuffer(keyOrUrl: string): Promise<Buffer> {
+    if (!keyOrUrl || typeof keyOrUrl !== 'string') {
+      throw new S3ServiceError('Empty key or URL provided', 404, 'S3_OBJECT_NOT_FOUND');
+    }
+
+    const trimmed = keyOrUrl.trim();
+
+    // If it's a full HTTP/HTTPS URL
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const parsedUrl = new URL(trimmed);
+        if (parsedUrl.hostname.includes('.amazonaws.com')) {
+          const rawPath = decodeURIComponent(parsedUrl.pathname.replace(/^\/+/, ''));
+          const cleanKey = rawPath.startsWith(`${this.bucket}/`)
+            ? rawPath.slice(this.bucket.length + 1)
+            : rawPath;
+          if (cleanKey) {
+            return await this.fetchFromS3(cleanKey);
+          }
+        }
+
+        // External CDN/Unsplash URL: fetch via HTTP with 8s timeout
+        const response = await fetch(trimmed, { signal: AbortSignal.timeout(8000) });
+        if (!response.ok) {
+          throw new S3ServiceError(
+            `Failed to fetch image from URL: ${response.statusText}`,
+            404,
+            'S3_OBJECT_NOT_FOUND'
+          );
+        }
+        const arrayBuffer = await response.arrayBuffer();
+        return Buffer.from(arrayBuffer);
+      } catch (httpErr: any) {
+        if (httpErr instanceof S3ServiceError) throw httpErr;
+        console.warn(`[Image Fetch Warning] Could not fetch image from ${trimmed}:`, httpErr.message);
+        throw new S3ServiceError(
+          `Could not fetch reference image: ${httpErr.message}`,
+          404,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+    }
+
+    return await this.fetchFromS3(trimmed);
+  }
+
+  private async fetchFromS3(key: string): Promise<Buffer> {
     const s3 = getS3Client();
 
     try {
@@ -101,7 +147,6 @@ export class S3Service {
         throw new S3ServiceError(`S3 object ${key} has empty body`, 404, 'S3_OBJECT_EMPTY');
       }
 
-      // Convert readable stream to buffer
       const streamToBuffer = async (stream: any): Promise<Buffer> => {
         const chunks: Uint8Array[] = [];
         for await (const chunk of stream) {
@@ -113,7 +158,11 @@ export class S3Service {
       return await streamToBuffer(response.Body);
     } catch (error: any) {
       if (error.name === 'NoSuchKey' || error.$metadata?.httpStatusCode === 404) {
-        throw new S3ServiceError(`Reference image not found in storage: ${key}`, 404, 'S3_OBJECT_NOT_FOUND');
+        throw new S3ServiceError(
+          `Reference image not found in storage: ${key}`,
+          404,
+          'S3_OBJECT_NOT_FOUND'
+        );
       }
       console.error(`[S3 Get Error] Failed to retrieve ${key}:`, error.message);
       throw new S3ServiceError(

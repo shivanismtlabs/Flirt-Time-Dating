@@ -211,6 +211,122 @@ export class OnboardingService {
     return photo;
   }
 
+  /**
+   * Validates file signature (magic bytes) to ensure file content is a valid JPEG, PNG, or WebP image
+   */
+  public static validateImageSignature(buffer: Buffer): { isValid: boolean; format?: string } {
+    if (!buffer || buffer.length < 12) {
+      return { isValid: false };
+    }
+
+    // JPEG: FF D8 FF
+    if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+      return { isValid: true, format: 'jpeg' };
+    }
+
+    // PNG: 89 50 4E 47 0D 0A 1A 0A
+    if (
+      buffer[0] === 0x89 &&
+      buffer[1] === 0x50 &&
+      buffer[2] === 0x4e &&
+      buffer[3] === 0x47 &&
+      buffer[4] === 0x0d &&
+      buffer[5] === 0x0a &&
+      buffer[6] === 0x1a &&
+      buffer[7] === 0x0a
+    ) {
+      return { isValid: true, format: 'png' };
+    }
+
+    // WebP: RIFF .... WEBP
+    if (
+      buffer[0] === 0x52 &&
+      buffer[1] === 0x49 &&
+      buffer[2] === 0x46 &&
+      buffer[3] === 0x46 &&
+      buffer[8] === 0x57 &&
+      buffer[9] === 0x45 &&
+      buffer[10] === 0x42 &&
+      buffer[11] === 0x50
+    ) {
+      return { isValid: true, format: 'webp' };
+    }
+
+    return { isValid: false };
+  }
+
+  /**
+   * Dedicated profile photo upload handler:
+   * Validates image content via magic bytes, stores to S3, updates User.profilePicture,
+   * demotes any previous primary photo, and saves as UserPhoto (isPrimary: true).
+   * Safely cleans up orphaned S3 object if database persistence fails.
+   */
+  public async uploadProfilePhoto(userId: string, buffer: Buffer, mimeType: string) {
+    const user = await this.getUserOrThrow(userId);
+
+    if (!buffer || buffer.length === 0) {
+      throw new OnboardingServiceError(
+        'Profile photo file is empty or missing',
+        400,
+        'MISSING_FILE'
+      );
+    }
+
+    // Validate image format using magic bytes
+    const signature = OnboardingService.validateImageSignature(buffer);
+    if (!signature.isValid) {
+      throw new OnboardingServiceError(
+        'Invalid or corrupted image content. File signature does not match supported image format (JPEG, PNG, WebP).',
+        400,
+        'INVALID_IMAGE_CONTENT'
+      );
+    }
+
+    // Upload photo to S3
+    const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'photos');
+
+    try {
+      const result = await sequelize.transaction(async (transaction) => {
+        // Demote existing primary photo for this user
+        await UserPhoto.update(
+          { isPrimary: false },
+          {
+            where: { userId, isPrimary: true },
+            transaction,
+          }
+        );
+
+        // Create new primary photo record
+        const photo = await UserPhoto.create(
+          {
+            userId,
+            imageUrl: s3Key,
+            isPrimary: true,
+            displayOrder: 0,
+            status: 'approved',
+          },
+          { transaction }
+        );
+
+        // Update user's main profilePicture column
+        user.profilePicture = s3Key;
+        await user.save({ transaction });
+
+        return {
+          photoId: photo.id,
+          profilePhoto: photo.imageUrl,
+          isPrimary: photo.isPrimary,
+        };
+      });
+
+      return result;
+    } catch (dbError) {
+      // Safe cleanup of orphaned S3 object
+      await s3Service.deleteObject(s3Key);
+      throw dbError;
+    }
+  }
+
   public async deletePhoto(userId: string, photoId: string) {
     const user = await this.getUserOrThrow(userId);
 

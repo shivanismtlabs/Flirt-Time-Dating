@@ -1,7 +1,11 @@
 import { Router } from 'express';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
-import { handleUploadPhoto, handleUploadAudio } from '../middlewares/upload.middleware';
+import {
+  handleUploadPhoto,
+  handleUploadAudio,
+  handleUploadProfilePhoto,
+} from '../middlewares/upload.middleware';
 import {
   updatePreferencesSchema,
   updateGenderPreferenceSchema,
@@ -21,6 +25,7 @@ import {
   uploadPhoto,
   deletePhoto,
   setPrimaryPhoto,
+  uploadProfilePhoto,
   uploadAudio,
   getAudio,
   deleteAudio,
@@ -48,7 +53,8 @@ router.put('/religion', validate(updateReligionSchema), updateReligion);
 router.get('/interests', getUserInterests);
 router.put('/interests', validate(updateInterestsSchema), updateUserInterests);
 
-// Screen 25: Profile Photos Gallery
+// Screen 25: Profile Photos Gallery & Dedicated Profile Photo Upload
+router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
 router.get('/photos', getUserPhotos);
 router.post('/photos', handleUploadPhoto, uploadPhoto);
 router.delete('/photos/:photoId', deletePhoto);

@@ -161,3 +161,123 @@ export const handleUploadAudio = (req: Request, res: Response, next: NextFunctio
   });
 };
 
+/**
+ * Middleware for dedicated profile photo upload (Max 5MB, JPEG/PNG/WebP)
+ * Field: 'profilePhoto' (also supports 'profile_photo', 'photo', 'image')
+ */
+export const uploadProfilePhoto = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported image format (${file.mimetype}). Please upload a JPEG, PNG, or WebP image.`));
+    }
+  },
+});
+
+export const handleUploadProfilePhoto = (req: Request, res: Response, next: NextFunction) => {
+  const upload = uploadProfilePhoto.fields([
+    { name: 'profilePhoto', maxCount: 1 },
+    { name: 'profile_photo', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
+    { name: 'image', maxCount: 1 },
+  ]);
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'File size exceeds 5MB limit. Please upload a smaller image.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+          return sendError(
+            res,
+            `Unexpected field '${err.field}'. Use 'profilePhoto' for the image file.`,
+            400,
+            'UNEXPECTED_FIELD'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(res, err.message || 'File upload error', 400, 'UPLOAD_ERROR');
+    }
+    return next();
+  });
+};
+
+/**
+ * Middleware for Quick Moments multi-image upload (1 to 5 images, Max 5MB each, JPEG/PNG/WebP)
+ * Field: 'images' (also supports 'image')
+ */
+export const uploadMomentImages = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB per image
+    files: 5,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Unsupported image format (${file.mimetype}). Please upload JPEG, PNG, or WebP images.`
+        )
+      );
+    }
+  },
+});
+
+export const handleUploadMomentImages = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const upload = uploadMomentImages.fields([
+    { name: 'images', maxCount: 5 },
+    { name: 'image', maxCount: 5 },
+  ]);
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'One or more images exceed the 5MB size limit. Please upload smaller photos.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+          return sendError(
+            res,
+            `Too many files uploaded or unexpected field '${err.field}'. Maximum 5 images allowed under 'images'.`,
+            400,
+            'TOO_MANY_FILES'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(
+        res,
+        err.message || 'Image upload error',
+        400,
+        'UPLOAD_ERROR'
+      );
+    }
+    return next();
+  });
+};
+
+

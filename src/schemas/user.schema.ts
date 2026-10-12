@@ -98,3 +98,59 @@ export const getUserByIdSchema = z.object({
     id: z.string().uuid('Invalid user ID format'),
   }),
 });
+
+export const getOtherUserProfileSchema = z.object({
+  params: z.object({
+    userId: z.string().uuid('Invalid user ID format'),
+  }),
+});
+
+export const blockUserSchema = z.object({
+  params: z.object({
+    userId: z.string().uuid('Invalid user ID format'),
+  }),
+  body: z
+    .object({
+      reason: z
+        .string()
+        .trim()
+        .max(255, 'Reason must not exceed 255 characters')
+        .optional()
+        .nullable(),
+    })
+    .optional(),
+});
+
+export const reportReasons = [
+  'fake_profile',
+  'harassment',
+  'inappropriate_content',
+  'spam',
+  'scam',
+  'underage',
+  'other',
+] as const;
+
+export const reportReasonEnum = z.enum(reportReasons, {
+  errorMap: () => ({
+    message:
+      'Invalid report reason. Allowed values: fake_profile, harassment, inappropriate_content, spam, scam, underage, other',
+  }),
+});
+
+export const reportUserSchema = z.object({
+  params: z.object({
+    userId: z.string().uuid('Invalid user ID format'),
+  }),
+  body: z.object({
+    reason: reportReasonEnum,
+    description: z
+      .string()
+      .trim()
+      .max(1000, 'Description must not exceed 1000 characters')
+      .optional()
+      .nullable(),
+  }),
+});
+
+

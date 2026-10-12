@@ -10,6 +10,12 @@ import { UserPhoto } from './userPhoto.model';
 import { SwipeAction } from './swipeAction.model';
 import { Match } from './match.model';
 import { UserBlock } from './userBlock.model';
+import { UserReport } from './userReport.model';
+import { Moment } from './moment.model';
+import { MomentMedia } from './momentMedia.model';
+import { MomentReaction } from './momentReaction.model';
+import { Conversation } from './conversation.model';
+import { ChatMessage } from './chatMessage.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -158,6 +164,133 @@ UserBlock.belongsTo(User, {
   as: 'blockedUser',
 });
 
+// User <-> UserReport associations
+User.hasMany(UserReport, {
+  foreignKey: 'reporterId',
+  as: 'reportsFiled',
+  onDelete: 'CASCADE',
+});
+
+UserReport.belongsTo(User, {
+  foreignKey: 'reporterId',
+  as: 'reporter',
+});
+
+User.hasMany(UserReport, {
+  foreignKey: 'targetUserId',
+  as: 'reportsReceived',
+  onDelete: 'CASCADE',
+});
+
+UserReport.belongsTo(User, {
+  foreignKey: 'targetUserId',
+  as: 'targetUser',
+});
+
+// User <-> Moment
+User.hasMany(Moment, {
+  foreignKey: 'userId',
+  as: 'moments',
+  onDelete: 'CASCADE',
+});
+
+Moment.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// Moment <-> MomentMedia
+Moment.hasMany(MomentMedia, {
+  foreignKey: 'momentId',
+  as: 'media',
+  onDelete: 'CASCADE',
+});
+
+MomentMedia.belongsTo(Moment, {
+  foreignKey: 'momentId',
+  as: 'moment',
+});
+
+// Moment <-> MomentReaction
+Moment.hasMany(MomentReaction, {
+  foreignKey: 'momentId',
+  as: 'reactions',
+  onDelete: 'CASCADE',
+});
+
+MomentReaction.belongsTo(Moment, {
+  foreignKey: 'momentId',
+  as: 'moment',
+});
+
+User.hasMany(MomentReaction, {
+  foreignKey: 'userId',
+  as: 'momentReactions',
+  onDelete: 'CASCADE',
+});
+
+MomentReaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// User <-> Conversation
+User.hasMany(Conversation, {
+  foreignKey: 'user1Id',
+  as: 'conversationsAsUser1',
+  onDelete: 'CASCADE',
+});
+
+User.hasMany(Conversation, {
+  foreignKey: 'user2Id',
+  as: 'conversationsAsUser2',
+  onDelete: 'CASCADE',
+});
+
+Conversation.belongsTo(User, {
+  foreignKey: 'user1Id',
+  as: 'user1',
+});
+
+Conversation.belongsTo(User, {
+  foreignKey: 'user2Id',
+  as: 'user2',
+});
+
+// Conversation <-> ChatMessage
+Conversation.hasMany(ChatMessage, {
+  foreignKey: 'conversationId',
+  as: 'messages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessage.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+User.hasMany(ChatMessage, {
+  foreignKey: 'senderId',
+  as: 'sentMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessage.belongsTo(User, {
+  foreignKey: 'senderId',
+  as: 'sender',
+});
+
+User.hasMany(ChatMessage, {
+  foreignKey: 'recipientId',
+  as: 'receivedMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessage.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
 export {
   sequelize,
   User,
@@ -171,6 +304,12 @@ export {
   SwipeAction,
   Match,
   UserBlock,
+  UserReport,
+  Moment,
+  MomentMedia,
+  MomentReaction,
+  Conversation,
+  ChatMessage,
 };
 
 export const initDb = async (force = false): Promise<void> => {

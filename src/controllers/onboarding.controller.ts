@@ -139,6 +139,44 @@ export const uploadPhoto = async (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
+/**
+ * Dedicated profile photo upload handler
+ * POST /api/v1/onboarding/profile-photo
+ */
+export const uploadProfilePhoto = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = getUserIdOrThrow(req, res);
+    if (!userId) return;
+
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const photoFile =
+      files?.['profilePhoto']?.[0] ||
+      files?.['profile_photo']?.[0] ||
+      files?.['photo']?.[0] ||
+      files?.['image']?.[0] ||
+      req.file;
+
+    if (!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) {
+      return sendError(
+        res,
+        'profilePhoto is required. Attach image in "profilePhoto" field',
+        400,
+        'MISSING_FILE'
+      );
+    }
+
+    const result = await onboardingService.uploadProfilePhoto(
+      userId,
+      photoFile.buffer,
+      photoFile.mimetype
+    );
+
+    return sendSuccess(res, 'Profile photo uploaded successfully', result, 201);
+  } catch (err: any) {
+    return handleControllerError(res, err);
+  }
+};
+
 export const deletePhoto = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = getUserIdOrThrow(req, res);

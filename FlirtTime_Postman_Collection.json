@@ -8,9 +8,15 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://13.126.105.138:5070",
+      "value": "https://flirttimeapi.walit.in",
       "type": "string",
-      "description": "Active Base URL (Use http://13.126.105.138:5070 for Live or http://localhost:5000 for Local)"
+      "description": "Active Base URL (Use https://flirttimeapi.walit.in for Production or http://localhost:5000 for Local)"
+    },
+    {
+      "key": "base_url",
+      "value": "https://flirttimeapi.walit.in",
+      "type": "string",
+      "description": "Active Base URL alias (Use https://flirttimeapi.walit.in for Production or http://localhost:5000 for Local)"
     },
     {
       "key": "token",

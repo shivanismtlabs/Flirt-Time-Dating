@@ -123,35 +123,30 @@ export class FaceVerificationService {
         );
       }
 
-      // 4. Retrieve Primary Reference Profile Photo
-      let targetImageBuffer: Buffer;
+      // 4. Retrieve Primary Reference Profile Photo (Optional for first-time registration)
+      let targetImageBuffer: Buffer | null = null;
+      let hasReferencePhoto = false;
+
       if (referenceImageBuffer && Buffer.isBuffer(referenceImageBuffer) && referenceImageBuffer.length > 0) {
         targetImageBuffer = referenceImageBuffer;
+        hasReferencePhoto = true;
       } else if (user.profilePicture && typeof user.profilePicture === 'string' && user.profilePicture.trim()) {
         try {
           targetImageBuffer = await s3Service.getObjectBuffer(user.profilePicture.trim());
+          hasReferencePhoto = true;
         } catch (s3Err: any) {
           if (s3Err instanceof S3ServiceError && s3Err.statusCode === 404) {
+            console.warn('[Profile Photo Fetch Warning] Primary profile photo not found in storage:', user.profilePicture);
+            hasReferencePhoto = false;
+          } else {
+            console.error('[Profile Photo Fetch Error]:', s3Err.message);
             throw new FaceVerificationServiceError(
-              'Primary profile photo not found in storage. Please re-upload your profile photo.',
-              422,
-              'MISSING_PRIMARY_PHOTO'
+              'Failed to retrieve primary profile photo from secure storage.',
+              503,
+              'STORAGE_UNAVAILABLE'
             );
           }
-          console.error('[Profile Photo Fetch Error]:', s3Err.message);
-          throw new FaceVerificationServiceError(
-            'Failed to retrieve primary profile photo from secure storage.',
-            503,
-            'STORAGE_UNAVAILABLE'
-          );
         }
-      } else {
-        // No primary profile photo found -> HTTP 422
-        throw new FaceVerificationServiceError(
-          'No primary profile photo found for this account. Please upload a profile photo first.',
-          422,
-          'MISSING_PRIMARY_PHOTO'
-        );
       }
 
       // 5. Upload Selfie to Private S3 Bucket
@@ -166,7 +161,7 @@ export class FaceVerificationService {
       } catch (uploadErr: any) {
         console.error('[S3 Selfie Upload Error]:', uploadErr.message);
         throw new FaceVerificationServiceError(
-          'Failed to securely store verification selfie image.',
+          `Failed to securely store verification selfie image: ${uploadErr.message || 'S3 upload error'}`,
           500,
           'S3_UPLOAD_FAILED'
         );
@@ -268,36 +263,55 @@ export class FaceVerificationService {
         };
       }
 
-      // 8. Face Comparison against Primary Profile Photo via AWS Rekognition
-      let compareResult;
-      try {
-        compareResult = await rekognitionService.compareFaces(
-          imageBuffer,
-          targetImageBuffer,
-          env.FACE_SIMILARITY_THRESHOLD
-        );
-      } catch (compErr: any) {
-        if (compErr instanceof RekognitionServiceError) {
+      // 8. Face Comparison or First-Time Face Registration Approval
+      let isApproved = false;
+      let similarityScore: number | null = null;
+      let finalStatus: FaceVerificationStatus = 'rejected';
+      let finalReasonCode = 'IDENTITY_MISMATCH';
+      let finalReasonMessage = 'The selfie did not match the primary profile photo';
+      let rejectionReason: string | null = null;
+
+      if (hasReferencePhoto && targetImageBuffer) {
+        // Compare against existing profile photo via AWS Rekognition
+        let compareResult;
+        try {
+          compareResult = await rekognitionService.compareFaces(
+            imageBuffer,
+            targetImageBuffer,
+            env.FACE_SIMILARITY_THRESHOLD
+          );
+        } catch (compErr: any) {
+          if (compErr instanceof RekognitionServiceError) {
+            throw new FaceVerificationServiceError(
+              compErr.message,
+              compErr.statusCode,
+              compErr.errorCode
+            );
+          }
           throw new FaceVerificationServiceError(
-            compErr.message,
-            compErr.statusCode,
-            compErr.errorCode
+            'Face comparison service is temporarily unavailable.',
+            503,
+            'REKOGNITION_SERVICE_UNAVAILABLE'
           );
         }
-        throw new FaceVerificationServiceError(
-          'Face comparison service is temporarily unavailable.',
-          503,
-          'REKOGNITION_SERVICE_UNAVAILABLE'
-        );
-      }
 
-      const isApproved = compareResult.isMatch;
-      const finalStatus: FaceVerificationStatus = isApproved ? 'approved' : 'rejected';
-      const finalReasonCode = isApproved ? 'VERIFICATION_SUCCESSFUL' : 'IDENTITY_MISMATCH';
-      const finalReasonMessage = isApproved
-        ? 'Identity verification completed successfully'
-        : 'The selfie did not match the primary profile photo';
-      const rejectionReason = isApproved ? null : 'IDENTITY_MISMATCH';
+        isApproved = compareResult.isMatch;
+        similarityScore = compareResult.similarity;
+        finalStatus = isApproved ? 'approved' : 'rejected';
+        finalReasonCode = isApproved ? 'VERIFICATION_SUCCESSFUL' : 'IDENTITY_MISMATCH';
+        finalReasonMessage = isApproved
+          ? 'Identity verification completed successfully'
+          : 'The selfie did not match the primary profile photo';
+        rejectionReason = isApproved ? null : 'IDENTITY_MISMATCH';
+      } else {
+        // First-time face verification: Exactly 1 valid face detected in front of the camera
+        isApproved = true;
+        similarityScore = 100;
+        finalStatus = 'approved';
+        finalReasonCode = 'VERIFICATION_SUCCESSFUL';
+        finalReasonMessage = 'Real face detected and identity verified successfully';
+        rejectionReason = null;
+      }
 
       // 9. Atomic Database Persistence & User Verification State Update
       const record = await sequelize.transaction(async (transaction) => {
@@ -318,7 +332,7 @@ export class FaceVerificationService {
             faceCount: 1,
             qualityScore: primaryFace?.confidence || null,
             brightnessScore: primaryFace?.brightness || null,
-            similarityScore: compareResult.similarity,
+            similarityScore,
             identityMatched: isApproved,
             livenessStatus: 'unavailable_single_frame',
             reasonCode: finalReasonCode,
@@ -329,17 +343,21 @@ export class FaceVerificationService {
             isLatest: true,
             metadata: {
               ...safeMetadata,
-              similarity: compareResult.similarity,
-              threshold: compareResult.threshold,
+              similarity: similarityScore,
+              isFirstTimeRegistration: !hasReferencePhoto,
             },
           },
           { transaction }
         );
 
-        // Update User verification status upon approval
+        // Update User verification status and profile picture upon approval
         if (isApproved) {
           user.isFaceVerified = true;
           user.faceVerifiedAt = new Date();
+          // If the user has no profile photo set, set this verified selfie as their profile photo
+          if (!user.profilePicture) {
+            user.profilePicture = s3Key;
+          }
           await user.save({ transaction });
         }
 
@@ -350,7 +368,7 @@ export class FaceVerificationService {
         verificationId: record.id,
         status: finalStatus,
         verificationType,
-        similarity: compareResult.similarity,
+        similarity: similarityScore,
         attemptNo: currentAttemptNo,
         isLatest: true,
         faceDetected: true,

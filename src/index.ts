@@ -1,7 +1,14 @@
+import dns from 'dns';
 import app from './app';
 import { env } from './config/env';
 import { connectDatabase } from './config/database';
 import { initDb } from './models';
+import { emailProvider } from './services/email.service';
+
+// Prefer IPv4 for outbound network calls to avoid IPv6 timeouts on AWS EC2 & cloud instances
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const startServer = async () => {
   console.log('🚀 Starting Node.js Express server...');
@@ -19,7 +26,17 @@ const startServer = async () => {
     console.warn('⚠️ Server running without active DB connection. Update .env credentials to connect.');
   }
 
-  // 3. Listen on specified PORT
+  // 3. Verify Email Provider (SMTP) connectivity
+  if (emailProvider.verifyConnection) {
+    const emailStatus = await emailProvider.verifyConnection();
+    if (emailStatus.ready) {
+      console.log('📧 Email provider (SMTP) connected & verified successfully.');
+    } else {
+      console.warn(`⚠️ Email provider (SMTP) check: ${emailStatus.error}`);
+    }
+  }
+
+  // 4. Listen on specified PORT
   const server = app.listen(env.PORT, () => {
     console.log(`==================================================`);
     console.log(`🌐 Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);

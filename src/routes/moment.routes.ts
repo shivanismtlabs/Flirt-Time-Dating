@@ -6,6 +6,7 @@ import {
   replyMomentHandler,
   getUserMomentsHandler,
   getAllMomentsHandler,
+  reportMomentHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -17,6 +18,7 @@ import {
   reactMomentSchema,
   replyMomentSchema,
   getAllMomentsSchema,
+  reportMomentSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -65,6 +67,13 @@ router.post(
   '/:momentId/replies',
   validate(replyMomentSchema),
   replyMomentHandler
+);
+
+// 6. Report Quick Moment
+router.post(
+  '/:momentId/report',
+  validate(reportMomentSchema),
+  reportMomentHandler
 );
 
 export default router;

@@ -79,3 +79,35 @@ export const getAllMomentsSchema = z.object({
   }),
 });
 
+export const momentReportReasons = [
+  'inappropriate_content',
+  'nudity',
+  'harassment',
+  'violence',
+  'spam',
+  'fake_content',
+  'other',
+] as const;
+
+export const reportMomentReasonEnum = z.enum(momentReportReasons, {
+  errorMap: () => ({
+    message:
+      'Invalid report reason. Allowed values: inappropriate_content, nudity, harassment, violence, spam, fake_content, other',
+  }),
+});
+
+export const reportMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  body: z.object({
+    reason: reportMomentReasonEnum,
+    description: z
+      .string()
+      .trim()
+      .max(1000, 'Description must not exceed 1000 characters')
+      .optional()
+      .nullable(),
+  }),
+});
+

@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
-import { User, Interest, UserInterest, SwipeAction, UserBlock } from '../models';
+import { sequelize } from '../config/database';
+import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto } from '../models';
 
 export interface DiscoveryQueryInput {
   currentUserId: string;
@@ -34,6 +35,80 @@ export interface DiscoveryResponseData {
     total: number;
     hasMore: boolean;
   };
+}
+
+export interface DiscoveryInterestItem {
+  id: string;
+  name: string;
+  icon: string | null;
+  color: string | null;
+  peopleCount: number;
+  isSelected: boolean;
+}
+
+export interface GetDiscoveryInterestsInput {
+  currentUserId: string;
+  selectedInterestId?: string;
+  search?: string;
+}
+
+export interface GetDiscoveryInterestsOutput {
+  interests: DiscoveryInterestItem[];
+}
+
+export interface InterestUserCard {
+  id: string;
+  name: string;
+  age: number | null;
+  profilePhotoUrl: string | null;
+  isVerified: boolean;
+  distanceKm: number | null;
+  sharedInterest: {
+    id: string;
+    name: string;
+  };
+}
+
+export interface GetInterestUsersInput {
+  currentUserId: string;
+  interestId: string;
+  limit?: number;
+  cursor?: string;
+  page?: number;
+  gender?: string;
+  minAge?: number;
+  maxAge?: number;
+}
+
+export interface GetInterestUsersOutput {
+  interest: {
+    id: string;
+    name: string;
+    icon: string | null;
+    totalPeople: number;
+  };
+  users: InterestUserCard[];
+  pagination: {
+    nextCursor: string | null;
+    hasMore: boolean;
+    limit: number;
+    total: number;
+  };
+}
+
+export interface FeaturedInterestItem {
+  interest: {
+    id: string;
+    name: string;
+    icon: string | null;
+    color: string | null;
+    peopleCount: number;
+  };
+  previewUsers: InterestUserCard[];
+}
+
+export interface GetFeaturedInterestsOutput {
+  featured: FeaturedInterestItem[];
 }
 
 export class DiscoveryServiceError extends Error {
@@ -107,7 +182,62 @@ export const calculateVibeScore = (
   return Math.min(99, Math.max(50, score));
 };
 
+/**
+ * Selects primary profile photo URL
+ */
+export const resolveProfilePhoto = (
+  userProfilePicture?: string | null,
+  photos?: any[] | null
+): string | null => {
+  if (userProfilePicture) return userProfilePicture;
+  if (!photos || photos.length === 0) return null;
+  const approvedPhotos = photos.filter((p) => p.status === 'approved');
+  if (approvedPhotos.length === 0) return null;
+  const primary = approvedPhotos.find((p) => p.isPrimary);
+  return primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+};
+
+/**
+ * Resolves user display name consistently
+ */
+export const resolveDisplayName = (user: any): string => {
+  return (
+    user.firstName ||
+    (user.fullName ? user.fullName.split(' ')[0] : null) ||
+    user.nickName ||
+    user.username
+  );
+};
+
 export class DiscoveryService {
+  /**
+   * Retrieves excluded user IDs for the current user (self, swiped, blocked)
+   */
+  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [existingSwipes, blocks] = await Promise.all([
+      SwipeAction.findAll({
+        where: { userId: currentUserId },
+        attributes: ['targetUserId'],
+      }),
+      UserBlock.findAll({
+        where: {
+          [Op.or]: [
+            { userId: currentUserId },
+            { blockedUserId: currentUserId },
+          ],
+        },
+        attributes: ['userId', 'blockedUserId'],
+      }),
+    ]);
+
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    const blockedUserIds = blocks.map((b) =>
+      b.userId === currentUserId ? b.blockedUserId : b.userId
+    );
+
+    return Array.from(new Set([currentUserId, ...swipedUserIds, ...blockedUserIds]));
+  }
+
   /**
    * Discovers eligible people profiles applying preferences and interest filters
    */
@@ -150,28 +280,7 @@ export class DiscoveryService {
     }
 
     // 3. Build query filters for target discovery users
-    // Exclude users already swiped by current user
-    const existingSwipes = await SwipeAction.findAll({
-      where: { userId: currentUserId },
-      attributes: ['targetUserId'],
-    });
-    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
-
-    // Exclude blocked users in either direction
-    const blocks = await UserBlock.findAll({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId },
-          { blockedUserId: currentUserId },
-        ],
-      },
-      attributes: ['userId', 'blockedUserId'],
-    });
-    const blockedUserIds = blocks.map((b) =>
-      b.userId === currentUserId ? b.blockedUserId : b.userId
-    );
-
-    const excludedIds = Array.from(new Set([currentUserId, ...swipedUserIds, ...blockedUserIds]));
+    const excludedIds = await this.getExcludedUserIds(currentUserId);
 
     const whereClause: any = {
       id: { [Op.notIn]: excludedIds },
@@ -268,15 +377,9 @@ export class DiscoveryService {
         user.isProfileComplete
       );
 
-      const displayName =
-        user.firstName ||
-        (user.fullName ? user.fullName.split(' ')[0] : null) ||
-        user.nickName ||
-        user.username;
-
       return {
         userId: user.id,
-        name: displayName,
+        name: resolveDisplayName(user),
         age: calculateAge(user.dateOfBirth),
         profilePhoto: user.profilePicture || null,
         isVerified: !!user.isFaceVerified,
@@ -303,6 +406,410 @@ export class DiscoveryService {
         total,
         hasMore: offset + mappedProfiles.length < total,
       },
+    };
+  }
+
+  /**
+   * Retrieves Discover by Interests cards with accurate, preference-filtered real people counts
+   */
+  public async getDiscoveryInterests(
+    input: GetDiscoveryInterestsInput
+  ): Promise<GetDiscoveryInterestsOutput> {
+    const { currentUserId, selectedInterestId, search } = input;
+
+    // 1. Fetch current user to determine discovery preferences
+    const currentUser = await User.findByPk(currentUserId);
+    if (!currentUser) {
+      throw new DiscoveryServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
+    }
+
+    // 2. Determine excluded users (self, swiped, blocked)
+    const excludedIds = await this.getExcludedUserIds(currentUserId);
+
+    // 3. Build eligible target users where clause
+    const userWhereClause: any = {
+      id: { [Op.notIn]: excludedIds },
+      isActive: true,
+    };
+
+    if (currentUser.genderPreference) {
+      const pref = currentUser.genderPreference.toLowerCase();
+      if (pref === 'men') {
+        userWhereClause.gender = { [Op.in]: ['male', 'man'] };
+      } else if (pref === 'women') {
+        userWhereClause.gender = { [Op.in]: ['female', 'woman'] };
+      }
+    }
+
+    // 4. Fetch all eligible target user IDs
+    const eligibleUsers = await User.findAll({
+      where: userWhereClause,
+      attributes: ['id'],
+    });
+    const eligibleUserIds = eligibleUsers.map((u) => u.id);
+
+    // 5. Aggregate distinct eligible users count per interest in a single query
+    const countMap = new Map<string, number>();
+    if (eligibleUserIds.length > 0) {
+      const counts = await UserInterest.findAll({
+        where: {
+          userId: { [Op.in]: eligibleUserIds },
+        },
+        attributes: [
+          'interestId',
+          [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('userId'))), 'peopleCount'],
+        ],
+        group: ['interestId'],
+        raw: true,
+      });
+
+      for (const row of counts as any[]) {
+        countMap.set(row.interestId, parseInt(row.peopleCount, 10) || 0);
+      }
+    }
+
+    // 6. Query active interests matching optional search query
+    const interestWhere: any = { isActive: true };
+    if (search && search.trim()) {
+      interestWhere.name = { [Op.iLike || Op.like]: `%${search.trim()}%` };
+    }
+
+    const allInterests = await Interest.findAll({
+      where: interestWhere,
+      order: [['name', 'ASC']],
+    });
+
+    // 7. Format interest cards
+    const items: DiscoveryInterestItem[] = allInterests.map((interest) => {
+      const isSelected = selectedInterestId ? interest.id === selectedInterestId : false;
+      return {
+        id: interest.id,
+        name: interest.name,
+        icon: interest.icon || null,
+        color: (interest as any).color || null,
+        peopleCount: countMap.get(interest.id) || 0,
+        isSelected,
+      };
+    });
+
+    return {
+      interests: items,
+    };
+  }
+
+  /**
+   * Retrieves users who love a selected interest with cursor-based pagination
+   */
+  public async getUsersForInterest(
+    input: GetInterestUsersInput
+  ): Promise<GetInterestUsersOutput> {
+    const {
+      currentUserId,
+      interestId,
+      limit = 20,
+      cursor,
+      page,
+      gender,
+      minAge,
+      maxAge,
+    } = input;
+
+    // 1. Fetch current user
+    const currentUser = await User.findByPk(currentUserId);
+    if (!currentUser) {
+      throw new DiscoveryServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
+    }
+
+    // 2. Validate interest existence and active status
+    const targetInterest = await Interest.findByPk(interestId);
+    if (!targetInterest || !targetInterest.isActive) {
+      throw new DiscoveryServiceError(
+        'Requested interest does not exist or is inactive',
+        404,
+        'INTEREST_NOT_FOUND'
+      );
+    }
+
+    // 3. Determine excluded user IDs
+    const excludedIds = await this.getExcludedUserIds(currentUserId);
+
+    // 4. Build user conditions
+    const userWhereClause: any = {
+      id: { [Op.notIn]: excludedIds },
+      isActive: true,
+    };
+
+    // Gender filter: explicit query overrides profile preference
+    const effectiveGender = gender || currentUser.genderPreference;
+    if (effectiveGender) {
+      const g = effectiveGender.toLowerCase();
+      if (g === 'men' || g === 'male') {
+        userWhereClause.gender = { [Op.in]: ['male', 'man'] };
+      } else if (g === 'women' || g === 'female') {
+        userWhereClause.gender = { [Op.in]: ['female', 'woman'] };
+      }
+    }
+
+    // Age filtering
+    if (minAge != null || maxAge != null) {
+      const today = new Date();
+      const currentYear = today.getFullYear();
+      const currentMonth = String(today.getMonth() + 1).padStart(2, '0');
+      const currentDay = String(today.getDate()).padStart(2, '0');
+
+      const ageConditions: any = {};
+      if (maxAge != null) {
+        const oldestBirth = `${currentYear - maxAge - 1}-${currentMonth}-${currentDay}`;
+        ageConditions[Op.gte] = oldestBirth;
+      }
+      if (minAge != null) {
+        const youngestBirth = `${currentYear - minAge}-${currentMonth}-${currentDay}`;
+        ageConditions[Op.lte] = youngestBirth;
+      }
+      userWhereClause.dateOfBirth = ageConditions;
+    }
+
+    // 5. Pagination offset & limit
+    const validatedLimit = Math.min(50, Math.max(1, limit));
+    let offset = 0;
+
+    if (cursor) {
+      try {
+        const decoded = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf8'));
+        if (typeof decoded.offset !== 'number' || decoded.offset < 0) {
+          throw new Error();
+        }
+        offset = decoded.offset;
+      } catch {
+        throw new DiscoveryServiceError('Invalid cursor provided', 400, 'INVALID_CURSOR');
+      }
+    } else if (page) {
+      offset = Math.max(0, (page - 1) * validatedLimit);
+    }
+
+    // 6. Query matching users who have this interest joined with approved photos
+    const { count: total, rows: users } = await User.findAndCountAll({
+      where: userWhereClause,
+      include: [
+        {
+          model: UserInterest,
+          as: 'userInterests',
+          where: { interestId },
+          required: true,
+          attributes: [],
+        },
+        {
+          model: UserPhoto,
+          as: 'photos',
+          where: { status: 'approved' },
+          required: false,
+        },
+      ],
+      distinct: true,
+      limit: validatedLimit,
+      offset,
+      order: [
+        ['isFaceVerified', 'DESC'],
+        ['createdAt', 'DESC'],
+        ['id', 'ASC'],
+      ],
+    });
+
+    // 7. Map to User Cards
+    const mappedUsers: InterestUserCard[] = users.map((user) => {
+      let distanceKm = calculateDistanceKm(
+        currentUser.latitude,
+        currentUser.longitude,
+        user.latitude,
+        user.longitude
+      );
+
+      if (
+        distanceKm == null &&
+        user.city &&
+        currentUser.city &&
+        user.city.toLowerCase() === currentUser.city.toLowerCase()
+      ) {
+        distanceKm = 7;
+      }
+
+      return {
+        id: user.id,
+        name: resolveDisplayName(user),
+        age: calculateAge(user.dateOfBirth),
+        profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
+        isVerified: Boolean(user.isFaceVerified),
+        distanceKm,
+        sharedInterest: {
+          id: targetInterest.id,
+          name: targetInterest.name,
+        },
+      };
+    });
+
+    const hasMore = offset + mappedUsers.length < total;
+    const nextCursor = hasMore
+      ? Buffer.from(JSON.stringify({ offset: offset + mappedUsers.length })).toString('base64url')
+      : null;
+
+    return {
+      interest: {
+        id: targetInterest.id,
+        name: targetInterest.name,
+        icon: targetInterest.icon || null,
+        totalPeople: total,
+      },
+      users: mappedUsers,
+      pagination: {
+        nextCursor,
+        hasMore,
+        limit: validatedLimit,
+        total,
+      },
+    };
+  }
+
+  /**
+   * Retrieves featured interests with a preview of eligible users for each interest
+   */
+  public async getFeaturedInterestsPreview(
+    currentUserId: string,
+    userLimit = 3
+  ): Promise<GetFeaturedInterestsOutput> {
+    const validatedUserLimit = Math.min(10, Math.max(1, userLimit));
+
+    // 1. Fetch current user
+    const currentUser = await User.findByPk(currentUserId);
+    if (!currentUser) {
+      throw new DiscoveryServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
+    }
+
+    // 2. Fetch active interests
+    const activeInterests = await Interest.findAll({
+      where: { isActive: true },
+      order: [['name', 'ASC']],
+    });
+
+    // 3. Excluded users and eligible targets
+    const excludedIds = await this.getExcludedUserIds(currentUserId);
+    const userWhereClause: any = {
+      id: { [Op.notIn]: excludedIds },
+      isActive: true,
+    };
+
+    if (currentUser.genderPreference) {
+      const pref = currentUser.genderPreference.toLowerCase();
+      if (pref === 'men') {
+        userWhereClause.gender = { [Op.in]: ['male', 'man'] };
+      } else if (pref === 'women') {
+        userWhereClause.gender = { [Op.in]: ['female', 'woman'] };
+      }
+    }
+
+    const eligibleUsers = await User.findAll({
+      where: userWhereClause,
+      attributes: ['id'],
+    });
+    const eligibleUserIds = eligibleUsers.map((u) => u.id);
+
+    const countMap = new Map<string, number>();
+    if (eligibleUserIds.length > 0) {
+      const counts = await UserInterest.findAll({
+        where: {
+          userId: { [Op.in]: eligibleUserIds },
+        },
+        attributes: [
+          'interestId',
+          [sequelize.fn('COUNT', sequelize.fn('DISTINCT', sequelize.col('userId'))), 'peopleCount'],
+        ],
+        group: ['interestId'],
+        raw: true,
+      });
+
+      for (const row of counts as any[]) {
+        countMap.set(row.interestId, parseInt(row.peopleCount, 10) || 0);
+      }
+    }
+
+    // 4. Construct featured previews without N+1 overhead
+    const featuredList: FeaturedInterestItem[] = [];
+
+    for (const interest of activeInterests) {
+      const peopleCount = countMap.get(interest.id) || 0;
+      let previewUsers: InterestUserCard[] = [];
+
+      if (peopleCount > 0) {
+        const users = await User.findAll({
+          where: userWhereClause,
+          include: [
+            {
+              model: UserInterest,
+              as: 'userInterests',
+              where: { interestId: interest.id },
+              required: true,
+              attributes: [],
+            },
+            {
+              model: UserPhoto,
+              as: 'photos',
+              where: { status: 'approved' },
+              required: false,
+            },
+          ],
+          limit: validatedUserLimit,
+          order: [
+            ['isFaceVerified', 'DESC'],
+            ['createdAt', 'DESC'],
+            ['id', 'ASC'],
+          ],
+        });
+
+        previewUsers = users.map((user) => {
+          let distanceKm = calculateDistanceKm(
+            currentUser.latitude,
+            currentUser.longitude,
+            user.latitude,
+            user.longitude
+          );
+
+          if (
+            distanceKm == null &&
+            user.city &&
+            currentUser.city &&
+            user.city.toLowerCase() === currentUser.city.toLowerCase()
+          ) {
+            distanceKm = 7;
+          }
+
+          return {
+            id: user.id,
+            name: resolveDisplayName(user),
+            age: calculateAge(user.dateOfBirth),
+            profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
+            isVerified: Boolean(user.isFaceVerified),
+            distanceKm,
+            sharedInterest: {
+              id: interest.id,
+              name: interest.name,
+            },
+          };
+        });
+      }
+
+      featuredList.push({
+        interest: {
+          id: interest.id,
+          name: interest.name,
+          icon: interest.icon || null,
+          color: (interest as any).color || null,
+          peopleCount,
+        },
+        previewUsers,
+      });
+    }
+
+    return {
+      featured: featuredList,
     };
   }
 }

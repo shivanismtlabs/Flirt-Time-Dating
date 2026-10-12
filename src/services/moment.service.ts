@@ -332,6 +332,279 @@ export class MomentService {
   }
 
   /**
+   * Retrieves active Quick Moments for the discovery / feed screen.
+   * Supports both flat feed mode and stories tray grouped by user.
+   * Enforces 24-hour expiry check, mutual block exclusion, and audience privacy.
+   */
+  public async getAllMoments(
+    viewerId: string,
+    options: { page?: number; limit?: number; type?: 'feed' | 'stories' } = {}
+  ) {
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.min(50, Math.max(1, options.limit || 20));
+    const offset = (page - 1) * limit;
+    const feedType = options.type || 'feed';
+
+    // 1. Identify all blocked relationships
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [{ userId: viewerId }, { blockedUserId: viewerId }],
+      },
+    });
+
+    const blockedUserIds = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === viewerId) blockedUserIds.add(b.blockedUserId);
+      if (b.blockedUserId === viewerId) blockedUserIds.add(b.userId);
+    }
+
+    // 2. Identify matches for matches_only audience filter
+    const matches = await Match.findAll({
+      where: {
+        [Op.or]: [{ user1Id: viewerId }, { user2Id: viewerId }],
+        isActive: true,
+      },
+    });
+    const matchedUserIds = new Set<string>();
+    for (const m of matches) {
+      matchedUserIds.add(m.user1Id === viewerId ? m.user2Id : m.user1Id);
+    }
+    const matchIdsArray = Array.from(matchedUserIds);
+
+    // 3. Construct where clause
+    const now = new Date();
+    const whereConditions: any[] = [
+      { status: 'active' },
+      { expiresAt: { [Op.gt]: now } },
+      {
+        [Op.or]: [
+          { userId: viewerId },
+          { audience: 'everyone' },
+          ...(matchIdsArray.length > 0
+            ? [{ audience: 'matches_only', userId: { [Op.in]: matchIdsArray } }]
+            : []),
+        ],
+      },
+    ];
+
+    if (blockedUserIds.size > 0) {
+      whereConditions.push({
+        userId: { [Op.notIn]: Array.from(blockedUserIds) },
+      });
+    }
+
+    const whereClause = {
+      [Op.and]: whereConditions,
+    };
+
+    // 4. Handle 'stories' tray grouping
+    if (feedType === 'stories') {
+      const activeMoments = await Moment.findAll({
+        where: whereClause,
+        include: [
+          {
+            model: User,
+            as: 'user',
+            where: { isActive: true },
+            attributes: [
+              'id',
+              'username',
+              'fullName',
+              'firstName',
+              'nickName',
+              'profilePicture',
+              'isFaceVerified',
+              'city',
+            ],
+          },
+          {
+            model: MomentMedia,
+            as: 'media',
+          },
+        ],
+        order: [
+          ['publishedAt', 'DESC'],
+          [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+        ],
+      });
+
+      // Group moments by creator
+      const storiesMap = new Map<string, any>();
+      for (const m of activeMoments) {
+        const creator = m.user;
+        if (!creator) continue;
+
+        const sortedMedia = (m.media || []).sort(
+          (a: any, b: any) => a.displayOrder - b.displayOrder
+        );
+        const firstMedia = sortedMedia[0];
+
+        if (!storiesMap.has(creator.id)) {
+          storiesMap.set(creator.id, {
+            creatorId: creator.id,
+            name:
+              creator.nickName ||
+              creator.firstName ||
+              creator.fullName ||
+              creator.username ||
+              'User',
+            profilePhoto: creator.profilePicture || null,
+            isFaceVerified: !!creator.isFaceVerified,
+            city: creator.city || null,
+            isSelf: creator.id === viewerId,
+            momentsCount: 0,
+            latestMoment: {
+              momentId: m.id,
+              thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+              caption: m.caption,
+              publishedAt: m.publishedAt,
+              relativeAge: formatRelativeAge(m.publishedAt),
+            },
+            moments: [],
+          });
+        }
+
+        const entry = storiesMap.get(creator.id);
+        entry.momentsCount += 1;
+        entry.moments.push({
+          momentId: m.id,
+          thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+          mediaCount: sortedMedia.length,
+          caption: m.caption,
+          publishedAt: m.publishedAt,
+          relativeAge: formatRelativeAge(m.publishedAt),
+        });
+      }
+
+      // Viewer's own story first if present, followed by others sorted by latest moment
+      const stories = Array.from(storiesMap.values()).sort((a, b) => {
+        if (a.isSelf) return -1;
+        if (b.isSelf) return 1;
+        return (
+          new Date(b.latestMoment.publishedAt).getTime() -
+          new Date(a.latestMoment.publishedAt).getTime()
+        );
+      });
+
+      return {
+        type: 'stories',
+        totalUsers: stories.length,
+        stories,
+      };
+    }
+
+    // 5. Handle 'feed' mode (flat chronological stream)
+    const { count, rows: moments } = await Moment.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: User,
+          as: 'user',
+          where: { isActive: true },
+          attributes: [
+            'id',
+            'username',
+            'fullName',
+            'firstName',
+            'nickName',
+            'profilePicture',
+            'isFaceVerified',
+            'city',
+          ],
+        },
+        {
+          model: MomentMedia,
+          as: 'media',
+        },
+        {
+          model: MomentReaction,
+          as: 'reactions',
+        },
+      ],
+      distinct: true,
+      order: [
+        ['publishedAt', 'DESC'],
+        [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+      ],
+      limit,
+      offset,
+    });
+
+    const feedItems = moments.map((m: any) => {
+      const creator = m.user;
+      const sortedMedia = (m.media || []).sort(
+        (a: any, b: any) => a.displayOrder - b.displayOrder
+      );
+
+      const reactions = m.reactions || [];
+      const myReactionRecord = reactions.find((r: any) => r.userId === viewerId);
+      const myReaction = myReactionRecord ? myReactionRecord.reaction : null;
+
+      const reactionCounts: Record<string, number> = {
+        heart: 0,
+        love_eyes: 0,
+        fire: 0,
+        laugh: 0,
+        surprised: 0,
+        clap: 0,
+        total: 0,
+      };
+
+      for (const r of reactions) {
+        if (reactionCounts[r.reaction] !== undefined) {
+          reactionCounts[r.reaction] += 1;
+          reactionCounts.total += 1;
+        }
+      }
+
+      const isSelf = creator ? creator.id === viewerId : false;
+
+      return {
+        momentId: m.id,
+        caption: m.caption,
+        audience: m.audience,
+        publishedAt: m.publishedAt,
+        expiresAt: m.expiresAt,
+        relativeAge: formatRelativeAge(m.publishedAt),
+        locationLabel: m.locationLabel,
+        creator: creator
+          ? {
+              creatorId: creator.id,
+              name:
+                creator.nickName ||
+                creator.firstName ||
+                creator.fullName ||
+                creator.username ||
+                'User',
+              profilePhoto: creator.profilePicture || null,
+              isFaceVerified: !!creator.isFaceVerified,
+              city: creator.city || null,
+            }
+          : null,
+        media: sortedMedia.map((media: any) => ({
+          mediaId: media.id,
+          mediaUrl: media.mediaUrl,
+          mediaType: media.mediaType,
+          displayOrder: media.displayOrder,
+        })),
+        thumbnailUrl: sortedMedia[0] ? sortedMedia[0].mediaUrl : null,
+        viewerReaction: myReaction,
+        reactionCounts,
+        canReply: !isSelf,
+      };
+    });
+
+    return {
+      type: 'feed',
+      page,
+      limit,
+      totalCount: count,
+      totalPages: Math.ceil(count / limit),
+      moments: feedItems,
+    };
+  }
+
+  /**
    * Retrieves full details for a single Quick Moment in full-screen viewer mode.
    * Includes ordered media, creator metadata, relative age, viewer reaction, and reaction counts.
    */

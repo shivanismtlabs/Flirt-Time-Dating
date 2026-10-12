@@ -228,6 +228,35 @@ describe('Quick Moments Feature APIs', () => {
       expect(res.body.data.moments[0].timeRemainingMinutes).toBeGreaterThan(0);
     });
 
+    it('should retrieve all users active moments feed via GET /api/v1/moments', async () => {
+      const res = await request(app)
+        .get('/api/v1/moments?page=1&limit=20')
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.type).toBe('feed');
+      expect(res.body.data.moments.length).toBeGreaterThanOrEqual(1);
+      const found = res.body.data.moments.find((m: any) => m.momentId === momentId);
+      expect(found).toBeDefined();
+      expect(found.creator.creatorId).toBe(creatorUser.id);
+      expect(found.media).toHaveLength(1);
+    });
+
+    it('should retrieve all users active moments grouped as stories via GET /api/v1/moments?type=stories', async () => {
+      const res = await request(app)
+        .get('/api/v1/moments?type=stories')
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.type).toBe('stories');
+      expect(res.body.data.stories.length).toBeGreaterThanOrEqual(1);
+      const story = res.body.data.stories.find((s: any) => s.creatorId === creatorUser.id);
+      expect(story).toBeDefined();
+      expect(story.momentsCount).toBeGreaterThanOrEqual(1);
+    });
+
     it('should retrieve full-screen Moment details via GET /api/v1/moments/:momentId', async () => {
       const res = await request(app)
         .get(`/api/v1/moments/${momentId}`)

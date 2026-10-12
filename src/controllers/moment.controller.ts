@@ -57,6 +57,41 @@ export const createMomentHandler = async (
 };
 
 /**
+ * Controller to fetch all active moments for the discovery / stories feed
+ * GET /api/v1/moments
+ */
+export const getAllMomentsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { page, limit, type } = req.query as any;
+
+    const result = await momentService.getAllMoments(viewerId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      type: type as 'feed' | 'stories',
+    });
+
+    return sendSuccess(res, 'Moments retrieved successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(
+      res,
+      error.message || 'Error fetching moments feed',
+      error.statusCode || 500
+    );
+  }
+};
+
+/**
  * Controller to fetch a user's visible Moment thumbnails
  * GET /api/v1/users/:userId/moments
  */

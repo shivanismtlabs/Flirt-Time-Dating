@@ -70,3 +70,12 @@ export const replyMomentSchema = z.object({
       .max(1000, 'Reply message must not exceed 1000 characters'),
   }),
 });
+
+export const getAllMomentsSchema = z.object({
+  query: z.object({
+    page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+    limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    type: z.enum(['feed', 'stories']).optional().default('feed'),
+  }),
+});
+

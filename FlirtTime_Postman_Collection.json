@@ -828,6 +828,42 @@
           "response": []
         },
         {
+          "name": "Get All Moments Feed & Stories (GET /api/v1/moments)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments?page=1&limit=20&type=feed",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (default: 20, max: 50)"
+                },
+                {
+                  "key": "type",
+                  "value": "feed",
+                  "description": "'feed' (chronological moments list) or 'stories' (grouped by creator tray)"
+                }
+              ]
+            },
+            "description": "Returns all active, non-expired Quick Moments across all users for discovery/feed. Excludes blocked users and inactive accounts."
+          },
+          "response": []
+        },
+        {
           "name": "Get User Visible Moments Thumbnails",
           "request": {
             "method": "GET",

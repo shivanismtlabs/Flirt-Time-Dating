@@ -101,10 +101,30 @@ export interface OtherUserProfileResponse {
     durationSeconds: number | null;
   } | null;
   moments: Array<{
+    id?: string;
     momentId: string;
     mediaUrl: string;
+    thumbnailUrl?: string | null;
     mediaType: 'image';
+    mediaCount?: number;
+    hasMultipleMedia?: boolean;
+    caption?: string | null;
+    likesCount?: number;
+    commentsCount?: number;
+    giftsCount?: number;
+    sharesCount?: number;
+    isLiked?: boolean;
+    viewerReaction?: string | null;
+    publishedAt?: Date;
     createdAt: Date;
+    relativeAge?: string;
+    timeAgo?: string;
+    media?: Array<{
+      mediaId: string;
+      mediaUrl: string;
+      mediaType: string;
+      displayOrder: number;
+    }>;
   }>;
   interests: Array<{
     id: string;
@@ -264,39 +284,55 @@ export const getOtherUserProfile = async (
     rawPhotos.find((p) => p.isPrimary)?.imageUrl ||
     null;
 
-  const { Moment: MomentModel, MomentMedia: MomentMediaModel } = await import('../models');
-  const activeMoments = await MomentModel.findAll({
-    where: {
-      userId: targetUserId,
-      status: 'active',
-    },
-    include: [{ model: MomentMediaModel, as: 'media' }],
-    order: [
-      ['publishedAt', 'DESC'],
-      [{ model: MomentMediaModel, as: 'media' }, 'displayOrder', 'ASC'],
-    ],
-  });
-
+  const { momentService } = await import('./moment.service');
   let moments: any[] = [];
-  if (activeMoments.length > 0) {
-    for (const m of activeMoments) {
-      const firstMedia = (m.media || [])[0];
-      if (firstMedia) {
-        moments.push({
-          momentId: m.id,
-          mediaUrl: firstMedia.mediaUrl,
-          mediaType: 'image' as const,
-          createdAt: m.createdAt,
-        });
-      }
-    }
-  } else {
+  try {
+    const userMomentsResult = await momentService.getUserMoments(viewerUserId, targetUserId, {
+      limit: 20,
+    });
+    moments = (userMomentsResult.moments || []).map((m: any) => ({
+      id: m.id,
+      momentId: m.momentId,
+      mediaUrl: m.mediaUrl || m.thumbnailUrl,
+      thumbnailUrl: m.thumbnailUrl,
+      mediaType: 'image' as const,
+      mediaCount: m.mediaCount,
+      hasMultipleMedia: m.hasMultipleMedia,
+      caption: m.caption,
+      likesCount: m.likesCount,
+      commentsCount: m.commentsCount,
+      giftsCount: m.giftsCount || 0,
+      sharesCount: m.sharesCount || 0,
+      isLiked: m.isLiked,
+      viewerReaction: m.viewerReaction,
+      publishedAt: m.publishedAt,
+      createdAt: m.createdAt || m.publishedAt,
+      relativeAge: m.relativeAge,
+      timeAgo: m.timeAgo,
+      media: m.media,
+    }));
+  } catch {
+    moments = [];
+  }
+
+  if (moments.length === 0 && rawPhotos.length > 0) {
     moments = rawPhotos
       .filter((p) => !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
       .map((p) => ({
+        id: p.id,
         momentId: p.id,
         mediaUrl: p.imageUrl,
+        thumbnailUrl: p.imageUrl,
         mediaType: 'image' as const,
+        mediaCount: 1,
+        hasMultipleMedia: false,
+        caption: null,
+        likesCount: 0,
+        commentsCount: 0,
+        giftsCount: 0,
+        sharesCount: 0,
+        isLiked: false,
+        viewerReaction: null,
         createdAt: p.createdAt,
       }));
   }

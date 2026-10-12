@@ -109,23 +109,34 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
     });
   });
 
-  describe('5. Missing Primary Profile Photo', () => {
-    it('should return 422 with MISSING_PRIMARY_PHOTO when user has no primary profile photo', async () => {
+  describe('5. First-Time User Registration (No Prior Profile Photo)', () => {
+    it('should successfully detect real face and approve verification for first-time user without prior profile picture', async () => {
       // Set user's profilePicture to null
       testUser.profilePicture = null;
       await testUser.save();
 
-      const validImage = await createBlankImage(300, 300);
+      const validImage = await createSingleFaceImage(400, 400);
+
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.5, brightness: 82, sharpness: 90 }],
+      });
 
       const res = await request(app)
         .post('/api/v1/gesture-upload')
         .set('Authorization', `Bearer ${authToken}`)
-        .attach('selfie_image', validImage, 'selfie.jpg');
+        .attach('selfie_image', validImage, 'first_selfie.jpg');
 
-      expect(res.status).toBe(422);
-      expect(res.body.success).toBe(false);
-      expect(res.body.error).toBe('MISSING_PRIMARY_PHOTO');
-      expect(res.body.message).toMatch(/no primary profile photo found/i);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('approved');
+      expect(res.body.data.similarity).toBe(100);
+      expect(res.body.data.reasonCode).toBe('VERIFICATION_SUCCESSFUL');
+
+      // Verify user model updated with face verification and profile picture
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.isFaceVerified).toBe(true);
+      expect(updatedUser?.profilePicture).toBe('verifications/user99/test_selfie.jpg');
     });
   });
 

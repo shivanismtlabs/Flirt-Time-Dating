@@ -828,6 +828,42 @@
           "response": []
         },
         {
+          "name": "Get All Moments Feed & Stories (GET /api/v1/moments)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments?page=1&limit=20&type=feed",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "moments"],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (default: 20, max: 50)"
+                },
+                {
+                  "key": "type",
+                  "value": "feed",
+                  "description": "'feed' (chronological moments list) or 'stories' (grouped by creator tray)"
+                }
+              ]
+            },
+            "description": "Returns all active, non-expired Quick Moments across all users for discovery/feed. Excludes blocked users and inactive accounts."
+          },
+          "response": []
+        },
+        {
           "name": "Get User Visible Moments Thumbnails",
           "request": {
             "method": "GET",
@@ -944,6 +980,65 @@
               ]
             },
             "description": "Sends a direct reply to the moment creator, delivering it through the direct chat messaging conversation thread."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Connections & Push Notifications",
+      "item": [
+        {
+          "name": "Send Connect Request (Connect Button)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections/request",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "connections", "request"]
+            },
+            "description": "Triggered when user taps the Connect (+) button on a profile detail screen. Creates a connection request, in-app notification, and dispatches a Firebase Cloud Messaging (FCM) push notification to the recipient's active devices."
+          },
+          "response": []
+        },
+        {
+          "name": "Register FCM Device Token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_sample_device_registration_token_xyz\",\n  \"platform\": \"android\",\n  \"deviceId\": \"pixel_7_pro\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/device-token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "users", "device-token"]
+            },
+            "description": "Registers or refreshes the authenticated user's FCM device token for receiving push notifications. Platforms: 'ios' | 'android' | 'web'."
           },
           "response": []
         }

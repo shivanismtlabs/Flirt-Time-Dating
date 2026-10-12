@@ -2,10 +2,12 @@ import path from 'path';
 import fs from 'fs';
 import { initializeApp, getApps, getApp, cert, App } from 'firebase-admin/app';
 import type { Auth } from 'firebase-admin/auth';
+import type { Messaging } from 'firebase-admin/messaging';
 import { env } from './env';
 
 let firebaseApp: App | null = null;
 let firebaseAuthInstance: Auth | null = null;
+let firebaseMessagingInstance: Messaging | null = null;
 
 /**
  * Initializes and returns the Firebase Admin App singleton instance.
@@ -80,4 +82,28 @@ export const getFirebaseAuth = (): Auth => {
   firebaseAuthInstance = getAuth(app) as Auth;
   return firebaseAuthInstance;
 };
+
+/**
+ * Returns the Firebase Cloud Messaging instance lazily
+ */
+export const getFirebaseMessaging = (): Messaging => {
+  if (firebaseMessagingInstance) {
+    return firebaseMessagingInstance;
+  }
+  const app = getFirebaseApp();
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { getMessaging } = require('firebase-admin/messaging');
+  firebaseMessagingInstance = getMessaging(app) as Messaging;
+  return firebaseMessagingInstance;
+};
+
+/**
+ * Resets cached instances (used in testing/mocking)
+ */
+export const resetFirebaseInstances = (): void => {
+  firebaseApp = null;
+  firebaseAuthInstance = null;
+  firebaseMessagingInstance = null;
+};
+
 

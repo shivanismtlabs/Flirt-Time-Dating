@@ -5,6 +5,7 @@ import {
   reactMomentHandler,
   replyMomentHandler,
   getUserMomentsHandler,
+  getAllMomentsHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -15,6 +16,7 @@ import {
   getUserMomentsSchema,
   reactMomentSchema,
   replyMomentSchema,
+  getAllMomentsSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -22,7 +24,14 @@ const router = Router();
 // All moments endpoints require authentication
 router.use(authenticate);
 
-// 1. Create Quick Moment (1-5 images)
+// 1. All Active Moments Feed / Stories (GET /api/v1/moments?page=1&limit=20&type=feed|stories)
+router.get(
+  '/',
+  validate(getAllMomentsSchema),
+  getAllMomentsHandler
+);
+
+// 2. Create Quick Moment (1-5 images)
 router.post(
   '/',
   handleUploadMomentImages,

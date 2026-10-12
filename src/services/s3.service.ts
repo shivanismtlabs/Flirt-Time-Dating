@@ -125,6 +125,132 @@ export class S3Service {
   }
 
   /**
+   * Resolves an S3 key or external URL to a full public URL
+   */
+  public getPublicUrl(keyOrUrl?: string | null): string {
+    if (!keyOrUrl) return '';
+    if (keyOrUrl.startsWith('http://') || keyOrUrl.startsWith('https://')) {
+      return keyOrUrl;
+    }
+    const cleanKey = keyOrUrl.replace(/^\/+/, '');
+    return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${cleanKey}`;
+  }
+
+  /**
+   * Generates a presigned S3 PUT URL for direct client-side media uploads
+   */
+  public async generatePresignedUploadUrl(
+    userId: string,
+    mimeType = 'image/jpeg',
+    folder = 'quick_moments',
+    expiresInSeconds = 900
+  ): Promise<{
+    uploadUrl: string;
+    key: string;
+    publicUrl: string;
+    expiresInSeconds: number;
+    headers: Record<string, string>;
+  }> {
+    let ext = 'jpg';
+    if (mimeType.includes('png')) ext = 'png';
+    else if (mimeType.includes('webp')) ext = 'webp';
+    else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+    else if (mimeType.includes('mp4') || mimeType.includes('video')) ext = 'mp4';
+
+    const uniqueId = crypto.randomBytes(16).toString('hex');
+    const key = `${folder}/${userId}/${Date.now()}_${uniqueId}.${ext}`;
+    const publicUrl = this.getPublicUrl(key);
+
+    const accessKey = env.AWS_ACCESS_KEY_ID;
+    const secretKey = env.AWS_SECRET_ACCESS_KEY;
+    const region = env.AWS_REGION;
+    const bucket = this.bucket;
+
+    if (!accessKey || !secretKey) {
+      return {
+        uploadUrl: `${publicUrl}?mock_upload=true`,
+        key,
+        publicUrl,
+        expiresInSeconds,
+        headers: {
+          'Content-Type': mimeType,
+        },
+      };
+    }
+
+    try {
+      const dateObj = new Date();
+      const amzDate = dateObj.toISOString().replace(/[:-]|\.\d{3}/g, '');
+      const dateStamp = amzDate.substring(0, 8);
+      const host = `${bucket}.s3.${region}.amazonaws.com`;
+      const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+
+      const queryParams: Record<string, string> = {
+        'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+        'X-Amz-Credential': `${accessKey}/${credentialScope}`,
+        'X-Amz-Date': amzDate,
+        'X-Amz-Expires': expiresInSeconds.toString(),
+        'X-Amz-SignedHeaders': 'host',
+      };
+
+      const sortedQueryString = Object.keys(queryParams)
+        .sort()
+        .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
+        .join('&');
+
+      const canonicalUri = `/${encodeURI(key).replace(/\+/g, '%20')}`;
+      const canonicalHeaders = `host:${host}\n`;
+      const signedHeaders = 'host';
+      const payloadHash = 'UNSIGNED-PAYLOAD';
+
+      const canonicalRequest = [
+        'PUT',
+        canonicalUri,
+        sortedQueryString,
+        canonicalHeaders,
+        signedHeaders,
+        payloadHash,
+      ].join('\n');
+
+      const stringToSign = [
+        'AWS4-HMAC-SHA256',
+        amzDate,
+        credentialScope,
+        crypto.createHash('sha256').update(canonicalRequest).digest('hex'),
+      ].join('\n');
+
+      const kDate = crypto.createHmac('sha256', `AWS4${secretKey}`).update(dateStamp).digest();
+      const kRegion = crypto.createHmac('sha256', kDate).update(region).digest();
+      const kService = crypto.createHmac('sha256', kRegion).update('s3').digest();
+      const kSigning = crypto.createHmac('sha256', kService).update('aws4_request').digest();
+      const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+      const uploadUrl = `https://${host}${canonicalUri}?${sortedQueryString}&X-Amz-Signature=${signature}`;
+
+      return {
+        uploadUrl,
+        key,
+        publicUrl,
+        expiresInSeconds,
+        headers: {
+          'Content-Type': mimeType,
+        },
+      };
+    } catch (err: any) {
+      console.error('[Presigned URL Error]:', err.message);
+      return {
+        uploadUrl: publicUrl,
+        key,
+        publicUrl,
+        expiresInSeconds,
+        headers: {
+          'Content-Type': mimeType,
+        },
+      };
+    }
+  }
+
+  /**
    * Deletes an object from S3 (used for cleanup on failure)
    */
   public async deleteObject(key: string): Promise<void> {

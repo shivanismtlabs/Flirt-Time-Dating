@@ -1255,6 +1255,85 @@ export const seed50DiscoveryUsers = async (forceUpdate = false): Promise<{
       }
     }
 
+    // 5. Seed sample Quick Moments (Stories matching Image 1, 2, and 3)
+    try {
+      const { QuickMoment, QuickMomentReaction } = await import('../models');
+      const alexId = 'a0000000-0000-4000-8000-000000000026';
+      const cindyId = 'a0000000-0000-4000-8000-000000000001';
+      const futureExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+      // Alex's text story: "Who's up for coffee this evening? ☕" (Image 2)
+      let alexStory = await QuickMoment.findOne({
+        where: { userId: alexId, text: "Who's up for coffee this evening? ☕" },
+      });
+      if (!alexStory) {
+        alexStory = await QuickMoment.create({
+          userId: alexId,
+          type: 'text',
+          text: "Who's up for coffee this evening? ☕",
+          backgroundColor: '#2d0b1e',
+          textColor: '#ffffff',
+          viewsCount: 14,
+          repliesCount: 2,
+          status: 'active',
+          publishedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2 hr ago
+          expiresAt: futureExpiry,
+        });
+
+        // Add 3 reactions (😍, 🔥, 😍) from dummy users
+        const reactorIds = [
+          'a0000000-0000-4000-8000-000000000001',
+          'a0000000-0000-4000-8000-000000000002',
+          'a0000000-0000-4000-8000-000000000003',
+        ];
+        const emojis = ['😍', '🔥', '😍'];
+        for (let i = 0; i < reactorIds.length; i++) {
+          await QuickMomentReaction.findOrCreate({
+            where: { quickMomentId: alexStory.id, userId: reactorIds[i] },
+            defaults: { quickMomentId: alexStory.id, userId: reactorIds[i], emoji: emojis[i] },
+          });
+        }
+      }
+
+      // Cindy's image story: Coffee date with myself ☕ (Image 3)
+      let cindyStory = await QuickMoment.findOne({
+        where: { userId: cindyId, caption: 'Coffee date with myself ☕' },
+      });
+      if (!cindyStory) {
+        cindyStory = await QuickMoment.create({
+          userId: cindyId,
+          type: 'image',
+          mediaUrl: 'https://images.unsplash.com/photo-1509785307050-d4066910ec1e?auto=format&fit=crop&w=800&q=80',
+          thumbnailUrl: 'https://images.unsplash.com/photo-1509785307050-d4066910ec1e?auto=format&fit=crop&w=800&q=80',
+          caption: 'Coffee date with myself ☕',
+          locationLabel: '📍 Indore, Madhya Pradesh',
+          viewsCount: 28,
+          repliesCount: 4,
+          status: 'active',
+          publishedAt: new Date(Date.now() - 48 * 60 * 1000), // 48 min ago
+          expiresAt: futureExpiry,
+        });
+
+        // Add 5 reactions (😍, 🔥, 😍, ❤️, 😍) -> Badge: "😍 5"
+        const cindyReactors = [
+          'a0000000-0000-4000-8000-000000000026',
+          'a0000000-0000-4000-8000-000000000027',
+          'a0000000-0000-4000-8000-000000000028',
+          'a0000000-0000-4000-8000-000000000029',
+          'a0000000-0000-4000-8000-000000000030',
+        ];
+        const cindyEmojis = ['😍', '😍', '😍', '🔥', '❤️'];
+        for (let i = 0; i < cindyReactors.length; i++) {
+          await QuickMomentReaction.findOrCreate({
+            where: { quickMomentId: cindyStory.id, userId: cindyReactors[i] },
+            defaults: { quickMomentId: cindyStory.id, userId: cindyReactors[i], emoji: cindyEmojis[i] },
+          });
+        }
+      }
+    } catch (qmErr: any) {
+      console.warn('⚠️ Could not seed sample quick moments:', qmErr.message);
+    }
+
     console.log(
       `✅ Seeded 50 discovery users: ${createdCount} created, ${updatedCount} updated, total: 50.`
     );

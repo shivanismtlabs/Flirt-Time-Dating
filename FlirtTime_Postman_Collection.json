@@ -2323,6 +2323,346 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Quick Moments (24h Ephemeral Stories)",
+      "item": [
+        {
+          "name": "1. Get Quick Moments Tray (Screen 1 Story Bar)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "tray"]
+            },
+            "description": "Screen 1: Horizontal story bar. Returns own avatar bubble (with red + or active story count) and other users' active stories with unread state, preview, time, and reaction badges (e.g. '😍 5', '🔥 3')."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Get My Quick Moments (Screen 2 View Own Slides)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "me"]
+            },
+            "description": "Screen 2: View our own active story slides with author header, progress bars, text or media content, reaction summary badge ('😍🔥 3 · 💬 2 replies'), replies count, and up-drawer data."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Other User's Quick Moments (Screen 3 Cindy Story)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "user", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "a0000000-0000-4000-8000-000000000001",
+                  "description": "Target User UUID (e.g. Cindy)"
+                }
+              ]
+            },
+            "description": "Screen 3: View other user's active quick moment slides with photo, caption ('Coffee date with myself ☕'), location ('📍 Indore, Madhya Pradesh'), quick reaction emoji bar, and reply input."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get Quick Moment Reactions List (Screen 1 Badge Popup)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "reactions"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "emoji", "value": "😍", "disabled": true }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "Opens list of users who reacted to the story when clicking the reaction badge on Screen 1 or Screen 2. Returns total count, emoji breakdown, and user profiles with timestamps."
+          },
+          "response": []
+        },
+        {
+          "name": "5. React to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emoji\": \"😍\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "react"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "React with emoji: 😍, 🔥, 😂, 😮, 👏, ❤️. Toggles off if same emoji is tapped again."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Reply to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Can I join you for coffee? ☕\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "reply"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "Sends a reply message to the story author and increments repliesCount."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Mark Quick Moment Viewed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "view"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "Records that viewer watched this story, turns unread ring to seen, increments viewsCount."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Get Quick Moment Viewers (Story Author Only)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/viewers",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "viewers"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "Returns list of viewers who watched your story with user details and timestamps."
+          },
+          "response": []
+        },
+        {
+          "name": "9. Create Quick Moment (Text Story)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"text\",\n  \"text\": \"Who's up for coffee this evening? ☕\",\n  \"backgroundColor\": \"#2d0b1e\",\n  \"textColor\": \"#ffffff\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments"]
+            },
+            "description": "Creates a 24-hour text story like Alex's slide in Image 2."
+          },
+          "response": []
+        },
+        {
+          "name": "10. Create Quick Moment (Image Upload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file (JPEG/PNG/WebP <= 10MB)"
+                },
+                {
+                  "key": "caption",
+                  "value": "Coffee date with myself ☕",
+                  "type": "text"
+                },
+                {
+                  "key": "locationLabel",
+                  "value": "📍 Indore, Madhya Pradesh",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments"]
+            },
+            "description": "Creates a 24-hour image story like Cindy's slide in Image 3."
+          },
+          "response": []
+        },
+        {
+          "name": "11. Get S3 Presigned Upload URL for Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mimeType\": \"image/jpeg\",\n  \"folder\": \"quick_moments\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/upload-url",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "upload-url"]
+            },
+            "description": "Generates a direct S3 PUT presigned URL for uploading stories directly from mobile devices."
+          },
+          "response": []
+        },
+        {
+          "name": "12. Delete Own Quick Moment",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<QUICK_MOMENT_ID>",
+                  "description": "Quick Moment UUID"
+                }
+              ]
+            },
+            "description": "Deletes own quick moment before 24h expiration."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

@@ -7,6 +7,7 @@ import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
+import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -81,8 +82,16 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       moments = myMomentsResult.moments || [];
     } catch {}
 
+    const rawUser = user.toJSON() as any;
     const profileResponse = {
-      ...user.toJSON(),
+      ...rawUser,
+      profilePicture: formatMediaUrl(rawUser.profilePicture),
+      profileThumbnail: formatThumbnailUrl(rawUser.profilePicture),
+      photos: (rawUser.photos || []).map((p: any) => ({
+        ...p,
+        imageUrl: formatMediaUrl(p.imageUrl),
+        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
+      })),
       moments,
     };
 

@@ -8,6 +8,7 @@ import interestRoutes from './interest.routes';
 import momentRoutes from './moment.routes';
 import quickMomentRoutes from './quickMoment.routes';
 import connectionRoutes from './connection.routes';
+import mediaRoutes from './media.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import { uploadFaceVerification } from '../controllers/faceVerification.controller';
@@ -23,6 +24,7 @@ router.use('/interests', interestRoutes);
 router.use('/moments', momentRoutes);
 router.use('/quick-moments', quickMomentRoutes);
 router.use('/connections', connectionRoutes);
+router.use('/media', mediaRoutes);
 
 // Direct Laravel-compatible gesture-upload endpoint: POST /api/v1/gesture-upload (and /api/gesture-upload)
 router.post('/gesture-upload', authenticate, handleUploadSelfie, uploadFaceVerification);

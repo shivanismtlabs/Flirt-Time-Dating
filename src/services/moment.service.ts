@@ -10,7 +10,7 @@ import {
   Match,
   UserBlock,
 } from '../models';
-import { s3Service } from './s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
 
@@ -235,7 +235,8 @@ export class MomentService {
         locationLabel: moment.locationLabel,
         media: mediaRecords.map((m) => ({
           mediaId: m.id,
-          mediaUrl: m.mediaUrl,
+          mediaUrl: formatMediaUrl(m.mediaUrl),
+          thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
           mediaType: m.mediaType,
           displayOrder: m.displayOrder,
         })),
@@ -396,8 +397,8 @@ export class MomentService {
       name: creatorName,
       fullName: targetUser.fullName || null,
       username: targetUser.username,
-      profilePhoto: targetUser.profilePicture || null,
-      profilePicture: targetUser.profilePicture || null,
+      profilePhoto: targetUser.profilePicture ? formatThumbnailUrl(targetUser.profilePicture) : null,
+      profilePicture: targetUser.profilePicture ? formatMediaUrl(targetUser.profilePicture) : null,
       isVerified: !!targetUser.isFaceVerified,
       isFaceVerified: !!targetUser.isFaceVerified,
       city: targetUser.city || null,
@@ -437,8 +438,8 @@ export class MomentService {
       return {
         id: m.id,
         momentId: m.id,
-        mediaUrl: firstMedia ? firstMedia.mediaUrl : null,
-        thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+        mediaUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
+        thumbnailUrl: firstMedia ? formatThumbnailUrl(firstMedia.mediaUrl) : null,
         mediaCount: sortedMedia.length,
         hasMultipleMedia: sortedMedia.length > 1,
         caption: m.caption,
@@ -453,7 +454,8 @@ export class MomentService {
         creator: creatorInfo,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
-          mediaUrl: media.mediaUrl,
+          mediaUrl: formatMediaUrl(media.mediaUrl),
+          thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
           displayOrder: media.displayOrder,
         })),
@@ -627,14 +629,14 @@ export class MomentService {
               creator.fullName ||
               creator.username ||
               'User',
-            profilePhoto: creator.profilePicture || null,
+            profilePhoto: creator.profilePicture ? formatThumbnailUrl(creator.profilePicture) : null,
             isFaceVerified: !!creator.isFaceVerified,
             city: creator.city || null,
             isSelf: creator.id === viewerId,
             momentsCount: 0,
             latestMoment: {
               momentId: m.id,
-              thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+              thumbnailUrl: firstMedia ? formatThumbnailUrl(firstMedia.mediaUrl) : null,
               caption: m.caption,
               publishedAt: m.publishedAt,
               relativeAge: formatRelativeAge(m.publishedAt),
@@ -648,7 +650,7 @@ export class MomentService {
         entry.momentsCount += 1;
         entry.moments.push({
           momentId: m.id,
-          thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+          thumbnailUrl: firstMedia ? formatThumbnailUrl(firstMedia.mediaUrl) : null,
           mediaCount: sortedMedia.length,
           caption: m.caption,
           publishedAt: m.publishedAt,
@@ -806,8 +808,8 @@ export class MomentService {
               name: creatorDisplayName,
               fullName: creator.fullName || null,
               username: creator.username,
-              profilePhoto: creator.profilePicture || null,
-              profilePicture: creator.profilePicture || null,
+              profilePhoto: creator.profilePicture ? formatThumbnailUrl(creator.profilePicture) : null,
+              profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
               isVerified: !!creator.isFaceVerified,
               isFaceVerified: !!creator.isFaceVerified,
               city: creator.city || null,
@@ -816,12 +818,13 @@ export class MomentService {
           : null,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
-          mediaUrl: media.mediaUrl,
+          mediaUrl: formatMediaUrl(media.mediaUrl),
+          thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
           displayOrder: media.displayOrder,
         })),
-        mediaUrl: sortedMedia[0] ? sortedMedia[0].mediaUrl : null,
-        thumbnailUrl: sortedMedia[0] ? sortedMedia[0].mediaUrl : null,
+        mediaUrl: sortedMedia[0] ? formatMediaUrl(sortedMedia[0].mediaUrl) : null,
+        thumbnailUrl: sortedMedia[0] ? formatThumbnailUrl(sortedMedia[0].mediaUrl) : null,
         mediaCount: sortedMedia.length,
         hasMultipleMedia: sortedMedia.length > 1,
         createdAt: m.createdAt,
@@ -939,7 +942,8 @@ export class MomentService {
       .sort((a: any, b: any) => a.displayOrder - b.displayOrder)
       .map((m: any) => ({
         mediaId: m.id,
-        mediaUrl: m.mediaUrl,
+        mediaUrl: formatMediaUrl(m.mediaUrl),
+        thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
         mediaType: m.mediaType,
         displayOrder: m.displayOrder,
       }));
@@ -993,16 +997,16 @@ export class MomentService {
         name: creatorDisplayName,
         fullName: creator.fullName || null,
         username: creator.username,
-        profilePhoto: creator.profilePicture || null,
-        profilePicture: creator.profilePicture || null,
+        profilePhoto: creator.profilePicture ? formatThumbnailUrl(creator.profilePicture) : null,
+        profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
         isVerified: !!creator.isFaceVerified,
         isFaceVerified: !!creator.isFaceVerified,
         city: creator.city || null,
         location: creator.city || null,
       },
       media,
-      mediaUrl: media[0] ? media[0].mediaUrl : null,
-      thumbnailUrl: media[0] ? media[0].mediaUrl : null,
+      mediaUrl: media[0] ? formatMediaUrl(media[0].mediaUrl) : null,
+      thumbnailUrl: media[0] ? formatThumbnailUrl(media[0].mediaUrl) : null,
       mediaCount: media.length,
       hasMultipleMedia: media.length > 1,
       caption: moment.caption,

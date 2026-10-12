@@ -2663,6 +2663,65 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Media & S3 Presigned Uploads",
+      "item": [
+        {
+          "name": "1. Generate Presigned Upload URL (S3 & Lambda Thumbnails)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"folder\": \"uploads\",\n  \"mimeType\": \"image/jpeg\",\n  \"expiresInSeconds\": 900\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/media/presigned-url",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "media", "presigned-url"]
+            },
+            "description": "Generates direct S3 presigned PUT URL with publicUrl and AWS Lambda-compatible thumbnailUrl."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Generate Upload URL (Alias)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"folder\": \"photos\",\n  \"mimeType\": \"image/png\",\n  \"expiresInSeconds\": 900\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/media/upload-url",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "media", "upload-url"]
+            },
+            "description": "Alias endpoint for generating presigned upload URLs for profile photos, moments, etc."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

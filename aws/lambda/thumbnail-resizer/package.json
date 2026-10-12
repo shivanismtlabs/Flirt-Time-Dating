@@ -1,0 +1,14 @@
+{
+  "name": "flirttime-thumbnail-resizer",
+  "version": "1.0.0",
+  "description": "AWS Lambda function to generate image thumbnails on S3 upload for FlirtTime",
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "build:zip": "npm install --arch=x64 --platform=linux --target=20.0.0 sharp && zip -r function.zip index.mjs node_modules package.json"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.500.0",
+    "sharp": "^0.33.5"
+  }
+}

@@ -42,11 +42,14 @@ export const env = {
   FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
   FIREBASE_SERVICE_ACCOUNT_PATH: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
 
-  // AWS S3 & Rekognition Configuration
+  // AWS S3, Rekognition & Lambda Configuration
   AWS_REGION: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'ap-south-1',
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID || '',
   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY || '',
   AWS_S3_BUCKET: process.env.AWS_S3_BUCKET || process.env.AWS_BUCKET || 'flirttime',
+  AWS_S3_THUMBNAIL_PREFIX: process.env.AWS_S3_THUMBNAIL_PREFIX || 'thumbnails',
+  AWS_LAMBDA_THUMBNAIL_FUNCTION: process.env.AWS_LAMBDA_THUMBNAIL_FUNCTION || 'flirttime-thumbnail-resizer',
+  AWS_CLOUDFRONT_URL: process.env.AWS_CLOUDFRONT_URL || '',
   FACE_SIMILARITY_THRESHOLD: parseFloat(process.env.FACE_SIMILARITY_THRESHOLD || '85.0'),
   FACE_UPLOAD_MAX_SIZE_BYTES: parseInt(process.env.FACE_UPLOAD_MAX_SIZE_BYTES || '5242880', 10), // 5MB
 

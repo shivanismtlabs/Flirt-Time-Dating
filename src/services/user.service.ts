@@ -1,4 +1,5 @@
 import { User } from '../models/user.model';
+import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 
 export interface UpdateProfileInput {
   fullName: string;
@@ -88,6 +89,7 @@ export interface OtherUserProfileResponse {
   age: number | null;
   isVerified: boolean;
   profilePhoto: string | null;
+  profileThumbnail?: string | null;
   city: string;
   distanceKm: number | null;
   bio: string | null;
@@ -321,8 +323,8 @@ export const getOtherUserProfile = async (
       .map((p) => ({
         id: p.id,
         momentId: p.id,
-        mediaUrl: p.imageUrl,
-        thumbnailUrl: p.imageUrl,
+        mediaUrl: formatMediaUrl(p.imageUrl),
+        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
         mediaType: 'image' as const,
         mediaCount: 1,
         hasMultipleMedia: false,
@@ -372,7 +374,8 @@ export const getOtherUserProfile = async (
     name: displayName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
-    profilePhoto: primaryPhoto,
+    profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto) : null,
+    profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto) : null,
     city: targetUser.city || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,

@@ -182,7 +182,58 @@ export class S3Service {
       return keyOrUrl;
     }
     const cleanKey = keyOrUrl.replace(/^\/+/, '');
+    if (env.AWS_CLOUDFRONT_URL) {
+      const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
+      return `${cdnBase}/${cleanKey}`;
+    }
     return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${cleanKey}`;
+  }
+
+  /**
+   * Resolves an S3 key or external URL to an AWS Lambda-generated thumbnail URL
+   * AWS Lambda generates and saves resized thumbnails under: thumbnails/${key}
+   */
+  public getThumbnailUrl(keyOrUrl?: string | null): string {
+    if (!keyOrUrl) return '';
+    const trimmed = keyOrUrl.trim();
+
+    // If it's an external HTTP/HTTPS URL
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      if (trimmed.includes('images.unsplash.com')) {
+        return trimmed.includes('?') ? `${trimmed}&w=300&h=300&fit=crop` : `${trimmed}?w=300&h=300&fit=crop`;
+      }
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.hostname.includes('.amazonaws.com')) {
+          let pathname = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+          if (pathname.startsWith(`${this.bucket}/`)) {
+            pathname = pathname.slice(this.bucket.length + 1);
+          }
+          if (pathname.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`)) {
+            return trimmed;
+          }
+          const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${pathname}`;
+          if (env.AWS_CLOUDFRONT_URL) {
+            const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
+            return `${cdnBase}/${thumbKey}`;
+          }
+          return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
+        }
+      } catch (_) {}
+
+      return trimmed;
+    }
+
+    const cleanKey = trimmed.replace(/^\/+/, '');
+    if (cleanKey.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`)) {
+      return this.getPublicUrl(cleanKey);
+    }
+    const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${cleanKey}`;
+    if (env.AWS_CLOUDFRONT_URL) {
+      const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
+      return `${cdnBase}/${thumbKey}`;
+    }
+    return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
   }
 
   /**
@@ -191,12 +242,13 @@ export class S3Service {
   public async generatePresignedUploadUrl(
     userId: string,
     mimeType = 'image/jpeg',
-    folder = 'quick_moments',
+    folder = 'uploads',
     expiresInSeconds = 900
   ): Promise<{
     uploadUrl: string;
     key: string;
     publicUrl: string;
+    thumbnailUrl: string;
     expiresInSeconds: number;
     headers: Record<string, string>;
   }> {
@@ -209,6 +261,7 @@ export class S3Service {
     const uniqueId = crypto.randomBytes(16).toString('hex');
     const key = `${folder}/${userId}/${Date.now()}_${uniqueId}.${ext}`;
     const publicUrl = this.getPublicUrl(key);
+    const thumbnailUrl = this.getThumbnailUrl(key);
 
     const accessKey = env.AWS_ACCESS_KEY_ID;
     const secretKey = env.AWS_SECRET_ACCESS_KEY;
@@ -220,6 +273,7 @@ export class S3Service {
         uploadUrl: `${publicUrl}?mock_upload=true`,
         key,
         publicUrl,
+        thumbnailUrl,
         expiresInSeconds,
         headers: {
           'Content-Type': mimeType,
@@ -280,6 +334,7 @@ export class S3Service {
         uploadUrl,
         key,
         publicUrl,
+        thumbnailUrl,
         expiresInSeconds,
         headers: {
           'Content-Type': mimeType,
@@ -291,6 +346,7 @@ export class S3Service {
         uploadUrl: publicUrl,
         key,
         publicUrl,
+        thumbnailUrl,
         expiresInSeconds,
         headers: {
           'Content-Type': mimeType,
@@ -317,3 +373,10 @@ export class S3Service {
 }
 
 export const s3Service = new S3Service();
+
+/**
+ * Common universal functions for resolving image and thumbnail URLs across all modules
+ */
+export const formatMediaUrl = (keyOrUrl?: string | null): string => s3Service.getPublicUrl(keyOrUrl);
+export const formatThumbnailUrl = (keyOrUrl?: string | null): string => s3Service.getThumbnailUrl(keyOrUrl);
+

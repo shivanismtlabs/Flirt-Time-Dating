@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
 import { sequelize, User, Interest, UserInterest, UserPhoto } from '../models';
-import { s3Service } from './s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -166,7 +166,11 @@ export class OnboardingService {
       order: [['displayOrder', 'ASC']],
     });
     return {
-      photos,
+      photos: photos.map((p) => ({
+        ...p.toJSON(),
+        imageUrl: formatMediaUrl(p.imageUrl),
+        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
+      })),
     };
   }
 
@@ -208,7 +212,11 @@ export class OnboardingService {
       return createdPhoto;
     });
 
-    return photo;
+    return {
+      ...photo.toJSON(),
+      imageUrl: formatMediaUrl(photo.imageUrl),
+      thumbnailUrl: formatThumbnailUrl(photo.imageUrl),
+    };
   }
 
   /**

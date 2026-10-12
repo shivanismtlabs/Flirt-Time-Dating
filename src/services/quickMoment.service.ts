@@ -6,7 +6,7 @@ import {
   User,
   Notification,
 } from '../models';
-import { s3Service } from './s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 
 export class QuickMomentServiceError extends Error {
   public statusCode: number;
@@ -137,7 +137,7 @@ export class QuickMomentService {
       myStatus = {
         hasActive: true,
         totalActive: myMoments.length,
-        avatar: viewer?.profilePicture || null,
+        avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
         addLabel: formatTimeAgo(latestStory.createdAt, true),
         latestTimeAgo: formatTimeAgo(latestStory.createdAt, true),
         badge: reactionSummary.badgeText
@@ -150,7 +150,8 @@ export class QuickMomentService {
         stories: myMoments.map((m) => ({
           id: m.id,
           type: m.type,
-          thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
+          mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+          thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
           text: m.text,
           createdAt: m.createdAt,
         })),
@@ -186,7 +187,8 @@ export class QuickMomentService {
 
       let preview: any = {
         type: latest.type,
-        thumbnailUrl: latest.thumbnailUrl || latest.mediaUrl,
+        mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
+        thumbnailUrl: formatThumbnailUrl(latest.thumbnailUrl || latest.mediaUrl),
         text: latest.text ? (latest.text.length > 30 ? `${latest.text.slice(0, 30)}...` : latest.text) : null,
         backgroundColor: latest.backgroundColor,
       };
@@ -194,7 +196,7 @@ export class QuickMomentService {
       otherUsers.push({
         userId: author.id,
         name: author.fullName || author.nickName || 'User',
-        avatar: author.profilePicture,
+        avatar: author.profilePicture ? formatThumbnailUrl(author.profilePicture) : null,
         isVerified: !!author.isFaceVerified,
         hasUnread,
         totalStories: moments.length,
@@ -298,8 +300,8 @@ export class QuickMomentService {
         text: m.text,
         backgroundColor: m.backgroundColor || '#2d0b1e',
         textColor: m.textColor || '#ffffff',
-        mediaUrl: m.mediaUrl,
-        thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
+        mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+        thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         caption: m.caption,
         locationLabel: m.locationLabel,
         createdAt: m.createdAt,
@@ -320,7 +322,7 @@ export class QuickMomentService {
           user: {
             id: r.user?.id,
             name: r.user?.fullName || r.user?.nickName || 'User',
-            avatar: r.user?.profilePicture,
+            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
             city: r.user?.city,
             isVerified: !!r.user?.isFaceVerified,
           },
@@ -328,7 +330,7 @@ export class QuickMomentService {
         viewers: (m.views || []).map((v: any) => ({
           userId: v.viewer?.id,
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-          avatar: v.viewer?.profilePicture,
+          avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture) : null,
           isVerified: !!v.viewer?.isFaceVerified,
           viewedAt: v.createdAt,
         })),
@@ -339,7 +341,7 @@ export class QuickMomentService {
       author: {
         id: viewerUserId,
         name: authorName,
-        avatar: viewer?.profilePicture || null,
+        avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
       },
       totalStories: slides.length,
       stories: slides,
@@ -399,8 +401,8 @@ export class QuickMomentService {
         slideIndex: index,
         totalSlides: moments.length,
         type: m.type,
-        mediaUrl: m.mediaUrl,
-        thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
+        mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+        thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         text: m.text,
         backgroundColor: m.backgroundColor,
         textColor: m.textColor,
@@ -423,7 +425,7 @@ export class QuickMomentService {
         id: targetUser.id,
         name: authorDisplayName,
         fullName: targetUser.fullName,
-        avatar: targetUser.profilePicture,
+        avatar: targetUser.profilePicture ? formatThumbnailUrl(targetUser.profilePicture) : null,
         city: targetUser.city,
         isVerified: !!targetUser.isFaceVerified,
       },
@@ -714,7 +716,7 @@ export class QuickMomentService {
     const viewers = views.map((v: any) => ({
       userId: v.viewer?.id,
       name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-      avatar: v.viewer?.profilePicture,
+      avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture) : null,
       isVerified: !!v.viewer?.isFaceVerified,
       city: v.viewer?.city,
       viewedAt: v.createdAt,
@@ -756,11 +758,11 @@ export class QuickMomentService {
         file.mimetype,
         'quick_moments'
       );
-      mediaUrl = s3Service.getPublicUrl(s3Key);
-      thumbnailUrl = mediaUrl;
+      mediaUrl = formatMediaUrl(s3Key);
+      thumbnailUrl = formatThumbnailUrl(s3Key);
     } else if (mediaUrl) {
-      thumbnailUrl = s3Service.getPublicUrl(mediaUrl);
-      mediaUrl = thumbnailUrl;
+      thumbnailUrl = formatThumbnailUrl(mediaUrl);
+      mediaUrl = formatMediaUrl(mediaUrl);
     }
 
     if (type === 'text' && !data.text) {

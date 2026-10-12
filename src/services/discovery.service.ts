@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
 import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto } from '../models';
+import { formatThumbnailUrl } from './s3.service';
 
 export interface DiscoveryQueryInput {
   currentUserId: string;
@@ -189,12 +190,15 @@ export const resolveProfilePhoto = (
   userProfilePicture?: string | null,
   photos?: any[] | null
 ): string | null => {
-  if (userProfilePicture) return userProfilePicture;
-  if (!photos || photos.length === 0) return null;
-  const approvedPhotos = photos.filter((p) => p.status === 'approved');
-  if (approvedPhotos.length === 0) return null;
-  const primary = approvedPhotos.find((p) => p.isPrimary);
-  return primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+  let photo = userProfilePicture || null;
+  if (!photo && photos && photos.length > 0) {
+    const approvedPhotos = photos.filter((p) => p.status === 'approved');
+    if (approvedPhotos.length > 0) {
+      const primary = approvedPhotos.find((p) => p.isPrimary);
+      photo = primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+    }
+  }
+  return photo ? formatThumbnailUrl(photo) : null;
 };
 
 /**
@@ -381,7 +385,7 @@ export class DiscoveryService {
         userId: user.id,
         name: resolveDisplayName(user),
         age: calculateAge(user.dateOfBirth),
-        profilePhoto: user.profilePicture || null,
+        profilePhoto: user.profilePicture ? formatThumbnailUrl(user.profilePicture) : null,
         isVerified: !!user.isFaceVerified,
         city: user.city || 'Mumbai',
         distanceKm,

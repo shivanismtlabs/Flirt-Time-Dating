@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { User, Interest, UserInterest } from '../models';
+import { User, Interest, UserInterest, SwipeAction, UserBlock } from '../models';
 
 export interface DiscoveryQueryInput {
   currentUserId: string;
@@ -150,8 +150,31 @@ export class DiscoveryService {
     }
 
     // 3. Build query filters for target discovery users
+    // Exclude users already swiped by current user
+    const existingSwipes = await SwipeAction.findAll({
+      where: { userId: currentUserId },
+      attributes: ['targetUserId'],
+    });
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+
+    // Exclude blocked users in either direction
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUserId },
+          { blockedUserId: currentUserId },
+        ],
+      },
+      attributes: ['userId', 'blockedUserId'],
+    });
+    const blockedUserIds = blocks.map((b) =>
+      b.userId === currentUserId ? b.blockedUserId : b.userId
+    );
+
+    const excludedIds = Array.from(new Set([currentUserId, ...swipedUserIds, ...blockedUserIds]));
+
     const whereClause: any = {
-      id: { [Op.ne]: currentUserId },
+      id: { [Op.notIn]: excludedIds },
       isActive: true,
     };
 

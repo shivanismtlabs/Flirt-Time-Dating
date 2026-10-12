@@ -7,6 +7,9 @@ import { FaceVerification } from './faceVerification.model';
 import { Interest } from './interest.model';
 import { UserInterest } from './userInterest.model';
 import { UserPhoto } from './userPhoto.model';
+import { SwipeAction } from './swipeAction.model';
+import { Match } from './match.model';
+import { UserBlock } from './userBlock.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -86,6 +89,75 @@ UserPhoto.belongsTo(User, {
   as: 'user',
 });
 
+// User <-> SwipeAction associations
+User.hasMany(SwipeAction, {
+  foreignKey: 'userId',
+  as: 'swipesGiven',
+  onDelete: 'CASCADE',
+});
+
+SwipeAction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(SwipeAction, {
+  foreignKey: 'targetUserId',
+  as: 'swipesReceived',
+  onDelete: 'CASCADE',
+});
+
+SwipeAction.belongsTo(User, {
+  foreignKey: 'targetUserId',
+  as: 'targetUser',
+});
+
+// User <-> Match associations
+User.hasMany(Match, {
+  foreignKey: 'user1Id',
+  as: 'matchesAsUser1',
+  onDelete: 'CASCADE',
+});
+
+User.hasMany(Match, {
+  foreignKey: 'user2Id',
+  as: 'matchesAsUser2',
+  onDelete: 'CASCADE',
+});
+
+Match.belongsTo(User, {
+  foreignKey: 'user1Id',
+  as: 'user1',
+});
+
+Match.belongsTo(User, {
+  foreignKey: 'user2Id',
+  as: 'user2',
+});
+
+// User <-> UserBlock associations
+User.hasMany(UserBlock, {
+  foreignKey: 'userId',
+  as: 'blockedUsers',
+  onDelete: 'CASCADE',
+});
+
+UserBlock.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(UserBlock, {
+  foreignKey: 'blockedUserId',
+  as: 'blockedByUsers',
+  onDelete: 'CASCADE',
+});
+
+UserBlock.belongsTo(User, {
+  foreignKey: 'blockedUserId',
+  as: 'blockedUser',
+});
+
 export {
   sequelize,
   User,
@@ -96,6 +168,9 @@ export {
   Interest,
   UserInterest,
   UserPhoto,
+  SwipeAction,
+  Match,
+  UserBlock,
 };
 
 export const initDb = async (force = false): Promise<void> => {

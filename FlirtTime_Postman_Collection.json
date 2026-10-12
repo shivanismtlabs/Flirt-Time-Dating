@@ -554,6 +554,87 @@
             "description": "Filters discovery candidates who possess the specified interest (e.g. Showing 🎮 Gaming ⓧ) without altering user's own onboarding interests."
           },
           "response": []
+        },
+        {
+          "name": "Discovery Action: Like (Interested)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"like\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Like (Interested) swipe on target discovery candidate. Returns isMatched=true and matchId if reciprocal like exists."
+          },
+          "response": []
+        },
+        {
+          "name": "Discovery Action: Nope (Not My Vibe)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"nope\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Nope (Not my vibe / Not interested) swipe on target discovery candidate. Never creates a match."
+          },
+          "response": []
+        },
+        {
+          "name": "Discovery Action: Super Like (Connect)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"action\": \"super_like\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/actions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "discovery", "actions"]
+            },
+            "description": "Submits a Super Like (Connect star button) swipe on target candidate. Returns match if reciprocal like/super-like exists."
+          },
+          "response": []
         }
       ]
     },

@@ -4,6 +4,9 @@ import { PhoneVerification } from './phoneVerification.model';
 import { EmailVerification } from './emailVerification.model';
 import { UserIdentity } from './userIdentity.model';
 import { FaceVerification } from './faceVerification.model';
+import { Interest } from './interest.model';
+import { UserInterest } from './userInterest.model';
+import { UserPhoto } from './userPhoto.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -34,7 +37,66 @@ FaceVerification.belongsTo(User, {
   onUpdate: 'CASCADE',
 });
 
-export { sequelize, User, PhoneVerification, EmailVerification, UserIdentity, FaceVerification };
+// User <-> Interest Many-to-Many
+User.belongsToMany(Interest, {
+  through: UserInterest,
+  foreignKey: 'userId',
+  otherKey: 'interestId',
+  as: 'interests',
+});
+
+Interest.belongsToMany(User, {
+  through: UserInterest,
+  foreignKey: 'interestId',
+  otherKey: 'userId',
+  as: 'users',
+});
+
+User.hasMany(UserInterest, {
+  foreignKey: 'userId',
+  as: 'userInterests',
+  onDelete: 'CASCADE',
+});
+
+UserInterest.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+Interest.hasMany(UserInterest, {
+  foreignKey: 'interestId',
+  as: 'userInterests',
+  onDelete: 'CASCADE',
+});
+
+UserInterest.belongsTo(Interest, {
+  foreignKey: 'interestId',
+  as: 'interest',
+});
+
+// User <-> UserPhoto One-to-Many
+User.hasMany(UserPhoto, {
+  foreignKey: 'userId',
+  as: 'photos',
+  onDelete: 'CASCADE',
+});
+
+UserPhoto.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+export {
+  sequelize,
+  User,
+  PhoneVerification,
+  EmailVerification,
+  UserIdentity,
+  FaceVerification,
+  Interest,
+  UserInterest,
+  UserPhoto,
+};
 
 export const initDb = async (force = false): Promise<void> => {
   const isForce = force || process.env.FORCE_SYNC === 'true';
@@ -120,6 +182,38 @@ export const initDb = async (force = false): Promise<void> => {
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'profilePicture') THEN
                 ALTER TABLE "users" ADD COLUMN "profilePicture" VARCHAR(500);
               END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lookingFor') THEN
+                ALTER TABLE "users" ADD COLUMN "lookingFor" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'genderPreference') THEN
+                ALTER TABLE "users" ADD COLUMN "genderPreference" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'religion') THEN
+                ALTER TABLE "users" ADD COLUMN "religion" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'city') THEN
+                ALTER TABLE "users" ADD COLUMN "city" VARCHAR(100) DEFAULT 'Mumbai';
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'latitude') THEN
+                ALTER TABLE "users" ADD COLUMN "latitude" FLOAT;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'longitude') THEN
+                ALTER TABLE "users" ADD COLUMN "longitude" FLOAT;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'voicePromptUrl') THEN
+                ALTER TABLE "users" ADD COLUMN "voicePromptUrl" VARCHAR(500);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'voicePromptDuration') THEN
+                ALTER TABLE "users" ADD COLUMN "voicePromptDuration" INTEGER;
+              END IF;
             END IF;
 
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'face_verifications') THEN
@@ -163,10 +257,47 @@ export const initDb = async (force = false): Promise<void> => {
       }
     }
 
+    // Seed initial interests catalog
+    await seedDefaultInterests();
+
     console.log('✅ Database models synchronized successfully.');
   } catch (error) {
     console.error('❌ Error synchronizing database models:', error);
     throw error;
+  }
+};
+
+/**
+ * Seeds default interests into the database if not already present
+ */
+export const seedDefaultInterests = async (): Promise<void> => {
+  try {
+    const defaultInterests = [
+      { name: 'Gaming', icon: '🎮', category: 'Entertainment' },
+      { name: 'Cooking', icon: '🍳', category: 'Lifestyle' },
+      { name: 'Photography', icon: '📷', category: 'Creativity' },
+      { name: 'Shopping', icon: '🛍️', category: 'Lifestyle' },
+      { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
+      { name: 'Yoga', icon: '🧘', category: 'Fitness' },
+      { name: 'Tennis', icon: '🎾', category: 'Sports' },
+      { name: 'Running', icon: '🏃', category: 'Sports' },
+      { name: 'Swimming', icon: '🏊', category: 'Sports' },
+      { name: 'Art', icon: '🎨', category: 'Creativity' },
+      { name: 'Travelling', icon: '✈️', category: 'Travel' },
+      { name: 'Exercise', icon: '🏋️', category: 'Fitness' },
+      { name: 'Music', icon: '🎵', category: 'Entertainment' },
+      { name: 'Drinks', icon: '🍹', category: 'Social' },
+      { name: 'Video games', icon: '🕹️', category: 'Entertainment' },
+    ];
+
+    for (const item of defaultInterests) {
+      await Interest.findOrCreate({
+        where: { name: item.name },
+        defaults: { ...item, isActive: true },
+      });
+    }
+  } catch (err: any) {
+    console.warn('Could not seed default interests:', err.message);
   }
 };
 

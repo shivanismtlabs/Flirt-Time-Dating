@@ -240,6 +240,51 @@ describe('Quick Moments Feature APIs', () => {
       expect(found.media).toHaveLength(1);
     });
 
+    it('should retrieve authenticated user individual moments via GET /api/v1/moments/me and /my', async () => {
+      const resMe = await request(app)
+        .get('/api/v1/moments/me')
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(resMe.status).toBe(200);
+      expect(resMe.body.success).toBe(true);
+      expect(resMe.body.data.userId).toBe(creatorUser.id);
+      expect(resMe.body.data.moments.length).toBeGreaterThanOrEqual(1);
+      expect(resMe.body.data.moments[0].momentId).toBe(momentId);
+      expect(resMe.body.data.moments[0].media).toBeDefined();
+      expect(resMe.body.data.moments[0].likesCount).toBeDefined();
+      expect(resMe.body.data.moments[0].commentsCount).toBeDefined();
+
+      const resMy = await request(app)
+        .get('/api/v1/moments/my')
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(resMy.status).toBe(200);
+      expect(resMy.body.success).toBe(true);
+      expect(resMy.body.data.userId).toBe(creatorUser.id);
+    });
+
+    it('should retrieve other users moments feed via GET /api/v1/moments?scope=others and GET /api/v1/moments/others', async () => {
+      // Viewer requests others' moments (should see creator's moment)
+      const resOthers = await request(app)
+        .get('/api/v1/moments?scope=others&type=feed')
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(resOthers.status).toBe(200);
+      expect(resOthers.body.success).toBe(true);
+      const containsOthers = resOthers.body.data.moments.some((m: any) => m.creator.creatorId === creatorUser.id);
+      expect(containsOthers).toBe(true);
+
+      // Creator requests others' moments (should NOT see their own moment)
+      const resCreatorOthers = await request(app)
+        .get('/api/v1/moments/others')
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(resCreatorOthers.status).toBe(200);
+      expect(resCreatorOthers.body.success).toBe(true);
+      const containsSelf = resCreatorOthers.body.data.moments.some((m: any) => m.creator?.creatorId === creatorUser.id);
+      expect(containsSelf).toBe(false);
+    });
+
     it('should retrieve all users active moments grouped as stories via GET /api/v1/moments?type=stories', async () => {
       const res = await request(app)
         .get('/api/v1/moments?type=stories')

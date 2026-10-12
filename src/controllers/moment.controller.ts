@@ -62,7 +62,7 @@ export const createMomentHandler = async (
 
 /**
  * Controller to fetch all active moments for the discovery / stories feed
- * GET /api/v1/moments
+ * GET /api/v1/moments (supports scope=others, scope=self, scope=matches, scope=all)
  */
 export const getAllMomentsHandler = async (
   req: AuthenticatedRequest,
@@ -74,12 +74,13 @@ export const getAllMomentsHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const { page, limit, type } = req.query as any;
+    const { page, limit, type, scope } = req.query as any;
 
     const result = await momentService.getAllMoments(viewerId, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       type: type as 'feed' | 'stories',
+      scope: scope as 'all' | 'others' | 'self' | 'matches' | 'friends',
     });
 
     return sendSuccess(res, 'Moments retrieved successfully', result, 200);
@@ -96,8 +97,38 @@ export const getAllMomentsHandler = async (
 };
 
 /**
- * Controller to fetch a user's visible Moment thumbnails
- * GET /api/v1/users/:userId/moments
+ * Controller to fetch authenticated user's own moments
+ * GET /api/v1/moments/me, GET /api/v1/moments/my
+ */
+export const getMyMomentsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getUserMoments(viewerId, viewerId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return sendSuccess(res, 'My moments fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching your moments', 500);
+  }
+};
+
+/**
+ * Controller to fetch an individual user's moments
+ * GET /api/v1/moments/user/:userId, GET /api/v1/users/:userId/moments
  */
 export const getUserMomentsHandler = async (
   req: AuthenticatedRequest,
@@ -109,9 +140,14 @@ export const getUserMomentsHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const targetUserId = req.params.userId as string;
+    const rawUserId = req.params.userId as string;
+    const targetUserId = rawUserId === 'me' ? viewerId : rawUserId;
+    const { page, limit } = req.query as any;
 
-    const result = await momentService.getUserMoments(viewerId, targetUserId);
+    const result = await momentService.getUserMoments(viewerId, targetUserId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
 
     return sendSuccess(res, 'User moments fetched successfully', result, 200);
   } catch (error: any) {

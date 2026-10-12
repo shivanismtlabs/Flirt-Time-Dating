@@ -1902,6 +1902,86 @@
       "name": "Moments",
       "item": [
         {
+          "name": "Get Others Moments Feed (See Other Users' Moments)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments?scope=others&type=feed&page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "others",
+                  "description": "others | all | self | matches"
+                },
+                {
+                  "key": "type",
+                  "value": "feed"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Retrieves active Moments feed from other users (excludes own moments). Returns creator info with verified badge, photo, caption, location, timeAgo, likesCount, commentsCount, giftsCount, and sharesCount matching the mobile UI."
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Moments (Individual)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/me?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                "me"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Retrieves the authenticated user's own published Moments (individual moments gallery) with media list, likesCount, commentsCount, and pagination."
+          },
+          "response": []
+        },
+        {
           "name": "Get Moments Feed (Discovery)",
           "request": {
             "method": "GET",

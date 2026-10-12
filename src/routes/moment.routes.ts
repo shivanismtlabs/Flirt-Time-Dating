@@ -6,6 +6,7 @@ import {
   replyMomentHandler,
   getUserMomentsHandler,
   getAllMomentsHandler,
+  getMyMomentsHandler,
   reportMomentHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
@@ -26,14 +27,43 @@ const router = Router();
 // All moments endpoints require authentication
 router.use(authenticate);
 
-// 1. All Active Moments Feed / Stories (GET /api/v1/moments?page=1&limit=20&type=feed|stories)
+// 1. All Active Moments Feed / Stories (GET /api/v1/moments?page=1&limit=20&type=feed|stories&scope=all|others|self|matches)
 router.get(
   '/',
   validate(getAllMomentsSchema),
   getAllMomentsHandler
 );
 
-// 2. Create Moment (1-5 images)
+// 2. Feed alias (GET /api/v1/moments/feed)
+router.get(
+  '/feed',
+  validate(getAllMomentsSchema),
+  getAllMomentsHandler
+);
+
+// 3. See Others' Moments Feed (GET /api/v1/moments/others)
+router.get(
+  '/others',
+  (req, _res, next) => {
+    req.query.scope = req.query.scope || 'others';
+    next();
+  },
+  validate(getAllMomentsSchema),
+  getAllMomentsHandler
+);
+
+// 4. Authenticated User's Individual Moments (GET /api/v1/moments/me & /my)
+router.get(
+  '/me',
+  getMyMomentsHandler
+);
+
+router.get(
+  '/my',
+  getMyMomentsHandler
+);
+
+// 5. Create Moment (1-5 images)
 router.post(
   '/',
   handleUploadMomentImages,
@@ -41,14 +71,14 @@ router.post(
   createMomentHandler
 );
 
-// 2. User Moments listing alias
+// 6. User Moments listing by User ID (GET /api/v1/moments/user/:userId)
 router.get(
   '/user/:userId',
   validate(getUserMomentsSchema),
   getUserMomentsHandler
 );
 
-// 3. Full-screen Moment detail
+// 7. Full-screen Moment detail
 router.get(
   '/:momentId',
   validate(getMomentDetailSchema),

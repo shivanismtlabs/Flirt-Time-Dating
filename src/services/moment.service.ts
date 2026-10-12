@@ -81,11 +81,27 @@ export const formatRelativeAge = (publishedAt: Date): string => {
   return `${diffDays}d ago`;
 };
 
+/**
+ * Formats a short time-ago string matching mobile card header (e.g. 'now', '10m', '1h', '2d')
+ */
+export const formatTimeAgoShort = (publishedAt: Date): string => {
+  const diffMs = Math.max(0, Date.now() - new Date(publishedAt).getTime());
+  const diffMinutes = Math.floor(diffMs / (60 * 1000));
+  const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMinutes < 1) return 'now';
+  if (diffMinutes < 60) return `${diffMinutes}m`;
+  if (diffHours < 24) return `${diffHours}h`;
+  if (diffDays < 7) return `${diffDays}d`;
+  const diffWeeks = Math.floor(diffDays / 7);
+  return `${diffWeeks}w`;
+};
+
 export class MomentService {
   /**
-   * Publishes a new Quick Moment with 1 to 5 images.
-   * Calculates automatic 24-hour expiry strictly on server, ensures atomic persistence,
-   * and cleans up orphaned S3 uploads on failure.
+   * Publishes a new Moment with 1 to 5 images.
+   * Ensures atomic persistence and cleans up orphaned S3 uploads on failure.
    */
   public async createMoment(input: {
     creatorId: string;
@@ -99,7 +115,7 @@ export class MomentService {
     // 1. Validate images presence (1 to 5 required)
     if (!files || files.length === 0) {
       throw new MomentServiceError(
-        'At least 1 image is required to create a Quick Moment',
+        'At least 1 image is required to create a Moment',
         400,
         'NO_IMAGES_PROVIDED'
       );
@@ -107,7 +123,7 @@ export class MomentService {
 
     if (files.length > 5) {
       throw new MomentServiceError(
-        'Maximum 5 images allowed per Quick Moment',
+        'Maximum 5 images allowed per Moment',
         400,
         'TOO_MANY_IMAGES'
       );
@@ -172,9 +188,9 @@ export class MomentService {
       throw uploadErr;
     }
 
-    // 5. Automatic 24-hour expiry calculation strictly on server (UTC)
+    // 5. Permanent Moment - no 24-hour expiry
     const publishedAt = new Date();
-    const expiresAt = new Date(publishedAt.getTime() + 24 * 60 * 60 * 1000);
+    const expiresAt = null;
 
     // 6. Atomic database persistence
     const t = await sequelize.transaction();
@@ -186,7 +202,7 @@ export class MomentService {
           audience,
           status: 'active',
           publishedAt,
-          expiresAt,
+          expiresAt: null,
           locationLabel: locationLabel?.trim() || creator.city || null,
         },
         { transaction: t }
@@ -235,12 +251,23 @@ export class MomentService {
   }
 
   /**
-   * Retrieves visible active Moment thumbnails for a user's profile detail screen.
-   * Enforces 24-hour expiry check, block restrictions, and audience permissions.
+   * Retrieves active Moments created by a specific individual or the authenticated user.
+   * Supports targetUserId = 'me' or target user UUID.
+   * Returns rich moment objects (media list, creator, likesCount, commentsCount)
+   * while maintaining backwards compatibility (momentId, thumbnailUrl, mediaCount).
    */
-  public async getUserMoments(viewerId: string, targetUserId: string) {
+  public async getUserMoments(
+    viewerId: string,
+    targetUserId: string,
+    options: { page?: number; limit?: number } = {}
+  ) {
+    const resolvedUserId =
+      !targetUserId || targetUserId === 'me' || targetUserId === viewerId
+        ? viewerId
+        : targetUserId;
+
     // 1. Check target existence
-    const targetUser = await User.findByPk(targetUserId);
+    const targetUser = await User.findByPk(resolvedUserId);
     if (!targetUser || !targetUser.isActive) {
       throw new MomentServiceError(
         'User not found or unavailable',
@@ -249,101 +276,228 @@ export class MomentService {
       );
     }
 
-    // 2. Block check in both directions
-    const blockRecord = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: viewerId, blockedUserId: targetUserId },
-          { userId: targetUserId, blockedUserId: viewerId },
-        ],
-      },
-    });
+    const isSelf = viewerId === resolvedUserId;
 
-    if (blockRecord) {
-      throw new MomentServiceError(
-        'Moments unavailable due to privacy restrictions',
-        403,
-        'MOMENTS_BLOCKED'
-      );
+    // 2. Block check in both directions if not querying oneself
+    if (!isSelf) {
+      const blockRecord = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: viewerId, blockedUserId: resolvedUserId },
+            { userId: resolvedUserId, blockedUserId: viewerId },
+          ],
+        },
+      });
+
+      if (blockRecord) {
+        throw new MomentServiceError(
+          'Moments unavailable due to privacy restrictions',
+          403,
+          'MOMENTS_BLOCKED'
+        );
+      }
     }
 
     // 3. Check mutual match status if viewer is not the creator
-    const isSelf = viewerId === targetUserId;
     let isMatched = false;
-
     if (!isSelf) {
-      const [u1, u2] = [viewerId, targetUserId].sort();
+      const [u1, u2] = [viewerId, resolvedUserId].sort();
       const match = await Match.findOne({
         where: { user1Id: u1, user2Id: u2, isActive: true },
       });
       isMatched = !!match;
     }
 
-    // 4. Query active, non-expired Moments
-    const now = new Date();
-    const moments = await Moment.findAll({
-      where: {
-        userId: targetUserId,
-        status: 'active',
-        expiresAt: { [Op.gt]: now },
-      },
+    // 4. Pagination
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.min(50, Math.max(1, options.limit || 20));
+    const offset = (page - 1) * limit;
+
+    // 5. Query active Moments
+    const whereConditions: any[] = [
+      { userId: resolvedUserId },
+      { status: 'active' },
+    ];
+
+    if (!isSelf && !isMatched) {
+      whereConditions.push({ audience: { [Op.ne]: 'matches_only' } });
+    }
+
+    const { count, rows: moments } = await Moment.findAndCountAll({
+      where: { [Op.and]: whereConditions },
       include: [
         {
           model: MomentMedia,
           as: 'media',
         },
+        {
+          model: MomentReaction,
+          as: 'reactions',
+        },
       ],
+      distinct: true,
       order: [
         ['publishedAt', 'DESC'],
         [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
       ],
+      limit,
+      offset,
     });
 
-    // 5. Filter out matches_only moments if not matched and not self
-    const visibleMoments = moments.filter((m) => {
-      if (isSelf) return true;
-      if (m.audience === 'matches_only' && !isMatched) return false;
-      return true;
+    // 6. Replies / comments counts
+    const momentIds = moments.map((m: any) => m.id);
+    const repliesCountMap = new Map<string, number>();
+    for (const id of momentIds) {
+      repliesCountMap.set(id, 0);
+    }
+
+    if (momentIds.length > 0) {
+      try {
+        const replyMessages = await ChatMessage.findAll({
+          where: {
+            messageType: 'moment_reply',
+            [Op.or]: momentIds.map((id) => ({
+              metadata: { [Op.like]: `%"momentId":"${id}"%` },
+            })),
+          },
+          attributes: ['metadata'],
+        });
+
+        for (const msg of replyMessages) {
+          if (msg.metadata) {
+            try {
+              const parsed =
+                typeof msg.metadata === 'string'
+                  ? JSON.parse(msg.metadata)
+                  : msg.metadata;
+              if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
+                repliesCountMap.set(
+                  parsed.momentId,
+                  (repliesCountMap.get(parsed.momentId) || 0) + 1
+                );
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
+    const creatorName =
+      targetUser.firstName ||
+      (targetUser.fullName ? targetUser.fullName.split(' ')[0] : null) ||
+      targetUser.nickName ||
+      targetUser.username ||
+      'User';
+
+    const creatorInfo = {
+      id: targetUser.id,
+      creatorId: targetUser.id,
+      userId: targetUser.id,
+      name: creatorName,
+      fullName: targetUser.fullName || null,
+      username: targetUser.username,
+      profilePhoto: targetUser.profilePicture || null,
+      profilePicture: targetUser.profilePicture || null,
+      isVerified: !!targetUser.isFaceVerified,
+      isFaceVerified: !!targetUser.isFaceVerified,
+      city: targetUser.city || null,
+      location: targetUser.city || null,
+    };
+
+    const mappedMoments = moments.map((m: any) => {
+      const sortedMedia = (m.media || []).sort(
+        (a: any, b: any) => a.displayOrder - b.displayOrder
+      );
+      const firstMedia = sortedMedia[0];
+
+      const reactions = m.reactions || [];
+      const myReactionRecord = reactions.find((r: any) => r.userId === viewerId);
+      const myReaction = myReactionRecord ? myReactionRecord.reaction : null;
+
+      const reactionCounts: Record<string, number> = {
+        heart: 0,
+        love_eyes: 0,
+        fire: 0,
+        laugh: 0,
+        surprised: 0,
+        clap: 0,
+        total: 0,
+      };
+
+      for (const r of reactions) {
+        if (reactionCounts[r.reaction] !== undefined) {
+          reactionCounts[r.reaction] += 1;
+          reactionCounts.total += 1;
+        }
+      }
+
+      const commentsCount = repliesCountMap.get(m.id) || 0;
+      const likesCount = reactionCounts.heart || reactionCounts.total || 0;
+
+      return {
+        id: m.id,
+        momentId: m.id,
+        mediaUrl: firstMedia ? firstMedia.mediaUrl : null,
+        thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
+        mediaCount: sortedMedia.length,
+        hasMultipleMedia: sortedMedia.length > 1,
+        caption: m.caption,
+        audience: m.audience,
+        publishedAt: m.publishedAt,
+        createdAt: m.createdAt,
+        expiresAt: m.expiresAt || null,
+        timeRemainingMinutes: null,
+        relativeAge: formatRelativeAge(m.publishedAt),
+        timeAgo: formatTimeAgoShort(m.publishedAt),
+        locationLabel: m.locationLabel || targetUser.city || null,
+        creator: creatorInfo,
+        media: sortedMedia.map((media: any) => ({
+          mediaId: media.id,
+          mediaUrl: media.mediaUrl,
+          mediaType: media.mediaType,
+          displayOrder: media.displayOrder,
+        })),
+        likesCount,
+        commentsCount,
+        giftsCount: 0,
+        sharesCount: 0,
+        isLiked: !!myReaction,
+        viewerReaction: myReaction,
+        reactionCounts,
+        canReply: !isSelf,
+      };
     });
 
     return {
-      userId: targetUserId,
-      moments: visibleMoments.map((m) => {
-        const sortedMedia = (m.media || []).sort(
-          (a: any, b: any) => a.displayOrder - b.displayOrder
-        );
-        const firstMedia = sortedMedia[0];
-        const timeRemainingMinutes = Math.max(
-          0,
-          Math.round((m.expiresAt.getTime() - Date.now()) / (60 * 1000))
-        );
-
-        return {
-          momentId: m.id,
-          thumbnailUrl: firstMedia ? firstMedia.mediaUrl : null,
-          mediaCount: sortedMedia.length,
-          caption: m.caption,
-          publishedAt: m.publishedAt,
-          expiresAt: m.expiresAt,
-          timeRemainingMinutes,
-        };
-      }),
+      userId: resolvedUserId,
+      page,
+      limit,
+      totalCount: count,
+      totalPages: Math.ceil(count / limit),
+      moments: mappedMoments,
     };
   }
 
   /**
-   * Retrieves active Quick Moments for the discovery / feed screen.
+   * Retrieves active Moments for the discovery / feed screen.
    * Supports both flat feed mode and stories tray grouped by user.
-   * Enforces 24-hour expiry check, mutual block exclusion, and audience privacy.
+   * Supports scoping: 'all', 'others' (to see other moments), 'self', 'matches'.
+   * Enforces mutual block exclusion and audience privacy.
    */
   public async getAllMoments(
     viewerId: string,
-    options: { page?: number; limit?: number; type?: 'feed' | 'stories' } = {}
+    options: {
+      page?: number;
+      limit?: number;
+      type?: 'feed' | 'stories';
+      scope?: 'all' | 'others' | 'self' | 'matches' | 'friends';
+    } = {}
   ) {
     const page = Math.max(1, options.page || 1);
     const limit = Math.min(50, Math.max(1, options.limit || 20));
     const offset = (page - 1) * limit;
     const feedType = options.type || 'feed';
+    const scope = options.scope || 'all';
 
     // 1. Identify all blocked relationships
     const blocks = await UserBlock.findAll({
@@ -371,12 +525,43 @@ export class MomentService {
     }
     const matchIdsArray = Array.from(matchedUserIds);
 
-    // 3. Construct where clause
-    const now = new Date();
-    const whereConditions: any[] = [
-      { status: 'active' },
-      { expiresAt: { [Op.gt]: now } },
-      {
+    // 3. Construct where conditions based on scope & privacy
+    const whereConditions: any[] = [{ status: 'active' }];
+
+    if (blockedUserIds.size > 0) {
+      whereConditions.push({
+        userId: { [Op.notIn]: Array.from(blockedUserIds) },
+      });
+    }
+
+    if (scope === 'others') {
+      // Exclude self moments to see other users' moments
+      whereConditions.push({ userId: { [Op.ne]: viewerId } });
+      whereConditions.push({
+        [Op.or]: [
+          { audience: 'everyone' },
+          ...(matchIdsArray.length > 0
+            ? [{ audience: 'matches_only', userId: { [Op.in]: matchIdsArray } }]
+            : []),
+        ],
+      });
+    } else if (scope === 'self') {
+      whereConditions.push({ userId: viewerId });
+    } else if (scope === 'matches' || scope === 'friends') {
+      if (matchIdsArray.length === 0) {
+        return {
+          type: feedType,
+          page,
+          limit,
+          totalCount: 0,
+          totalPages: 0,
+          moments: [],
+        };
+      }
+      whereConditions.push({ userId: { [Op.in]: matchIdsArray } });
+    } else {
+      // Default: 'all'
+      whereConditions.push({
         [Op.or]: [
           { userId: viewerId },
           { audience: 'everyone' },
@@ -384,12 +569,6 @@ export class MomentService {
             ? [{ audience: 'matches_only', userId: { [Op.in]: matchIdsArray } }]
             : []),
         ],
-      },
-    ];
-
-    if (blockedUserIds.size > 0) {
-      whereConditions.push({
-        userId: { [Op.notIn]: Array.from(blockedUserIds) },
       });
     }
 
@@ -459,6 +638,7 @@ export class MomentService {
               caption: m.caption,
               publishedAt: m.publishedAt,
               relativeAge: formatRelativeAge(m.publishedAt),
+              timeAgo: formatTimeAgoShort(m.publishedAt),
             },
             moments: [],
           });
@@ -473,6 +653,7 @@ export class MomentService {
           caption: m.caption,
           publishedAt: m.publishedAt,
           relativeAge: formatRelativeAge(m.publishedAt),
+          timeAgo: formatTimeAgoShort(m.publishedAt),
         });
       }
 
@@ -530,6 +711,44 @@ export class MomentService {
       offset,
     });
 
+    // Batch query comment/reply counts for all moments in page
+    const momentIds = moments.map((m: any) => m.id);
+    const repliesCountMap = new Map<string, number>();
+    for (const id of momentIds) {
+      repliesCountMap.set(id, 0);
+    }
+
+    if (momentIds.length > 0) {
+      try {
+        const replyMessages = await ChatMessage.findAll({
+          where: {
+            messageType: 'moment_reply',
+            [Op.or]: momentIds.map((id) => ({
+              metadata: { [Op.like]: `%"momentId":"${id}"%` },
+            })),
+          },
+          attributes: ['metadata'],
+        });
+
+        for (const msg of replyMessages) {
+          if (msg.metadata) {
+            try {
+              const parsed =
+                typeof msg.metadata === 'string'
+                  ? JSON.parse(msg.metadata)
+                  : msg.metadata;
+              if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
+                repliesCountMap.set(
+                  parsed.momentId,
+                  (repliesCountMap.get(parsed.momentId) || 0) + 1
+                );
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+    }
+
     const feedItems = moments.map((m: any) => {
       const creator = m.user;
       const sortedMedia = (m.media || []).sort(
@@ -558,27 +777,41 @@ export class MomentService {
       }
 
       const isSelf = creator ? creator.id === viewerId : false;
+      const commentsCount = repliesCountMap.get(m.id) || 0;
+      const likesCount = reactionCounts.heart || reactionCounts.total || 0;
+
+      const creatorDisplayName = creator
+        ? creator.firstName ||
+          (creator.fullName ? creator.fullName.split(' ')[0] : null) ||
+          creator.nickName ||
+          creator.username ||
+          'User'
+        : 'User';
 
       return {
+        id: m.id,
         momentId: m.id,
         caption: m.caption,
         audience: m.audience,
         publishedAt: m.publishedAt,
-        expiresAt: m.expiresAt,
+        expiresAt: m.expiresAt || null,
         relativeAge: formatRelativeAge(m.publishedAt),
-        locationLabel: m.locationLabel,
+        timeAgo: formatTimeAgoShort(m.publishedAt),
+        locationLabel: m.locationLabel || (creator ? creator.city : null) || null,
         creator: creator
           ? {
+              id: creator.id,
               creatorId: creator.id,
-              name:
-                creator.nickName ||
-                creator.firstName ||
-                creator.fullName ||
-                creator.username ||
-                'User',
+              userId: creator.id,
+              name: creatorDisplayName,
+              fullName: creator.fullName || null,
+              username: creator.username,
               profilePhoto: creator.profilePicture || null,
+              profilePicture: creator.profilePicture || null,
+              isVerified: !!creator.isFaceVerified,
               isFaceVerified: !!creator.isFaceVerified,
               city: creator.city || null,
+              location: creator.city || null,
             }
           : null,
         media: sortedMedia.map((media: any) => ({
@@ -587,7 +820,16 @@ export class MomentService {
           mediaType: media.mediaType,
           displayOrder: media.displayOrder,
         })),
+        mediaUrl: sortedMedia[0] ? sortedMedia[0].mediaUrl : null,
         thumbnailUrl: sortedMedia[0] ? sortedMedia[0].mediaUrl : null,
+        mediaCount: sortedMedia.length,
+        hasMultipleMedia: sortedMedia.length > 1,
+        createdAt: m.createdAt,
+        likesCount,
+        commentsCount,
+        giftsCount: 0,
+        sharesCount: 0,
+        isLiked: !!myReaction,
         viewerReaction: myReaction,
         reactionCounts,
         canReply: !isSelf,
@@ -643,15 +885,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Check automatic 24-hour expiry
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'This Quick Moment has expired',
-        410,
-        'MOMENT_EXPIRED'
       );
     }
 
@@ -737,38 +970,66 @@ export class MomentService {
       creator.nickName ||
       creator.username;
 
-    const timeRemainingMinutes = Math.max(
-      0,
-      Math.round((moment.expiresAt.getTime() - Date.now()) / (60 * 1000))
-    );
+    // Count comments/replies for this moment
+    let commentsCount = 0;
+    try {
+      commentsCount = await ChatMessage.count({
+        where: {
+          messageType: 'moment_reply',
+          metadata: { [Op.like]: `%"momentId":"${moment.id}"%` },
+        },
+      });
+    } catch {}
+
+    const likesCount = reactionCounts.heart || reactions.length;
 
     return {
+      id: moment.id,
       momentId: moment.id,
       creator: {
+        id: creator.id,
+        creatorId: creator.id,
         userId: creator.id,
         name: creatorDisplayName,
+        fullName: creator.fullName || null,
+        username: creator.username,
         profilePhoto: creator.profilePicture || null,
+        profilePicture: creator.profilePicture || null,
         isVerified: !!creator.isFaceVerified,
+        isFaceVerified: !!creator.isFaceVerified,
         city: creator.city || null,
+        location: creator.city || null,
       },
       media,
+      mediaUrl: media[0] ? media[0].mediaUrl : null,
+      thumbnailUrl: media[0] ? media[0].mediaUrl : null,
+      mediaCount: media.length,
+      hasMultipleMedia: media.length > 1,
       caption: moment.caption,
       audience: moment.audience,
       publishedAt: moment.publishedAt,
+      createdAt: moment.createdAt,
       relativeAge: formatRelativeAge(moment.publishedAt),
-      expiresAt: moment.expiresAt,
-      timeRemainingMinutes,
+      timeAgo: formatTimeAgoShort(moment.publishedAt),
+      expiresAt: moment.expiresAt || null,
+      timeRemainingMinutes: null,
       locationLabel: moment.locationLabel || creator.city || null,
+      likesCount,
+      commentsCount,
+      giftsCount: 0,
+      sharesCount: 0,
+      isLiked: !!myReaction,
+      viewerReaction: myReaction,
       myReaction,
       totalReactions: reactions.length,
       reactionCounts,
-      canReply: !isSelf && moment.expiresAt > new Date(),
+      canReply: !isSelf,
     };
   }
 
   /**
-   * Adds or updates a viewer's emoji reaction on a Quick Moment.
-   * Enforces 1 reaction per viewer (updates if changing emoji), blocks check, and expiry check.
+   * Adds or updates a viewer's emoji reaction on a Moment.
+   * Enforces 1 reaction per viewer (updates if changing emoji) and blocks check.
    */
   public async reactToMoment(
     viewerId: string,
@@ -781,15 +1042,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Expiry check
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'Cannot react to an expired Moment',
-        400,
-        'MOMENT_EXPIRED'
       );
     }
 
@@ -908,15 +1160,6 @@ export class MomentService {
         'Moment not found or unavailable',
         404,
         'MOMENT_NOT_FOUND'
-      );
-    }
-
-    // Expiry check
-    if (moment.expiresAt <= new Date()) {
-      throw new MomentServiceError(
-        'Cannot reply to an expired Moment',
-        400,
-        'MOMENT_EXPIRED'
       );
     }
 

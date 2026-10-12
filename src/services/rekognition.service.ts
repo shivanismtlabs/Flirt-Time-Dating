@@ -5,6 +5,7 @@ import {
   Pose,
   BoundingBox,
 } from '@aws-sdk/client-rekognition';
+import sharp from 'sharp';
 import { getRekognitionClient } from '../config/aws';
 import { env } from '../config/env';
 
@@ -55,15 +56,42 @@ export class RekognitionServiceError extends Error {
 
 export class RekognitionService {
   /**
+   * Normalizes any image format (WebP, HEIC, PNG, high-res, EXIF-rotated)
+   * into a clean baseline sRGB JPEG acceptable by AWS Rekognition
+   */
+  public async normalizeImage(imageBuffer: Buffer): Promise<Buffer> {
+    if (!imageBuffer || imageBuffer.length === 0) return imageBuffer;
+    try {
+      return await sharp(imageBuffer)
+        .rotate() // Automatically orient based on EXIF tags
+        .resize({
+          width: 1920,
+          height: 1920,
+          fit: 'inside',
+          withoutEnlargement: true,
+        })
+        .jpeg({
+          quality: 90,
+          force: true,
+        })
+        .toBuffer();
+    } catch (err: any) {
+      console.warn('[Image Normalization Warning]:', err.message);
+      return imageBuffer;
+    }
+  }
+
+  /**
    * Detects faces and extracts facial quality signals in an image buffer using AWS Rekognition DetectFaces
    */
   public async detectFaces(imageBuffer: Buffer): Promise<RekognitionDetectFaceResult> {
     const client = getRekognitionClient();
+    const cleanBuffer = await this.normalizeImage(imageBuffer);
 
     try {
       const command = new DetectFacesCommand({
         Image: {
-          Bytes: imageBuffer,
+          Bytes: cleanBuffer,
         },
         Attributes: [Attribute.ALL],
       });
@@ -178,12 +206,17 @@ export class RekognitionService {
     const threshold = customThreshold !== undefined ? customThreshold : env.FACE_SIMILARITY_THRESHOLD;
 
     try {
+      const [normSource, normTarget] = await Promise.all([
+        this.normalizeImage(sourceImageBuffer),
+        this.normalizeImage(targetImageBuffer),
+      ]);
+
       const command = new CompareFacesCommand({
         SourceImage: {
-          Bytes: sourceImageBuffer,
+          Bytes: normSource,
         },
         TargetImage: {
-          Bytes: targetImageBuffer,
+          Bytes: normTarget,
         },
         SimilarityThreshold: threshold,
       });

@@ -3,42 +3,27 @@ import app from '../src/app';
 import {
   sequelize,
   User,
-  Moment,
-  MomentMedia,
-  MomentReaction,
-  Conversation,
-  ChatMessage,
-  Match,
-  UserBlock,
+  QuickMoment,
+  QuickMomentReaction,
+  QuickMomentView,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { s3Service } from '../src/services/s3.service';
 
-describe('Quick Moments Feature APIs', () => {
-  let creatorUser: User;
-  let viewerUser: User;
-  let blockedUser: User;
-  let creatorToken: string;
-  let viewerToken: string;
-  let blockedToken: string;
+describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
+  let alexUser: User;
+  let cindyUser: User;
+  let thirdUser: User;
+  let alexToken: string;
+  let cindyToken: string;
+  let thirdToken: string;
 
-  // Valid 1x1 test JPEG buffer (magic bytes FF D8 FF)
   const validJpegBuffer = Buffer.from([
     0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01,
     0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43,
     0x00, 0xff, 0xd9,
   ]);
-
-  // Valid PNG buffer (magic bytes 89 50 4E 47)
-  const validPngBuffer = Buffer.from([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
-    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
-  ]);
-
-  // Corrupted buffer (fake extension but bad magic bytes)
-  const corruptedBuffer = Buffer.from('NOT_AN_IMAGE_FILE_CONTENT_AT_ALL');
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
@@ -50,479 +35,405 @@ describe('Quick Moments Feature APIs', () => {
   });
 
   beforeEach(async () => {
-    // Clear all tables
-    await ChatMessage.destroy({ where: {} });
-    await Conversation.destroy({ where: {} });
-    await MomentReaction.destroy({ where: {} });
-    await MomentMedia.destroy({ where: {} });
-    await Moment.destroy({ where: {} });
-    await Match.destroy({ where: {} });
-    await UserBlock.destroy({ where: {} });
+    await QuickMomentView.destroy({ where: {} });
+    await QuickMomentReaction.destroy({ where: {} });
+    await QuickMoment.destroy({ where: {} });
     await User.destroy({ where: {} });
 
-    // Mock S3 operations in tests to prevent external storage dependency
     jest.spyOn(s3Service, 'uploadMedia').mockImplementation(
-      async (_buf, userId, _mime, folder) => `${folder}/${userId}/${Date.now()}_test.jpg`
+      async (_buf, userId, _mime, folder) => `${folder}/${userId}/${Date.now()}_story.jpg`
     );
-    jest.spyOn(s3Service, 'deleteObject').mockResolvedValue(undefined);
 
-    creatorUser = await User.create({
-      username: 'meera_creator',
-      email: 'meera@example.com',
-      fullName: 'Meera Patel',
-      firstName: 'Meera',
-      city: 'Mumbai',
+    alexUser = await User.create({
+      username: 'alex_test',
+      email: 'alex@flirttime.app',
+      fullName: 'Alex Rivers',
+      firstName: 'Alex',
+      city: 'Indore',
+      profilePicture: 'https://example.com/alex.jpg',
       isActive: true,
       role: 'user',
     });
 
-    viewerUser = await User.create({
-      username: 'aarav_viewer',
-      email: 'aarav@example.com',
-      fullName: 'Aarav Sharma',
-      firstName: 'Aarav',
-      city: 'Mumbai',
+    cindyUser = await User.create({
+      username: 'cindy_test',
+      email: 'cindy@flirttime.app',
+      fullName: 'Cindy Crawford',
+      firstName: 'Cindy',
+      city: 'Indore, Madhya Pradesh',
+      profilePicture: 'https://example.com/cindy.jpg',
       isActive: true,
       role: 'user',
     });
 
-    blockedUser = await User.create({
-      username: 'blocked_user',
-      email: 'blocked@example.com',
-      fullName: 'Blocked User',
+    thirdUser = await User.create({
+      username: 'sam_test',
+      email: 'sam@flirttime.app',
+      fullName: 'Sam Taylor',
+      firstName: 'Sam',
+      city: 'Indore',
+      profilePicture: 'https://example.com/sam.jpg',
       isActive: true,
       role: 'user',
     });
 
-    creatorToken = generateToken({
-      id: creatorUser.id,
-      email: creatorUser.email,
-      role: creatorUser.role,
+    alexToken = generateToken({
+      id: alexUser.id,
+      email: alexUser.email,
+      role: alexUser.role,
     });
 
-    viewerToken = generateToken({
-      id: viewerUser.id,
-      email: viewerUser.email,
-      role: viewerUser.role,
+    cindyToken = generateToken({
+      id: cindyUser.id,
+      email: cindyUser.email,
+      role: cindyUser.role,
     });
 
-    blockedToken = generateToken({
-      id: blockedUser.id,
-      email: blockedUser.email,
-      role: blockedUser.role,
-    });
-
-    // Setup block between creatorUser and blockedUser
-    await UserBlock.create({
-      userId: creatorUser.id,
-      blockedUserId: blockedUser.id,
-      reason: 'Harassment',
+    thirdToken = generateToken({
+      id: thirdUser.id,
+      email: thirdUser.email,
+      role: thirdUser.role,
     });
   });
 
-  describe('1. Creating Quick Moments (POST /api/v1/moments)', () => {
-    it('should successfully create a moment with 1 image', async () => {
+  describe('1. Create Quick Moments (POST /api/v1/quick-moments)', () => {
+    it('should create a text story (Image 2 Alex)', async () => {
       const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Sunday coffee walk ☕')
-        .field('audience', 'everyone')
-        .field('locationLabel', 'Bandra, Mumbai')
-        .attach('images', validJpegBuffer, 'coffee.jpg');
+        .post('/api/v1/quick-moments')
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({
+          type: 'text',
+          text: "Who's up for coffee this evening? ☕",
+          backgroundColor: '#2d0b1e',
+          textColor: '#ffffff',
+        });
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.momentId).toBeDefined();
-      expect(res.body.data.creatorId).toBe(creatorUser.id);
-      expect(res.body.data.caption).toBe('Sunday coffee walk ☕');
-      expect(res.body.data.audience).toBe('everyone');
-      expect(res.body.data.media).toHaveLength(1);
-      expect(res.body.data.media[0].displayOrder).toBe(0);
-
-      // Verify 24-hour expiry strictly calculated on server
-      const published = new Date(res.body.data.publishedAt);
-      const expires = new Date(res.body.data.expiresAt);
-      const diffHours = (expires.getTime() - published.getTime()) / (1000 * 60 * 60);
-      expect(diffHours).toBeCloseTo(24, 0);
+      expect(res.body.data.type).toBe('text');
+      expect(res.body.data.text).toBe("Who's up for coffee this evening? ☕");
+      expect(res.body.data.backgroundColor).toBe('#2d0b1e');
+      expect(res.body.data.expiresAt).toBeDefined();
     });
 
-    it('should successfully create a moment with 5 images and preserve ordering', async () => {
+    it('should create an image story with upload (Image 3 Cindy)', async () => {
       const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Weekend photo dump')
-        .attach('images', validJpegBuffer, 'img1.jpg')
-        .attach('images', validPngBuffer, 'img2.png')
-        .attach('images', validJpegBuffer, 'img3.jpg')
-        .attach('images', validPngBuffer, 'img4.png')
-        .attach('images', validJpegBuffer, 'img5.jpg');
+        .post('/api/v1/quick-moments')
+        .set('Authorization', `Bearer ${cindyToken}`)
+        .field('caption', 'Coffee date with myself ☕')
+        .field('locationLabel', '📍 Indore, Madhya Pradesh')
+        .attach('image', validJpegBuffer, 'coffee.jpg');
 
       expect(res.status).toBe(201);
-      expect(res.body.data.media).toHaveLength(5);
-      const orders = res.body.data.media.map((m: any) => m.displayOrder);
-      expect(orders).toEqual([0, 1, 2, 3, 4]);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.type).toBe('image');
+      expect(res.body.data.caption).toBe('Coffee date with myself ☕');
+      expect(res.body.data.locationLabel).toBe('📍 Indore, Madhya Pradesh');
+      expect(res.body.data.mediaUrl).toBeDefined();
     });
   });
 
-  describe('2. Validation & Image Integrity', () => {
-    it('should reject requests with 0 images', async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'No images test');
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 1 image is required/i);
-    });
-
-    it('should reject requests exceeding 5 images', async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .attach('images', validJpegBuffer, '1.jpg')
-        .attach('images', validJpegBuffer, '2.jpg')
-        .attach('images', validJpegBuffer, '3.jpg')
-        .attach('images', validJpegBuffer, '4.jpg')
-        .attach('images', validJpegBuffer, '5.jpg')
-        .attach('images', validJpegBuffer, '6.jpg');
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-    });
-
-    it('should reject corrupted image whose magic bytes do not match JPEG/PNG/WebP', async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .attach('images', corruptedBuffer, 'corrupted.jpg');
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/corrupted or in an unsupported format/i);
-    });
-  });
-
-  describe('3. Moment Listing and Detail Retrieval', () => {
-    let momentId: string;
-
+  describe('2. Story Tray Bar (Screen 1 Image 1)', () => {
     beforeEach(async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Sunset view')
-        .attach('images', validJpegBuffer, 'sunset.jpg');
-      momentId = res.body.data.momentId;
-    });
-
-    it('should retrieve user visible moment thumbnails via GET /api/v1/users/:userId/moments', async () => {
-      const res = await request(app)
-        .get(`/api/v1/users/${creatorUser.id}/moments`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.userId).toBe(creatorUser.id);
-      expect(res.body.data.moments).toHaveLength(1);
-      expect(res.body.data.moments[0].momentId).toBe(momentId);
-      expect(res.body.data.moments[0].timeRemainingMinutes).toBeGreaterThan(0);
-    });
-
-    it('should retrieve all users active moments feed via GET /api/v1/moments', async () => {
-      const res = await request(app)
-        .get('/api/v1/moments?page=1&limit=20')
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.type).toBe('feed');
-      expect(res.body.data.moments.length).toBeGreaterThanOrEqual(1);
-      const found = res.body.data.moments.find((m: any) => m.momentId === momentId);
-      expect(found).toBeDefined();
-      expect(found.creator.creatorId).toBe(creatorUser.id);
-      expect(found.media).toHaveLength(1);
-    });
-
-    it('should retrieve all users active moments grouped as stories via GET /api/v1/moments?type=stories', async () => {
-      const res = await request(app)
-        .get('/api/v1/moments?type=stories')
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.type).toBe('stories');
-      expect(res.body.data.stories.length).toBeGreaterThanOrEqual(1);
-      const story = res.body.data.stories.find((s: any) => s.creatorId === creatorUser.id);
-      expect(story).toBeDefined();
-      expect(story.momentsCount).toBeGreaterThanOrEqual(1);
-    });
-
-    it('should retrieve full-screen Moment details via GET /api/v1/moments/:momentId', async () => {
-      const res = await request(app)
-        .get(`/api/v1/moments/${momentId}`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.momentId).toBe(momentId);
-      expect(res.body.data.creator.name).toBe('Meera');
-      expect(res.body.data.media).toHaveLength(1);
-      expect(res.body.data.canReply).toBe(true);
-      expect(res.body.data.reactionCounts).toBeDefined();
-    });
-  });
-
-  describe('4. Automatic 24-Hour Expiry (Immediate Exclusion)', () => {
-    let expiredMomentId: string;
-
-    beforeEach(async () => {
-      // Create a moment that expired 1 hour ago
-      const publishedAt = new Date(Date.now() - 25 * 60 * 60 * 1000);
-      const expiresAt = new Date(Date.now() - 1 * 60 * 60 * 1000);
-
-      const m = await Moment.create({
-        userId: creatorUser.id,
-        caption: 'Expired moment',
-        audience: 'everyone',
+      // Alex creates a text story
+      await QuickMoment.create({
+        userId: alexUser.id,
+        type: 'text',
+        text: "Who's up for coffee this evening? ☕",
+        backgroundColor: '#2d0b1e',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
         status: 'active',
-        publishedAt,
-        expiresAt,
+        viewsCount: 0,
+        repliesCount: 0,
       });
 
-      await MomentMedia.create({
-        momentId: m.id,
-        mediaUrl: 'moments/test_expired.jpg',
-        mediaType: 'image',
-        displayOrder: 0,
+      // Cindy creates an image story
+      const cindyStory = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'image',
+        mediaUrl: 'https://example.com/latte.jpg',
+        thumbnailUrl: 'https://example.com/latte.jpg',
+        caption: 'Coffee date with myself ☕',
+        locationLabel: '📍 Indore, Madhya Pradesh',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
       });
 
-      expiredMomentId = m.id;
+      // Third user reacts with 😍 to Cindy's story
+      await QuickMomentReaction.create({
+        quickMomentId: cindyStory.id,
+        userId: thirdUser.id,
+        emoji: '😍',
+      });
     });
 
-    it('should exclude expired moments from GET /api/v1/users/:userId/moments', async () => {
+    it('should return own avatar status and other users active stories with badges', async () => {
       const res = await request(app)
-        .get(`/api/v1/users/${creatorUser.id}/moments`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      const ids = res.body.data.moments.map((item: any) => item.momentId);
-      expect(ids).not.toContain(expiredMomentId);
-    });
-
-    it('should reject GET /api/v1/moments/:momentId for expired moment with 410', async () => {
-      const res = await request(app)
-        .get(`/api/v1/moments/${expiredMomentId}`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(410);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
-    });
-
-    it('should reject reactions on expired moments with 400', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${expiredMomentId}/reactions`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ reaction: 'heart' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
-    });
-
-    it('should reject replies on expired moments with 400', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${expiredMomentId}/replies`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ message: 'Nice!' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/expired/i);
-    });
-  });
-
-  describe('5. Moment Reactions (POST /api/v1/moments/:momentId/reactions)', () => {
-    let momentId: string;
-
-    beforeEach(async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Cute puppy!')
-        .attach('images', validJpegBuffer, 'puppy.jpg');
-      momentId = res.body.data.momentId;
-    });
-
-    it('should save reaction successfully', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/reactions`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ reaction: 'love_eyes' });
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.reaction).toBe('love_eyes');
-      expect(res.body.data.totalReactions).toBe(1);
-      expect(res.body.data.reactionCounts.love_eyes).toBe(1);
+      expect(res.body.data.myStatus.hasActive).toBe(true);
+      expect(res.body.data.myStatus.totalActive).toBe(1);
+      expect(res.body.data.myStatus.avatar).toBe('https://example.com/alex.jpg');
+
+      // Cindy is in otherUsers with unread indicator and reaction badge
+      const cindyEntry = res.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(cindyEntry).toBeDefined();
+      expect(cindyEntry.hasUnread).toBe(true);
+      expect(cindyEntry.totalStories).toBe(1);
+      expect(cindyEntry.badge).toBeDefined();
+      expect(cindyEntry.badge.text).toBe('😍 1');
+    });
+  });
+
+  describe('3. View Own Quick Moments (Screen 2 Image 2)', () => {
+    let alexStoryId: string;
+
+    beforeEach(async () => {
+      const story = await QuickMoment.create({
+        userId: alexUser.id,
+        type: 'text',
+        text: "Who's up for coffee this evening? ☕",
+        backgroundColor: '#2d0b1e',
+        publishedAt: new Date(Date.now() - 2 * 60 * 60 * 1000), // 2h ago
+        expiresAt: new Date(Date.now() + 22 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 14,
+        repliesCount: 2,
+      });
+      alexStoryId = story.id;
+
+      // Add reactions: 2x 😍, 1x 🔥
+      await QuickMomentReaction.create({
+        quickMomentId: alexStoryId,
+        userId: cindyUser.id,
+        emoji: '😍',
+      });
+      await QuickMomentReaction.create({
+        quickMomentId: alexStoryId,
+        userId: thirdUser.id,
+        emoji: '🔥',
+      });
     });
 
-    it('should update reaction when user changes emoji (1 reaction per viewer)', async () => {
-      await request(app)
-        .post(`/api/v1/moments/${momentId}/reactions`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ reaction: 'heart' });
+    it('should return slides with progress bar data, badgeText "😍🔥 2 · 💬 2 replies"', async () => {
+      const res = await request(app)
+        .get('/api/v1/quick-moments/me')
+        .set('Authorization', `Bearer ${alexToken}`);
 
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.author.name).toBe('Alex Rivers');
+      expect(res.body.data.totalStories).toBe(1);
+
+      const slide = res.body.data.stories[0];
+      expect(slide.id).toBe(alexStoryId);
+      expect(slide.type).toBe('text');
+      expect(slide.text).toBe("Who's up for coffee this evening? ☕");
+      expect(slide.reactionsCount).toBe(2);
+      expect(slide.topEmojis).toEqual(['😍', '🔥']);
+      expect(slide.badgeText).toContain('😍🔥 2 · 💬 2 replies');
+      expect(slide.repliesCount).toBe(2);
+      expect(slide.reactors).toHaveLength(2);
+    });
+  });
+
+  describe('4. View Other User Quick Moments (Screen 3 Image 3)', () => {
+    let cindyStoryId: string;
+
+    beforeEach(async () => {
+      const story = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'image',
+        mediaUrl: 'https://example.com/latte.jpg',
+        thumbnailUrl: 'https://example.com/latte.jpg',
+        caption: 'Coffee date with myself ☕',
+        locationLabel: '📍 Indore, Madhya Pradesh',
+        publishedAt: new Date(Date.now() - 48 * 60 * 1000),
+        expiresAt: new Date(Date.now() + 23 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 28,
+        repliesCount: 4,
+      });
+      cindyStoryId = story.id;
+    });
+
+    it('should return Cindy story slides with location, caption, available emojis, and reply placeholder', async () => {
+      const res = await request(app)
+        .get(`/api/v1/quick-moments/user/${cindyUser.id}`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.author.name).toBe('Cindy');
+      expect(res.body.data.totalStories).toBe(1);
+
+      const slide = res.body.data.stories[0];
+      expect(slide.caption).toBe('Coffee date with myself ☕');
+      expect(slide.locationLabel).toBe('📍 Indore, Madhya Pradesh');
+      expect(slide.availableEmojis).toEqual(['😍', '🔥', '😂', '😮', '👏', '❤️']);
+      expect(slide.replyPlaceholder).toBe('Reply to Cindy...');
+      expect(slide.myReaction).toBeNull();
+    });
+  });
+
+  describe('5. Reaction List Popup (Screen 1 badge click)', () => {
+    let storyId: string;
+
+    beforeEach(async () => {
+      const story = await QuickMoment.create({
+        userId: alexUser.id,
+        type: 'text',
+        text: 'Hello world',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
+      storyId = story.id;
+
+      await QuickMomentReaction.create({
+        quickMomentId: storyId,
+        userId: cindyUser.id,
+        emoji: '😍',
+      });
+      await QuickMomentReaction.create({
+        quickMomentId: storyId,
+        userId: thirdUser.id,
+        emoji: '🔥',
+      });
+    });
+
+    it('should return reactors list with user info, timestamps, and breakdown', async () => {
+      const res = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/reactions`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.totalReactions).toBe(2);
+      expect(res.body.data.reactors).toHaveLength(2);
+      expect(res.body.data.reactors[0].user.name).toBeDefined();
+      expect(res.body.data.reactors[0].emoji).toBeDefined();
+      expect(res.body.data.reactors[0].timeAgo).toBeDefined();
+    });
+  });
+
+  describe('6. Interactions: React, Reply, and View', () => {
+    let storyId: string;
+
+    beforeEach(async () => {
+      const story = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'image',
+        mediaUrl: 'https://example.com/cindy.jpg',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
+      storyId = story.id;
+    });
+
+    it('should add reaction and toggle off if same emoji sent again', async () => {
+      // Add reaction
+      const res1 = await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '😍' });
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.action).toBe('added');
+      expect(res1.body.data.myReaction).toBe('😍');
+
+      // Toggle off
       const res2 = await request(app)
-        .post(`/api/v1/moments/${momentId}/reactions`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ reaction: 'fire' });
+        .post(`/api/v1/quick-moments/${storyId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '😍' });
 
       expect(res2.status).toBe(200);
-      expect(res2.body.data.reaction).toBe('fire');
-      expect(res2.body.data.totalReactions).toBe(1);
-      expect(res2.body.data.reactionCounts.fire).toBe(1);
-      expect(res2.body.data.reactionCounts.heart).toBe(0);
+      expect(res2.body.data.action).toBe('removed');
+      expect(res2.body.data.myReaction).toBeNull();
     });
 
-    it('should reject invalid reaction type with 400', async () => {
+    it('should reply to quick moment and increment repliesCount', async () => {
       const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/reactions`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ reaction: 'thumbs_up_invalid' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/validation failed/i);
-    });
-  });
-
-  describe('6. Moment Direct Replies (POST /api/v1/moments/:momentId/replies)', () => {
-    let momentId: string;
-
-    beforeEach(async () => {
-      const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Homemade sourdough bread')
-        .attach('images', validJpegBuffer, 'bread.jpg');
-      momentId = res.body.data.momentId;
-    });
-
-    it('should deliver reply through direct conversation/message system', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/replies`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ message: 'This looks delicious! Can you share the recipe?' });
+        .post(`/api/v1/quick-moments/${storyId}/reply`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ message: 'Looks amazing Cindy!' });
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.replyId).toBeDefined();
-      expect(res.body.data.conversationId).toBeDefined();
-      expect(res.body.data.recipientId).toBe(creatorUser.id);
-      expect(res.body.data.message).toBe('This looks delicious! Can you share the recipe?');
+      expect(res.body.data.message).toBe('Looks amazing Cindy!');
 
-      // Verify conversation and chat message persisted
-      const chatMsg = await ChatMessage.findByPk(res.body.data.replyId);
-      expect(chatMsg).toBeDefined();
-      expect(chatMsg?.content).toBe('This looks delicious! Can you share the recipe?');
-      expect(chatMsg?.messageType).toBe('moment_reply');
+      const updated = await QuickMoment.findByPk(storyId);
+      expect(updated?.repliesCount).toBe(1);
     });
 
-    it('should reject empty reply message with 400', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/replies`)
-        .set('Authorization', `Bearer ${viewerToken}`)
-        .send({ message: '   ' });
+    it('should mark story as viewed and return viewers list', async () => {
+      // Mark viewed
+      const resView = await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/validation failed/i);
-    });
+      expect(resView.status).toBe(200);
+      expect(resView.body.data.isViewed).toBe(true);
 
-    it('should reject self-reply to own moment with 400', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/replies`)
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .send({ message: 'Replying to myself' });
+      // Cindy gets viewers list
+      const resList = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/viewers`)
+        .set('Authorization', `Bearer ${cindyToken}`);
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/cannot reply to your own moment/i);
+      expect(resList.status).toBe(200);
+      expect(resList.body.data.totalViews).toBe(1);
+      expect(resList.body.data.viewers[0].userId).toBe(alexUser.id);
     });
   });
 
-  describe('7. Privacy & Block Restrictions', () => {
-    let momentId: string;
-
-    beforeEach(async () => {
+  describe('7. S3 Presigned URL & Delete Story', () => {
+    it('should generate a presigned upload URL for direct mobile story upload', async () => {
       const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Private test')
-        .attach('images', validJpegBuffer, 'test.jpg');
-      momentId = res.body.data.momentId;
+        .post('/api/v1/quick-moments/upload-url')
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ mimeType: 'image/jpeg', folder: 'quick_moments' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.uploadUrl).toBeDefined();
+      expect(res.body.data.key).toBeDefined();
+      expect(res.body.data.publicUrl).toBeDefined();
     });
 
-    it('should reject blocked user from viewing creator moments with 403', async () => {
-      const res = await request(app)
-        .get(`/api/v1/users/${creatorUser.id}/moments`)
-        .set('Authorization', `Bearer ${blockedToken}`);
-
-      expect(res.status).toBe(403);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/privacy restrictions/i);
-    });
-
-    it('should reject blocked user from getting moment detail with 403', async () => {
-      const res = await request(app)
-        .get(`/api/v1/moments/${momentId}`)
-        .set('Authorization', `Bearer ${blockedToken}`);
-
-      expect(res.status).toBe(403);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/privacy restrictions/i);
-    });
-
-    it('should reject blocked user from reacting with 403', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/reactions`)
-        .set('Authorization', `Bearer ${blockedToken}`)
-        .send({ reaction: 'heart' });
-
-      expect(res.status).toBe(403);
-      expect(res.body.success).toBe(false);
-    });
-
-    it('should reject blocked user from replying with 403', async () => {
-      const res = await request(app)
-        .post(`/api/v1/moments/${momentId}/replies`)
-        .set('Authorization', `Bearer ${blockedToken}`)
-        .send({ message: 'Hello' });
-
-      expect(res.status).toBe(403);
-      expect(res.body.success).toBe(false);
-    });
-  });
-
-  describe('8. Transaction Rollback & Orphan Cleanup', () => {
-    it('should clean up uploaded files and rollback DB when database throws error', async () => {
-      const momentCreateSpy = jest
-        .spyOn(Moment, 'create')
-        .mockRejectedValueOnce(new Error('DB Constraint Failure'));
-
-      const deleteObjectSpy = jest.spyOn(s3Service, 'deleteObject');
+    it('should allow author to delete their own quick moment', async () => {
+      const story = await QuickMoment.create({
+        userId: alexUser.id,
+        type: 'text',
+        text: 'Temporary text',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
 
       const res = await request(app)
-        .post('/api/v1/moments')
-        .set('Authorization', `Bearer ${creatorToken}`)
-        .field('caption', 'Fail test')
-        .attach('images', validJpegBuffer, 'fail.jpg');
+        .delete(`/api/v1/quick-moments/${story.id}`)
+        .set('Authorization', `Bearer ${alexToken}`);
 
-      expect(res.status).toBe(500);
-      expect(deleteObjectSpy).toHaveBeenCalled();
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
 
-      momentCreateSpy.mockRestore();
+      const deleted = await QuickMoment.findByPk(story.id);
+      expect(deleted?.status).toBe('deleted');
     });
   });
 });

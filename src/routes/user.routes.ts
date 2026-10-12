@@ -34,17 +34,17 @@ router.use(authenticate);
 router.post('/device-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
 
 // Profile Onboarding Endpoints
-router.get('/profile', getProfile);
+router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 
 // Target / Other User Profile Detail Screen
-router.get('/:userId/profile', validate(getOtherUserProfileSchema), getOtherUserProfileHandler);
+router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 
 // User Visible Moments Thumbnails Screen
 router.get(
   '/:userId/moments',
   validate(getUserMomentsSchema),
-  getUserMomentsHandler
+  (req, res) => getUserMomentsHandler(req, res)
 );
 
 // Moderation Endpoints: Block and Report User

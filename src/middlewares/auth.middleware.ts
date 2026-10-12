@@ -7,12 +7,28 @@ export interface AuthenticatedRequest extends Request {
 }
 
 export const authenticate = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  // Support standard Authorization, reverse-proxy headers (Apache/cPanel/Nginx), and query fallback
+  const rawAuth =
+    (req.headers.authorization as string) ||
+    ((req.headers as any).Authorization as string) ||
+    ((req.headers as any)['x-access-token'] as string) ||
+    ((req.headers as any)['x-authorization'] as string) ||
+    ((req.headers as any)['http_authorization'] as string) ||
+    ((req.query?.token || req.query?.access_token) as string);
+
+  if (!rawAuth || typeof rawAuth !== 'string' || !rawAuth.trim()) {
     return sendError(res, 'Authentication token missing or malformed', 401);
   }
 
-  const token = authHeader.split(' ')[1];
+  const cleanHeader = rawAuth.trim();
+  const token = cleanHeader.startsWith('Bearer ')
+    ? cleanHeader.slice(7).trim()
+    : cleanHeader;
+
+  if (!token) {
+    return sendError(res, 'Authentication token missing or malformed', 401);
+  }
+
   try {
     const payload = verifyToken(token);
     req.user = payload;

@@ -45,8 +45,14 @@ export const getMomentDetailSchema = z.object({
 
 export const getUserMomentsSchema = z.object({
   params: z.object({
-    userId: z.string().uuid('Invalid user ID format'),
+    userId: z.string().min(1, 'User ID is required'),
   }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
 });
 
 export const reactMomentSchema = z.object({
@@ -76,6 +82,7 @@ export const getAllMomentsSchema = z.object({
     page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
     limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
     type: z.enum(['feed', 'stories']).optional().default('feed'),
+    scope: z.enum(['all', 'others', 'self', 'matches', 'friends']).optional().default('all'),
   }),
 });
 

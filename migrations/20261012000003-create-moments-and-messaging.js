@@ -39,7 +39,7 @@ module.exports = {
         defaultValue: Sequelize.fn('NOW'),
       },
       expiresAt: {
-        allowNull: false,
+        allowNull: true,
         type: Sequelize.DATE,
       },
       locationLabel: {

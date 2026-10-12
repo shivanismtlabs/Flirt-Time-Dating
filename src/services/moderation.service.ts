@@ -225,7 +225,7 @@ export class ModerationService {
     // 3. Reject expired moments
     const isExpired =
       moment.status === 'expired' ||
-      new Date(moment.expiresAt).getTime() <= Date.now();
+      (!!moment.expiresAt && new Date(moment.expiresAt).getTime() <= Date.now());
     if (isExpired) {
       throw new ModerationServiceError(
         'Moment has expired and cannot be reported',

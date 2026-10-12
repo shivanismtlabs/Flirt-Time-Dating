@@ -209,3 +209,30 @@ export const getFeaturedInterests = async (req: AuthenticatedRequest, res: Respo
     );
   }
 };
+
+/**
+ * Controller to seed 50 dummy users for people discovery
+ * POST /api/v1/discovery/seed-dummy-data (and /api/discovery/seed-dummy-data)
+ */
+export const seedDummyUsersHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const force = req.query.force === 'true' || req.body?.force === true;
+    const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
+    const result = await seed50DiscoveryUsers(force);
+
+    return sendSuccess(
+      res,
+      '50 dummy discovery users seeded successfully',
+      result,
+      200
+    );
+  } catch (error: any) {
+    console.error('[Seed Dummy Users Error]:', error);
+    return sendError(
+      res,
+      error.message || 'Error seeding dummy discovery users',
+      500,
+      'INTERNAL_SERVER_ERROR'
+    );
+  }
+};

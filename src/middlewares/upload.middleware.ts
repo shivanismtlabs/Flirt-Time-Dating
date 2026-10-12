@@ -280,4 +280,68 @@ export const handleUploadMomentImages = (
   });
 };
 
+/**
+ * Middleware for single Quick Moment image/media upload (Max 10MB)
+ * Field: 'image', 'photo', 'media', 'file'
+ */
+export const uploadQuickMomentMedia = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024,
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported image format (${file.mimetype}). Please upload JPEG, PNG, or WebP.`));
+    }
+  },
+});
+
+export const handleUploadQuickMomentMedia = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const upload = uploadQuickMomentMedia.fields([
+    { name: 'image', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
+    { name: 'media', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+  ]);
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'File size exceeds 10MB limit. Please upload a smaller image.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(res, err.message || 'Media upload error', 400, 'UPLOAD_ERROR');
+    }
+
+    // Populate req.file for single-file handlers
+    if (req.files) {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      const matched =
+        filesObj.image?.[0] ||
+        filesObj.photo?.[0] ||
+        filesObj.media?.[0] ||
+        filesObj.file?.[0];
+      if (matched) {
+        req.file = matched;
+      }
+    }
+
+    return next();
+  });
+};
+
 

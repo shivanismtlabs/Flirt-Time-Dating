@@ -11,7 +11,7 @@ export interface MomentAttributes {
   audience: MomentAudience;
   status: MomentStatus;
   publishedAt: Date;
-  expiresAt: Date;
+  expiresAt?: Date | null;
   locationLabel?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -20,7 +20,7 @@ export interface MomentAttributes {
 export interface MomentCreationAttributes
   extends Optional<
     MomentAttributes,
-    'id' | 'caption' | 'audience' | 'status' | 'locationLabel' | 'createdAt' | 'updatedAt'
+    'id' | 'caption' | 'audience' | 'status' | 'expiresAt' | 'locationLabel' | 'createdAt' | 'updatedAt'
   > {}
 
 export class Moment
@@ -32,7 +32,7 @@ export class Moment
   declare public audience: MomentAudience;
   declare public status: MomentStatus;
   declare public publishedAt: Date;
-  declare public expiresAt: Date;
+  declare public expiresAt: Date | null;
   declare public locationLabel: string | null;
 
   declare public readonly createdAt: Date;
@@ -80,7 +80,7 @@ Moment.init(
     },
     expiresAt: {
       type: DataTypes.DATE,
-      allowNull: false,
+      allowNull: true,
     },
     locationLabel: {
       type: DataTypes.STRING(100),

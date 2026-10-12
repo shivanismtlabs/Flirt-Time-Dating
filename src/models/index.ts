@@ -19,6 +19,9 @@ import { ChatMessage } from './chatMessage.model';
 import { ConnectionRequest } from './connectionRequest.model';
 import { UserDevice } from './userDevice.model';
 import { Notification } from './notification.model';
+import { QuickMoment } from './quickMoment.model';
+import { QuickMomentReaction } from './quickMomentReaction.model';
+import { QuickMomentView } from './quickMomentView.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -358,6 +361,52 @@ Notification.belongsTo(User, {
   as: 'sender',
 });
 
+// User <-> QuickMoment associations
+User.hasMany(QuickMoment, {
+  foreignKey: 'userId',
+  as: 'quickMoments',
+  onDelete: 'CASCADE',
+});
+
+QuickMoment.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'author',
+});
+
+// QuickMoment <-> QuickMomentReaction associations
+QuickMoment.hasMany(QuickMomentReaction, {
+  foreignKey: 'quickMomentId',
+  as: 'reactions',
+  onDelete: 'CASCADE',
+});
+
+QuickMomentReaction.belongsTo(QuickMoment, {
+  foreignKey: 'quickMomentId',
+  as: 'quickMoment',
+});
+
+QuickMomentReaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// QuickMoment <-> QuickMomentView associations
+QuickMoment.hasMany(QuickMomentView, {
+  foreignKey: 'quickMomentId',
+  as: 'views',
+  onDelete: 'CASCADE',
+});
+
+QuickMomentView.belongsTo(QuickMoment, {
+  foreignKey: 'quickMomentId',
+  as: 'quickMoment',
+});
+
+QuickMomentView.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'viewer',
+});
+
 export {
   sequelize,
   User,
@@ -380,6 +429,9 @@ export {
   ConnectionRequest,
   UserDevice,
   Notification,
+  QuickMoment,
+  QuickMomentReaction,
+  QuickMomentView,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -551,6 +603,14 @@ export const initDb = async (force = false): Promise<void> => {
 
     // Seed initial interests catalog
     await seedDefaultInterests();
+
+    // Seed 50 dummy discovery people profiles
+    try {
+      const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
+      await seed50DiscoveryUsers();
+    } catch (seedErr: any) {
+      console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+    }
 
     console.log('✅ Database models synchronized successfully.');
   } catch (error) {

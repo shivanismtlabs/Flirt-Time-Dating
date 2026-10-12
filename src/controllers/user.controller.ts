@@ -43,17 +43,50 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
+    const { UserPhoto, Interest } = await import('../models');
+    const { momentService } = await import('../services/moment.service');
+
     const user = await User.findByPk(userId, {
       attributes: { exclude: ['password'] },
+      include: [
+        {
+          model: Interest,
+          as: 'interests',
+          through: { attributes: [] },
+          where: { isActive: true },
+          required: false,
+        },
+        {
+          model: UserPhoto,
+          as: 'photos',
+          where: { status: 'approved' },
+          required: false,
+        },
+      ],
+      order: [
+        [{ model: UserPhoto, as: 'photos' }, 'displayOrder', 'ASC'],
+        [{ model: UserPhoto, as: 'photos' }, 'createdAt', 'DESC'],
+      ],
     });
 
     if (!user) {
       return sendError(res, 'User not found', 404);
     }
 
-    const userData = user.toJSON();
+    let moments: any[] = [];
+    try {
+      const myMomentsResult = await momentService.getUserMoments(userId, userId, {
+        limit: 20,
+      });
+      moments = myMomentsResult.moments || [];
+    } catch {}
 
-    return sendSuccess(res, 'Profile retrieved successfully', userData);
+    const profileResponse = {
+      ...user.toJSON(),
+      moments,
+    };
+
+    return sendSuccess(res, 'Profile retrieved successfully', profileResponse);
   } catch (error: any) {
     return sendError(res, error.message || 'Error fetching profile', 500);
   }

@@ -78,6 +78,20 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
   return { badgeText, topEmojis, total, breakdown };
 }
 
+let quickMomentTablesReady = false;
+
+export async function ensureQuickMomentTables(): Promise<void> {
+  if (quickMomentTablesReady) return;
+  try {
+    await QuickMoment.sync();
+    await QuickMomentReaction.sync();
+    await QuickMomentView.sync();
+    quickMomentTablesReady = true;
+  } catch (err: any) {
+    console.warn('[QuickMoment Schema Warning]:', err.message);
+  }
+}
+
 export class QuickMomentService {
   /**
    * 1. GET TRAY: Horizontal Stories Bar (Screen / Image 1)
@@ -85,6 +99,7 @@ export class QuickMomentService {
    * plus other users' active stories with unread state, preview, time, and reaction badges.
    */
   public async getTray(viewerUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     // Fetch all active, non-expired quick moments
@@ -240,6 +255,7 @@ export class QuickMomentService {
    * reactions summary badge (e.g. "😍🔥 3 · 💬 2 replies"), viewers list, and expansion sheet.
    */
   public async getMyQuickMoments(viewerUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     const moments = await QuickMoment.findAll({
@@ -365,6 +381,7 @@ export class QuickMomentService {
    * quick reaction emojis list (😍, 🔥, 😂, 😮, 👏, ❤️), viewer's own reaction state, and reply input.
    */
   public async getUserQuickMoments(viewerUserId: string, targetUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     const targetUser = await User.findByPk(targetUserId, {
@@ -456,6 +473,7 @@ export class QuickMomentService {
     momentId: string,
     options: { page?: number; limit?: number; emoji?: string } = {}
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       attributes: ['id', 'userId', 'caption', 'text', 'type', 'mediaUrl'],
     });
@@ -536,6 +554,7 @@ export class QuickMomentService {
     momentId: string,
     emoji: string
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       include: [{ model: User, as: 'author', attributes: ['id', 'fullName'] }],
     });
@@ -628,6 +647,7 @@ export class QuickMomentService {
     momentId: string,
     message: string
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       include: [{ model: User, as: 'author', attributes: ['id', 'fullName', 'nickName'] }],
     });
@@ -818,24 +838,59 @@ export class QuickMomentService {
       );
     }
 
+    await ensureQuickMomentTables();
+
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    const moment = await QuickMoment.create({
-      userId,
-      type,
-      mediaUrl: cleanKey,
-      thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
-      text: data.text || null,
-      backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
-      textColor: data.textColor || '#ffffff',
-      caption: data.caption || null,
-      locationLabel: data.locationLabel || null,
-      viewsCount: 0,
-      repliesCount: 0,
-      status: 'active',
-      publishedAt: new Date(),
-      expiresAt,
-    });
+    let moment: QuickMoment;
+    try {
+      moment = await QuickMoment.create({
+        userId,
+        type,
+        mediaUrl: cleanKey,
+        thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
+        text: data.text || null,
+        backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
+        textColor: data.textColor || '#ffffff',
+        caption: data.caption || null,
+        locationLabel: data.locationLabel || null,
+        viewsCount: 0,
+        repliesCount: 0,
+        status: 'active',
+        publishedAt: new Date(),
+        expiresAt,
+      });
+    } catch (createErr: any) {
+      if (
+        createErr.original?.code === '42P01' ||
+        createErr.message?.includes('relation "quick_moments" does not exist') ||
+        createErr.message?.includes('quick_moments')
+      ) {
+        await QuickMoment.sync();
+        await QuickMomentReaction.sync();
+        await QuickMomentView.sync();
+        quickMomentTablesReady = true;
+
+        moment = await QuickMoment.create({
+          userId,
+          type,
+          mediaUrl: cleanKey,
+          thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
+          text: data.text || null,
+          backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
+          textColor: data.textColor || '#ffffff',
+          caption: data.caption || null,
+          locationLabel: data.locationLabel || null,
+          viewsCount: 0,
+          repliesCount: 0,
+          status: 'active',
+          publishedAt: new Date(),
+          expiresAt,
+        });
+      } else {
+        throw createErr;
+      }
+    }
 
     const finalImageUrl = cleanKey ? formatMediaUrl(cleanKey) : null;
     const finalThumbnailUrl = cleanKey ? formatThumbnailUrl(cleanKey) : null;

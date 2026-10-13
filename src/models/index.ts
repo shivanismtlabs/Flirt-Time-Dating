@@ -591,6 +591,15 @@ export const initDb = async (force = false): Promise<void> => {
         } catch (_dropErr) {
           // Safe to ignore if moments table does not exist yet or is already nullable
         }
+
+        // Ensure quick_moments tables exist immediately on all environments
+        try {
+          await QuickMoment.sync();
+          await QuickMomentReaction.sync();
+          await QuickMomentView.sync();
+        } catch (_qmSyncErr: any) {
+          console.warn('⚠️ Could not sync quick_moments tables:', _qmSyncErr.message);
+        }
       } catch (preMigrationError) {
         // Safe to ignore if database/table is newly initialized
       }

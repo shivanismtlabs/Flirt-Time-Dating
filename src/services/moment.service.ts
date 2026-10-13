@@ -263,6 +263,9 @@ export class MomentService {
         );
       }
 
+      // Ensure thumbnail exists for pre-uploaded media key
+      s3Service.ensureThumbnail(key);
+
       uploadedMediaKeys.push({
         key,
         order: uploadedMediaKeys.length,

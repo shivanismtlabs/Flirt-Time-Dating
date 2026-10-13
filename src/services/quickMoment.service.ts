@@ -806,6 +806,7 @@ export class QuickMomentService {
             'IMAGE_SIZE_EXCEEDED'
           );
         }
+        s3Service.ensureThumbnail(cleanKey);
       }
     }
 

@@ -5,6 +5,7 @@ import {
   HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
+import sharp from 'sharp';
 import { getS3Client } from '../config/aws';
 import { env } from '../config/env';
 
@@ -74,6 +75,17 @@ export class S3Service {
       });
 
       await s3.send(command);
+
+      // Automatically generate and upload resized thumbnail for public images
+      if (
+        mimeType.startsWith('image/') &&
+        folder !== 'verifications'
+      ) {
+        this.generateAndUploadThumbnail(key, buffer).catch((thumbErr: any) => {
+          console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${key}:`, thumbErr.message);
+        });
+      }
+
       return key;
     } catch (error: any) {
       console.error(`[S3 Upload Error] Failed to upload ${key}:`, error.message);
@@ -439,18 +451,85 @@ export class S3Service {
   }
 
   /**
-   * Deletes an object from S3 (used for cleanup on failure)
+   * Generates a 400x400 thumbnail for an image and uploads it to S3 under thumbnails/
+   */
+  public async generateAndUploadThumbnail(key: string, buffer?: Buffer): Promise<string | null> {
+    const cleanKey = key.replace(/^\/+/, '');
+    const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${cleanKey}`;
+    const s3 = getS3Client();
+
+    try {
+      let imageBuffer = buffer;
+      if (!imageBuffer) {
+        imageBuffer = await this.getObjectBuffer(cleanKey);
+      }
+
+      const thumbBuffer = await sharp(imageBuffer)
+        .resize(400, 400, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: this.bucket,
+          Key: thumbKey,
+          Body: thumbBuffer,
+          ContentType: 'image/jpeg',
+          ServerSideEncryption: 'AES256',
+        })
+      );
+
+      return thumbKey;
+    } catch (err: any) {
+      console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${cleanKey}:`, err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Ensures a thumbnail exists in S3 for a given image key (useful for presigned direct uploads)
+   */
+  public async ensureThumbnail(key: string): Promise<void> {
+    if (!key || key.startsWith('http://') || key.startsWith('https://')) return;
+    const cleanKey = key.replace(/^\/+/, '');
+    if (cleanKey.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`) || cleanKey.startsWith('verifications/')) {
+      return;
+    }
+    const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${cleanKey}`;
+    try {
+      const check = await this.checkObjectExists(thumbKey);
+      if (!check.exists) {
+        this.generateAndUploadThumbnail(cleanKey).catch((e: any) =>
+          console.warn(`[Thumbnail Background Error] ${cleanKey}:`, e.message)
+        );
+      }
+    } catch (err: any) {
+      console.warn(`[Ensure Thumbnail Warning] ${cleanKey}:`, err.message);
+    }
+  }
+
+  /**
+   * Deletes an object and its thumbnail from S3 (used for cleanup on failure)
    */
   public async deleteObject(key: string): Promise<void> {
     const s3 = getS3Client();
+    const cleanKey = key.replace(/^\/+/, '');
     try {
       const command = new DeleteObjectCommand({
         Bucket: this.bucket,
-        Key: key,
+        Key: cleanKey,
       });
       await s3.send(command);
+
+      const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${cleanKey}`;
+      await s3.send(
+        new DeleteObjectCommand({
+          Bucket: this.bucket,
+          Key: thumbKey,
+        })
+      ).catch(() => {});
     } catch (error: any) {
-      console.warn(`[S3 Delete Warning] Could not delete orphaned key ${key}:`, error.message);
+      console.warn(`[S3 Delete Warning] Could not delete orphaned key ${cleanKey}:`, error.message);
     }
   }
 }

@@ -174,6 +174,36 @@ export class S3Service {
   }
 
   /**
+   * Extracts S3 relative key from a full S3/CloudFront URL or returns the key if already relative
+   */
+  public extractKey(keyOrUrl?: string | null): string {
+    if (!keyOrUrl) return '';
+    const trimmed = keyOrUrl.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      try {
+        const parsed = new URL(trimmed);
+        if (parsed.hostname.includes('.amazonaws.com')) {
+          let rawPath = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+          if (rawPath.startsWith(`${this.bucket}/`)) {
+            rawPath = rawPath.slice(this.bucket.length + 1);
+          }
+          return rawPath || trimmed;
+        }
+        if (env.AWS_CLOUDFRONT_URL) {
+          try {
+            const cfHost = new URL(env.AWS_CLOUDFRONT_URL).hostname;
+            if (parsed.hostname === cfHost) {
+              return decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+            }
+          } catch {}
+        }
+      } catch {}
+      return trimmed;
+    }
+    return trimmed.replace(/^\/+/, '');
+  }
+
+  /**
    * Resolves an S3 key or external URL to a full public URL
    */
   public getPublicUrl(keyOrUrl?: string | null): string {
@@ -379,4 +409,5 @@ export const s3Service = new S3Service();
  */
 export const formatMediaUrl = (keyOrUrl?: string | null): string => s3Service.getPublicUrl(keyOrUrl);
 export const formatThumbnailUrl = (keyOrUrl?: string | null): string => s3Service.getThumbnailUrl(keyOrUrl);
+export const extractS3Key = (keyOrUrl?: string | null): string => s3Service.extractKey(keyOrUrl);
 

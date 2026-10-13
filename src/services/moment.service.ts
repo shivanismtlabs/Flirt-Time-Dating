@@ -10,7 +10,12 @@ import {
   Match,
   UserBlock,
 } from '../models';
-import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
+import {
+  s3Service,
+  formatMediaUrl,
+  formatThumbnailUrl,
+  extractS3Key,
+} from './s3.service';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
 
@@ -108,12 +113,26 @@ export class MomentService {
     caption?: string | null;
     audience?: MomentAudience;
     locationLabel?: string | null;
-    files: Express.Multer.File[];
+    files?: Express.Multer.File[];
+    mediaUrls?: string[];
   }) {
-    const { creatorId, caption, audience = 'everyone', locationLabel, files } = input;
+    const {
+      creatorId,
+      caption,
+      audience = 'everyone',
+      locationLabel,
+      files = [],
+      mediaUrls = [],
+    } = input;
 
-    // 1. Validate images presence (1 to 5 required)
-    if (!files || files.length === 0) {
+    // Filter valid non-empty mediaUrls
+    const validMediaUrls = (mediaUrls || [])
+      .map((u) => (typeof u === 'string' ? u.trim() : ''))
+      .filter(Boolean);
+
+    // 1. Validate images presence (1 to 5 required across files and mediaUrls)
+    const totalImagesCount = files.length + validMediaUrls.length;
+    if (totalImagesCount === 0) {
       throw new MomentServiceError(
         'At least 1 image is required to create a Moment',
         400,
@@ -121,7 +140,7 @@ export class MomentService {
       );
     }
 
-    if (files.length > 5) {
+    if (totalImagesCount > 5) {
       throw new MomentServiceError(
         'Maximum 5 images allowed per Moment',
         400,
@@ -139,7 +158,7 @@ export class MomentService {
       );
     }
 
-    // 3. Validate image magic bytes and individual sizes
+    // 3. Validate image magic bytes and individual sizes for files
     for (const [index, file] of files.entries()) {
       if (!file.buffer || file.buffer.length === 0) {
         throw new MomentServiceError(
@@ -166,8 +185,22 @@ export class MomentService {
       }
     }
 
-    // 4. Upload all media to secure storage preserving order
-    const uploadedMediaKeys: Array<{ key: string; order: number }> = [];
+    // 4. Collect uploaded and pre-uploaded media keys preserving order
+    const uploadedMediaKeys: Array<{
+      key: string;
+      order: number;
+      isDirectUpload?: boolean;
+    }> = [];
+
+    // Pre-uploaded URLs first
+    for (const preUrl of validMediaUrls) {
+      const key = extractS3Key(preUrl);
+      uploadedMediaKeys.push({
+        key,
+        order: uploadedMediaKeys.length,
+        isDirectUpload: false,
+      });
+    }
 
     try {
       for (let i = 0; i < files.length; i++) {
@@ -178,12 +211,18 @@ export class MomentService {
           file.mimetype,
           'moments'
         );
-        uploadedMediaKeys.push({ key: s3Key, order: i });
+        uploadedMediaKeys.push({
+          key: s3Key,
+          order: uploadedMediaKeys.length,
+          isDirectUpload: true,
+        });
       }
     } catch (uploadErr: any) {
       // Clean up any successfully uploaded keys before error
       for (const item of uploadedMediaKeys) {
-        await s3Service.deleteObject(item.key);
+        if (item.isDirectUpload) {
+          await s3Service.deleteObject(item.key);
+        }
       }
       throw uploadErr;
     }
@@ -245,7 +284,9 @@ export class MomentService {
       await t.rollback();
       // Clean up orphaned S3 uploads on database failure
       for (const item of uploadedMediaKeys) {
-        await s3Service.deleteObject(item.key);
+        if (item.isDirectUpload) {
+          await s3Service.deleteObject(item.key);
+        }
       }
       throw dbErr;
     }

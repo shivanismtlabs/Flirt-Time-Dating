@@ -157,6 +157,43 @@ describe('Permanent Moments Feature APIs', () => {
       const orders = res.body.data.media.map((m: any) => m.displayOrder);
       expect(orders).toEqual([0, 1, 2, 3, 4]);
     });
+
+    it('should successfully create a moment with pre-uploaded S3 mediaUrls in JSON body', async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          caption: 'Direct S3 uploaded moment',
+          audience: 'everyone',
+          locationLabel: 'Goa Beach',
+          mediaUrls: [
+            'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/pic1.jpg',
+            'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/pic2.jpg',
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Direct S3 uploaded moment');
+      expect(res.body.data.media).toHaveLength(2);
+      expect(res.body.data.media[0].displayOrder).toBe(0);
+      expect(res.body.data.media[1].displayOrder).toBe(1);
+    });
+
+    it('should successfully create a moment with single mediaUrl in JSON body', async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          caption: 'Single photo moment',
+          mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/single.jpg',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.media).toHaveLength(1);
+    });
   });
 
   describe('2. Validation & Image Integrity', () => {

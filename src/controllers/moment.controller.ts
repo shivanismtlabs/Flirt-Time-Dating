@@ -37,7 +37,38 @@ export const createMomentHandler = async (
       }
     }
 
-    const { caption, audience, locationLabel } = req.body || {};
+    const {
+      caption,
+      audience,
+      locationLabel,
+      mediaUrls,
+      mediaUrl,
+      images,
+    } = req.body || {};
+
+    // Collect pre-uploaded URLs or S3 keys
+    let preUploadedUrls: string[] = [];
+    if (Array.isArray(mediaUrls)) {
+      preUploadedUrls = preUploadedUrls.concat(mediaUrls);
+    } else if (typeof mediaUrls === 'string' && mediaUrls.trim()) {
+      preUploadedUrls.push(mediaUrls.trim());
+    }
+
+    if (Array.isArray(images)) {
+      preUploadedUrls = preUploadedUrls.concat(
+        images.filter((img) => typeof img === 'string')
+      );
+    } else if (typeof images === 'string' && images.trim()) {
+      preUploadedUrls.push(images.trim());
+    }
+
+    if (
+      typeof mediaUrl === 'string' &&
+      mediaUrl.trim() &&
+      !preUploadedUrls.includes(mediaUrl.trim())
+    ) {
+      preUploadedUrls.push(mediaUrl.trim());
+    }
 
     const result = await momentService.createMoment({
       creatorId,
@@ -45,6 +76,7 @@ export const createMomentHandler = async (
       audience,
       locationLabel,
       files,
+      mediaUrls: preUploadedUrls,
     });
 
     return sendSuccess(res, 'Moment published successfully', result, 201);

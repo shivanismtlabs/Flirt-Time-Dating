@@ -2627,6 +2627,31 @@
           "response": []
         },
         {
+          "name": "Get General Gifts Catalog & User Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "gifts"
+              ]
+            },
+            "description": "Returns the complete 8-item FlirtTime gifts catalog (rose, heart, chocolate, teddy, bouquet, ring, crown, sports_car) along with the authenticated user's current coin balance."
+          },
+          "response": []
+        },
+        {
           "name": "Get Moment Gifts Catalog & Balance",
           "request": {
             "method": "GET",

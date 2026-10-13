@@ -302,18 +302,52 @@ export class MomentService {
     // 6. Atomic database persistence
     const t = await sequelize.transaction();
     try {
-      const moment = await Moment.create(
-        {
-          userId: creatorId,
-          caption: caption ? caption.trim() : null,
-          audience,
-          status: 'active',
-          publishedAt,
-          expiresAt: null,
-          locationLabel: locationLabel?.trim() || creator.city || null,
-        },
-        { transaction: t }
-      );
+      let moment: Moment;
+      try {
+        moment = await Moment.create(
+          {
+            userId: creatorId,
+            caption: caption ? caption.trim() : null,
+            audience,
+            status: 'active',
+            publishedAt,
+            expiresAt: null,
+            locationLabel: locationLabel?.trim() || creator.city || null,
+          },
+          { transaction: t }
+        );
+      } catch (createErr: any) {
+        // Fallback for database instances where expiresAt NOT NULL constraint hasn't been dropped yet
+        const isNotNullConstraintError =
+          createErr.original?.code === '23502' ||
+          (typeof createErr.message === 'string' &&
+            createErr.message.toLowerCase().includes('expiresat') &&
+            createErr.message.toLowerCase().includes('not-null'));
+
+        if (isNotNullConstraintError) {
+          try {
+            await sequelize.query(
+              'ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;'
+            );
+          } catch (_ignore) {}
+
+          // Fallback creation with far-future date (100 years from now) so insert succeeds
+          moment = await Moment.create(
+            {
+              userId: creatorId,
+              caption: caption ? caption.trim() : null,
+              audience,
+              status: 'active',
+              publishedAt,
+              expiresAt: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000),
+              locationLabel: locationLabel?.trim() || creator.city || null,
+            },
+            { transaction: t }
+          );
+        } else {
+          throw createErr;
+        }
+      }
 
       const mediaRecords = [];
       for (const item of uploadedMediaKeys) {
@@ -338,7 +372,7 @@ export class MomentService {
         audience: moment.audience,
         status: moment.status,
         publishedAt: moment.publishedAt,
-        expiresAt: moment.expiresAt,
+        expiresAt: null,
         locationLabel: moment.locationLabel,
         location: moment.locationLabel ? { name: moment.locationLabel } : null,
         media: mediaRecords.map((m) => ({

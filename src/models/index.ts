@@ -573,8 +573,24 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "face_verifications" ADD COLUMN "isLatest" BOOLEAN DEFAULT true;
               END IF;
             END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'moments') THEN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'moments' AND column_name = 'expiresAt' AND is_nullable = 'NO'
+              ) THEN
+                ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;
+              END IF;
+            END IF;
           END $$;
         `);
+
+        // Explicit direct DDL for maximum reliability on all PostgreSQL environments
+        try {
+          await sequelize.query('ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;');
+        } catch (_dropErr) {
+          // Safe to ignore if moments table does not exist yet or is already nullable
+        }
       } catch (preMigrationError) {
         // Safe to ignore if database/table is newly initialized
       }

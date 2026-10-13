@@ -783,6 +783,138 @@
           "response": []
         },
         {
+          "name": "Get Discovery Interests (Cards with People Count)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Optional search filter by interest name"
+                },
+                {
+                  "key": "selectedInterestId",
+                  "value": "",
+                  "description": "Optional selected interest UUID"
+                }
+              ]
+            },
+            "description": "Returns all discovery interest cards with real peopleCount (number of active users who have selected this interest)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Users for Selected Interest (Click Interest -> People Come)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests/:interestId/users?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests",
+                ":interestId",
+                "users"
+              ],
+              "variable": [
+                {
+                  "key": "interestId",
+                  "value": "<INTEREST_ID>",
+                  "description": "UUID of clicked interest"
+                }
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "gender",
+                  "value": "",
+                  "description": "Optional filter: men / women"
+                },
+                {
+                  "key": "minAge",
+                  "value": "",
+                  "description": "Optional min age"
+                },
+                {
+                  "key": "maxAge",
+                  "value": "",
+                  "description": "Optional max age"
+                }
+              ]
+            },
+            "description": "Fetches users who have selected this interest when user clicks on an interest badge/card. Returns user cards with name, age, profile photo, verified badge, distance."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Featured Interests Preview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests/featured?userLimit=3",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests",
+                "featured"
+              ],
+              "query": [
+                {
+                  "key": "userLimit",
+                  "value": "3",
+                  "description": "Number of preview users per interest (default: 3)"
+                }
+              ]
+            },
+            "description": "Fetches featured interests with preview user avatars."
+          },
+          "response": []
+        },
+        {
           "name": "Discovery Action: Like (Interested)",
           "request": {
             "method": "POST",
@@ -2339,8 +2471,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "tray"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "tray"
+              ]
             },
             "description": "Screen 1: Horizontal story bar. Returns own avatar bubble (with red + or active story count) and other users' active stories with unread state, preview, time, and reaction badges (e.g. '😍 5', '🔥 3')."
           },
@@ -2358,8 +2497,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "me"
+              ]
             },
             "description": "Screen 2: View our own active story slides with author header, progress bars, text or media content, reaction summary badge ('😍🔥 3 · 💬 2 replies'), replies count, and up-drawer data."
           },
@@ -2377,8 +2523,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "user", ":userId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "user",
+                ":userId"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -2403,12 +2557,30 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions?page=1&limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reactions"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "20" },
-                { "key": "emoji", "value": "😍", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "emoji",
+                  "value": "😍",
+                  "disabled": true
+                }
               ],
               "variable": [
                 {
@@ -2442,8 +2614,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "react"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "react"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2476,8 +2656,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reply"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reply"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2502,8 +2690,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "view"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "view"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2528,8 +2724,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/viewers",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "viewers"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "viewers"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2562,8 +2766,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
             },
             "description": "Creates a 24-hour text story like Alex's slide in Image 2."
           },
@@ -2602,8 +2812,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
             },
             "description": "Creates a 24-hour image story like Cindy's slide in Image 3."
           },
@@ -2629,8 +2845,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/upload-url",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "upload-url"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "upload-url"
+              ]
             },
             "description": "Generates a direct S3 PUT presigned URL for uploading stories directly from mobile devices."
           },
@@ -2648,8 +2871,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2687,8 +2917,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/media/presigned-url",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "media", "presigned-url"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "media",
+                "presigned-url"
+              ]
             },
             "description": "Generates direct S3 presigned PUT URL with publicUrl and AWS Lambda-compatible thumbnailUrl."
           },
@@ -2714,8 +2951,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/media/upload-url",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "media", "upload-url"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "media",
+                "upload-url"
+              ]
             },
             "description": "Alias endpoint for generating presigned upload URLs for profile photos, moments, etc."
           },

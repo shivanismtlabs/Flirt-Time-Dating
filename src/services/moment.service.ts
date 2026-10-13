@@ -344,6 +344,7 @@ export class MomentService {
         media: mediaRecords.map((m) => ({
           mediaId: m.id,
           imageKey: m.mediaUrl,
+          imageUrl: formatMediaUrl(m.mediaUrl),
           mediaUrl: formatMediaUrl(m.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
           mediaType: m.mediaType,
@@ -549,6 +550,7 @@ export class MomentService {
       return {
         id: m.id,
         momentId: m.id,
+        imageUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
         mediaUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
         thumbnailUrl: firstMedia ? formatThumbnailUrl(firstMedia.mediaUrl) : null,
         mediaCount: sortedMedia.length,
@@ -566,6 +568,7 @@ export class MomentService {
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
           imageKey: media.mediaUrl,
+          imageUrl: formatMediaUrl(media.mediaUrl),
           mediaUrl: formatMediaUrl(media.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
@@ -931,11 +934,13 @@ export class MomentService {
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
           imageKey: media.mediaUrl,
+          imageUrl: formatMediaUrl(media.mediaUrl),
           mediaUrl: formatMediaUrl(media.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
           displayOrder: media.displayOrder,
         })),
+        imageUrl: sortedMedia[0] ? formatMediaUrl(sortedMedia[0].mediaUrl) : null,
         mediaUrl: sortedMedia[0] ? formatMediaUrl(sortedMedia[0].mediaUrl) : null,
         thumbnailUrl: sortedMedia[0] ? formatThumbnailUrl(sortedMedia[0].mediaUrl) : null,
         mediaCount: sortedMedia.length,
@@ -1056,6 +1061,7 @@ export class MomentService {
       .map((m: any) => ({
         mediaId: m.id,
         imageKey: m.mediaUrl,
+        imageUrl: formatMediaUrl(m.mediaUrl),
         mediaUrl: formatMediaUrl(m.mediaUrl),
         thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
         mediaType: m.mediaType,
@@ -1119,6 +1125,7 @@ export class MomentService {
         location: creator.city || null,
       },
       media,
+      imageUrl: media[0] ? formatMediaUrl(media[0].mediaUrl) : null,
       mediaUrl: media[0] ? formatMediaUrl(media[0].mediaUrl) : null,
       thumbnailUrl: media[0] ? formatThumbnailUrl(media[0].mediaUrl) : null,
       mediaCount: media.length,

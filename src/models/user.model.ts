@@ -29,6 +29,7 @@ export interface UserAttributes {
   longitude?: number | null;
   voicePromptUrl?: string | null;
   voicePromptDuration?: number | null;
+  coins?: number;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -63,6 +64,7 @@ export interface UserCreationAttributes
     | 'longitude'
     | 'voicePromptUrl'
     | 'voicePromptDuration'
+    | 'coins'
   > {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
@@ -94,6 +96,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public longitude: number | null;
   declare public voicePromptUrl: string | null;
   declare public voicePromptDuration: number | null;
+  declare public coins: number;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -237,6 +240,11 @@ User.init(
     voicePromptDuration: {
       type: DataTypes.INTEGER,
       allowNull: true,
+    },
+    coins: {
+      type: DataTypes.INTEGER,
+      defaultValue: 500,
+      allowNull: false,
     },
   },
   {

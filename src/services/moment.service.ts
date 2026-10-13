@@ -5,6 +5,10 @@ import {
   Moment,
   MomentMedia,
   MomentReaction,
+  MomentGift,
+  MOMENT_GIFTS_CATALOG,
+  ensureMomentGiftTables,
+  Notification,
   Conversation,
   ChatMessage,
   Match,
@@ -22,12 +26,14 @@ import { MomentReactionType } from '../models/momentReaction.model';
 export class MomentServiceError extends Error {
   public statusCode: number;
   public errorCode?: string;
+  public data?: any;
 
-  constructor(message: string, statusCode = 400, errorCode?: string) {
+  constructor(message: string, statusCode = 400, errorCode?: string, data?: any) {
     super(message);
     this.name = 'MomentServiceError';
     this.statusCode = statusCode;
     this.errorCode = errorCode;
+    this.data = data;
     Object.setPrototypeOf(this, MomentServiceError.prototype);
   }
 }
@@ -1145,6 +1151,11 @@ export class MomentService {
       });
     } catch {}
 
+    let giftsCount = 0;
+    try {
+      giftsCount = (await MomentGift.sum('quantity', { where: { momentId: moment.id } })) || 0;
+    } catch {}
+
     const likesCount = reactions.length;
 
     return {
@@ -1181,7 +1192,7 @@ export class MomentService {
       locationLabel: moment.locationLabel || creator.city || null,
       likesCount,
       commentsCount,
-      giftsCount: 0,
+      giftsCount,
       sharesCount: 0,
       isLiked: !!myReaction,
       viewerReaction: myReaction,
@@ -1805,6 +1816,414 @@ export class MomentService {
       success: true,
       message: 'Moment deleted successfully',
       momentId,
+    };
+  }
+
+  /**
+   * 1. Get Moment Gifts Catalog & User Coins Balance
+   * GET /api/v1/moments/gifts or GET /api/v1/moments/:momentId/gifts
+   */
+  public async getMomentGiftsCatalog(viewerId: string, momentId?: string) {
+    await ensureMomentGiftTables();
+
+    const viewer = await User.findByPk(viewerId, {
+      attributes: ['id', 'fullName', 'nickName', 'coins', 'profilePicture'],
+    });
+
+    const userBalance = typeof viewer?.coins === 'number' ? viewer.coins : 500;
+
+    let momentInfo: any = null;
+    let totalGiftsReceived = 0;
+
+    if (momentId) {
+      const moment = await Moment.findByPk(momentId, {
+        include: [
+          {
+            model: User,
+            as: 'user',
+            attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'city', 'isFaceVerified'],
+          },
+        ],
+      });
+
+      if (moment && moment.status !== 'deleted') {
+        try {
+          totalGiftsReceived = (await MomentGift.sum('quantity', { where: { momentId } })) || 0;
+        } catch (_err) {
+          totalGiftsReceived = 0;
+        }
+
+        momentInfo = {
+          id: moment.id,
+          caption: moment.caption,
+          creator: {
+            id: moment.user?.id,
+            name: moment.user?.fullName || moment.user?.nickName || 'Creator',
+            profilePhoto: moment.user?.profilePicture ? formatThumbnailUrl(moment.user.profilePicture) : null,
+            city: moment.user?.city || null,
+            isVerified: !!moment.user?.isFaceVerified,
+          },
+          totalGiftsReceived,
+        };
+      }
+    }
+
+    return {
+      userBalance,
+      moment: momentInfo,
+      gifts: MOMENT_GIFTS_CATALOG,
+    };
+  }
+
+  /**
+   * 2. Send Gift to Moment with ALL Valid Checks
+   * POST /api/v1/moments/:momentId/gifts
+   */
+  public async sendMomentGift(
+    senderId: string,
+    momentId: string,
+    payload: {
+      giftCode?: string;
+      giftId?: string;
+      gift?: string;
+      quantity?: number;
+      message?: string;
+    }
+  ) {
+    await ensureMomentGiftTables();
+
+    // 1. Gift Identification Validation
+    const requestedIdentifier = (
+      payload.giftCode ||
+      payload.giftId ||
+      payload.gift ||
+      ''
+    ).trim().toLowerCase();
+
+    if (!requestedIdentifier) {
+      throw new MomentServiceError(
+        'Gift identifier is required (e.g. rose, heart, chocolate, teddy, bouquet, ring, crown, sports_car)',
+        400,
+        'MISSING_GIFT'
+      );
+    }
+
+    const gift = MOMENT_GIFTS_CATALOG.find(
+      (g) =>
+        g.code.toLowerCase() === requestedIdentifier ||
+        g.id.toLowerCase() === requestedIdentifier ||
+        g.name.toLowerCase() === requestedIdentifier
+    );
+
+    if (!gift) {
+      throw new MomentServiceError(
+        `Invalid gift '${requestedIdentifier}'. Valid options: ${MOMENT_GIFTS_CATALOG.map((g) => g.code).join(', ')}`,
+        400,
+        'INVALID_GIFT'
+      );
+    }
+
+    // 2. Quantity Validation
+    const qty = Math.max(1, Math.min(100, Math.floor(Number(payload.quantity) || 1)));
+    const totalCost = gift.coins * qty;
+    const totalCoins = totalCost;
+
+    // 3. Moment Existence & Status Check
+    const moment = await Moment.findByPk(momentId, {
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isActive'],
+        },
+      ],
+    });
+
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or has been deleted', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    if (moment.status !== 'active') {
+      throw new MomentServiceError('This moment is no longer active', 400, 'MOMENT_NOT_ACTIVE');
+    }
+
+    // 4. Moment Creator Check
+    const recipient = moment.user;
+    if (!recipient || !recipient.isActive) {
+      throw new MomentServiceError('Moment creator account is no longer available', 404, 'CREATOR_NOT_AVAILABLE');
+    }
+
+    // 5. Self-Gift Validation Check
+    if (senderId === moment.userId) {
+      throw new MomentServiceError(
+        'You cannot send a gift to your own moment',
+        400,
+        'CANNOT_GIFT_SELF'
+      );
+    }
+
+    // 6. User Block & Privacy Checks
+    const isBlocked = await UserBlock.findOne({
+      where: {
+        [Op.or]: [
+          { userId: senderId, blockedUserId: moment.userId },
+          { userId: moment.userId, blockedUserId: senderId },
+        ],
+      },
+    });
+
+    if (isBlocked) {
+      throw new MomentServiceError('Cannot send gift due to privacy restrictions', 403, 'USER_BLOCKED');
+    }
+
+    // 7. Audience / Matches-Only Visibility Check
+    if (moment.audience === 'matches_only') {
+      const [u1, u2] = [senderId, moment.userId].sort();
+      const match = await Match.findOne({
+        where: { user1Id: u1, user2Id: u2, isActive: true },
+      });
+
+      if (!match) {
+        throw new MomentServiceError('This moment is only visible to matches', 403, 'AUDIENCE_RESTRICTED');
+      }
+    }
+
+    // 8. Sender Account & Coin Balance Check
+    const sender = await User.findByPk(senderId);
+    if (!sender || !sender.isActive) {
+      throw new MomentServiceError('Your account is inactive or not found', 401, 'UNAUTHORIZED');
+    }
+
+    const senderCurrentCoins = typeof sender.coins === 'number' ? sender.coins : 500;
+    if (senderCurrentCoins < totalCost) {
+      throw new MomentServiceError(
+        `Insufficient coin balance. You need ${totalCost} coins to send ${qty > 1 ? qty + 'x ' : ''}${gift.name}, but your balance is ${senderCurrentCoins} coins.`,
+        400,
+        'INSUFFICIENT_COINS',
+        {
+          requiredCoins: totalCost,
+          currentBalance: senderCurrentCoins,
+          shortage: totalCost - senderCurrentCoins,
+          giftName: gift.name,
+          quantity: qty,
+        }
+      );
+    }
+
+    // 9. Atomic Database Transaction
+    const transaction = await sequelize.transaction();
+    let giftRecord: any;
+
+    try {
+      // Deduct coins from sender
+      sender.coins = senderCurrentCoins - totalCost;
+      await sender.save({ transaction });
+
+      // Credit coins to recipient creator
+      const recipientUser = await User.findByPk(moment.userId, { transaction });
+      if (recipientUser) {
+        recipientUser.coins = (typeof recipientUser.coins === 'number' ? recipientUser.coins : 500) + totalCost;
+        await recipientUser.save({ transaction });
+      }
+
+      // Record Moment Gift transaction
+      giftRecord = await MomentGift.create(
+        {
+          momentId: moment.id,
+          senderId,
+          recipientId: moment.userId,
+          giftCode: gift.code,
+          giftName: gift.name,
+          icon: gift.icon,
+          coins: gift.coins,
+          quantity: qty,
+          totalCoins,
+          message: payload.message ? payload.message.trim() : null,
+        },
+        { transaction }
+      );
+
+      await transaction.commit();
+    } catch (txErr: any) {
+      await transaction.rollback();
+      throw new MomentServiceError(
+        txErr.message || 'Error processing gift transaction',
+        500,
+        'TRANSACTION_FAILED'
+      );
+    }
+
+    // 10. Background In-App Notification to Recipient
+    try {
+      const senderDisplayName = sender.fullName || sender.nickName || 'Someone';
+      await Notification.create({
+        recipientId: moment.userId,
+        senderId,
+        type: 'moment_gift',
+        title: `New Gift Received! ${gift.icon}`,
+        body: `${senderDisplayName} sent you ${qty > 1 ? qty + 'x ' : ''}${gift.name} ${gift.icon} on your moment!`,
+        entityId: moment.id,
+        data: {
+          momentId: moment.id,
+          giftId: giftRecord.id,
+          giftCode: gift.code,
+          giftName: gift.name,
+          icon: gift.icon,
+          quantity: qty,
+          totalCoins,
+          senderName: senderDisplayName,
+        },
+        isRead: false,
+      });
+    } catch (_notifErr) {
+      // Safe to ignore notification failure
+    }
+
+    // 11. Direct Message Conversation Entry (so creator sees gift celebration in chat)
+    try {
+      const [u1, u2] = [senderId, moment.userId].sort();
+      const [conversation] = await Conversation.findOrCreate({
+        where: { user1Id: u1, user2Id: u2 },
+        defaults: {
+          user1Id: u1,
+          user2Id: u2,
+          lastMessage: `🎁 Sent gift: ${qty > 1 ? qty + 'x ' : ''}${gift.name} ${gift.icon}`,
+          lastMessageAt: new Date(),
+        },
+      });
+
+      const giftMsgContent = payload.message
+        ? `🎁 Sent you ${qty > 1 ? qty + 'x ' : ''}${gift.name} ${gift.icon} on your Moment: "${payload.message}"`
+        : `🎁 Sent you ${qty > 1 ? qty + 'x ' : ''}${gift.name} ${gift.icon} on your Moment!`;
+
+      await ChatMessage.create({
+        conversationId: conversation.id,
+        senderId,
+        recipientId: moment.userId,
+        content: giftMsgContent,
+        messageType: 'moment_reply',
+        metadata: JSON.stringify({
+          type: 'gift',
+          momentId: moment.id,
+          giftCode: gift.code,
+          giftName: gift.name,
+          icon: gift.icon,
+          quantity: qty,
+          totalCoins,
+        }),
+        isRead: false,
+      });
+
+      conversation.lastMessage = giftMsgContent;
+      conversation.lastMessageAt = new Date();
+      await conversation.save();
+    } catch (_chatErr) {
+      // Safe to ignore chat record failure
+    }
+
+    // 12. Total gifts count on this moment
+    let totalMomentGifts = 0;
+    try {
+      totalMomentGifts = (await MomentGift.sum('quantity', { where: { momentId } })) || qty;
+    } catch (_sumErr) {
+      totalMomentGifts = qty;
+    }
+
+    return {
+      giftTransactionId: giftRecord.id,
+      momentId: moment.id,
+      gift: {
+        id: gift.id,
+        code: gift.code,
+        name: gift.name,
+        icon: gift.icon,
+        pricePerUnit: gift.coins,
+        quantity: qty,
+        totalCoins,
+      },
+      message: giftRecord.message,
+      sender: {
+        id: sender.id,
+        name: sender.fullName || sender.nickName || 'You',
+        previousBalance: senderCurrentCoins,
+        newBalance: sender.coins,
+        coinsDeducted: totalCoins,
+      },
+      recipient: {
+        id: recipient.id,
+        name: recipient.fullName || recipient.nickName || 'Creator',
+        profilePhoto: recipient.profilePicture ? formatThumbnailUrl(recipient.profilePicture) : null,
+      },
+      totalMomentGifts,
+      createdAt: giftRecord.createdAt,
+    };
+  }
+
+  /**
+   * 3. Get Gifts Received on a Moment
+   * GET /api/v1/moments/:momentId/gifts/received
+   */
+  public async getMomentGiftsReceived(
+    viewerId: string,
+    momentId: string,
+    options?: { page?: number; limit?: number }
+  ) {
+    await ensureMomentGiftTables();
+
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.max(1, Math.min(100, options?.limit || 20));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await MomentGift.findAndCountAll({
+      where: { momentId },
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const totalCoins = (await MomentGift.sum('totalCoins', { where: { momentId } })) || 0;
+
+    const gifts = rows.map((g: any) => ({
+      id: g.id,
+      giftCode: g.giftCode,
+      giftName: g.giftName,
+      icon: g.icon,
+      coins: g.coins,
+      quantity: g.quantity,
+      totalCoins: g.totalCoins,
+      message: g.message,
+      createdAt: g.createdAt,
+      timeAgo: formatTimeAgoShort(g.createdAt),
+      sender: {
+        id: g.sender?.id,
+        name: g.sender?.fullName || g.sender?.nickName || 'User',
+        profilePhoto: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
+        avatar: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
+        isVerified: !!g.sender?.isFaceVerified,
+        city: g.sender?.city || null,
+      },
+    }));
+
+    return {
+      momentId,
+      totalGiftsCount: count,
+      totalCoins,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit),
+      gifts,
     };
   }
 }

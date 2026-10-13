@@ -138,6 +138,47 @@ export const getMomentLikesSchema = z.object({
     .optional(),
 });
 
+export const sendMomentGiftSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  body: z
+    .object({
+      giftCode: z.string().trim().min(1).optional(),
+      giftId: z.string().trim().min(1).optional(),
+      gift: z.string().trim().min(1).optional(),
+      quantity: z
+        .union([z.number().int().positive().max(100), z.string().regex(/^\d+$/).transform(Number)])
+        .optional()
+        .default(1),
+      message: z.string().trim().max(500, 'Message cannot exceed 500 characters').optional(),
+    })
+    .refine((data) => Boolean(data.giftCode || data.giftId || data.gift), {
+      message:
+        'Gift identifier is required (e.g. rose, heart, chocolate, teddy, bouquet, ring, crown, sports_car)',
+    }),
+});
+
+export const getMomentGiftsCatalogSchema = z.object({
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+    })
+    .optional(),
+});
+
+export const getMomentGiftsReceivedSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
+});
+
 export const getAllMomentsSchema = z.object({
   query: z.object({
     page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),

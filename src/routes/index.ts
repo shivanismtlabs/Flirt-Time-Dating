@@ -16,6 +16,8 @@ import {
   getGestureVerificationInfo,
 } from '../controllers/faceVerification.controller';
 
+import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
+
 const router = Router();
 
 router.use('/auth', authRoutes);
@@ -28,6 +30,9 @@ router.use('/moments', momentRoutes);
 router.use('/quick-moments', quickMomentRoutes);
 router.use('/connections', connectionRoutes);
 router.use('/media', mediaRoutes);
+
+// General Gifts Catalog API: /api/v1/gifts
+router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);
 
 // Direct Laravel-compatible gesture endpoints: /api/v1/gesture-upload, /api/gesture-upload, /api/v1/gesture
 router.get('/gesture-upload', authenticate, getGestureVerificationInfo);

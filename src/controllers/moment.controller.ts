@@ -505,3 +505,94 @@ export const deleteMomentHandler = async (
   }
 };
 
+/**
+ * Controller to get available Gifts catalog and current user coin balance
+ * GET /api/v1/moments/gifts or GET /api/v1/moments/:momentId/gifts
+ */
+export const getMomentGiftsCatalogHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string | undefined;
+    const result = await momentService.getMomentGiftsCatalog(viewerId, momentId);
+
+    return sendSuccess(res, 'Gifts catalog fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching gifts catalog', 500);
+  }
+};
+
+/**
+ * Controller to send a gift on a Moment with full validation checks
+ * POST /api/v1/moments/:momentId/gifts
+ */
+export const sendMomentGiftHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const senderId = req.user?.id;
+    if (!senderId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { giftCode, giftId, gift, quantity, message } = req.body || {};
+
+    const result = await momentService.sendMomentGift(senderId, momentId, {
+      giftCode,
+      giftId,
+      gift,
+      quantity,
+      message,
+    });
+
+    return sendSuccess(res, 'Gift sent successfully! 🎁', result, 201);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.data || error.errorCode);
+    }
+    return sendError(res, error.message || 'Error sending gift to moment', 500);
+  }
+};
+
+/**
+ * Controller to get list of gifts received on a Moment
+ * GET /api/v1/moments/:momentId/gifts/received
+ */
+export const getMomentGiftsReceivedHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentGiftsReceived(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment gifts fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching received gifts', 500);
+  }
+};
+

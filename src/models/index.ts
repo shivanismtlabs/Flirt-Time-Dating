@@ -22,6 +22,11 @@ import { Notification } from './notification.model';
 import { QuickMoment } from './quickMoment.model';
 import { QuickMomentReaction } from './quickMomentReaction.model';
 import { QuickMomentView } from './quickMomentView.model';
+import {
+  MomentGift,
+  MOMENT_GIFTS_CATALOG,
+  GiftCatalogItem,
+} from './momentGift.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -252,6 +257,40 @@ MomentReaction.belongsTo(User, {
   as: 'user',
 });
 
+// Moment <-> MomentGift associations
+Moment.hasMany(MomentGift, {
+  foreignKey: 'momentId',
+  as: 'gifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(Moment, {
+  foreignKey: 'momentId',
+  as: 'moment',
+});
+
+User.hasMany(MomentGift, {
+  foreignKey: 'senderId',
+  as: 'sentMomentGifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(User, {
+  foreignKey: 'senderId',
+  as: 'sender',
+});
+
+User.hasMany(MomentGift, {
+  foreignKey: 'recipientId',
+  as: 'receivedMomentGifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
 // User <-> Conversation
 User.hasMany(Conversation, {
   foreignKey: 'user1Id',
@@ -432,6 +471,9 @@ export {
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  MomentGift,
+  MOMENT_GIFTS_CATALOG,
+  GiftCatalogItem,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -550,6 +592,10 @@ export const initDb = async (force = false): Promise<void> => {
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'voicePromptDuration') THEN
                 ALTER TABLE "users" ADD COLUMN "voicePromptDuration" INTEGER;
               END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
+                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+              END IF;
             END IF;
 
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'face_verifications') THEN
@@ -592,13 +638,14 @@ export const initDb = async (force = false): Promise<void> => {
           // Safe to ignore if moments table does not exist yet or is already nullable
         }
 
-        // Ensure quick_moments tables exist immediately on all environments
+        // Ensure quick_moments and moment_gifts tables exist immediately on all environments
         try {
           await QuickMoment.sync();
           await QuickMomentReaction.sync();
           await QuickMomentView.sync();
+          await MomentGift.sync();
         } catch (_qmSyncErr: any) {
-          console.warn('⚠️ Could not sync quick_moments tables:', _qmSyncErr.message);
+          console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
         }
       } catch (preMigrationError) {
         // Safe to ignore if database/table is newly initialized
@@ -682,6 +729,26 @@ export const seedDefaultInterests = async (): Promise<void> => {
     }
   } catch (err: any) {
     console.warn('Could not seed default interests:', err.message);
+  }
+};
+
+/**
+ * Ensures moment_gifts table and users.coins column exist on all database environments
+ */
+export const ensureMomentGiftTables = async (): Promise<void> => {
+  try {
+    if (sequelize.getDialect() === 'postgres') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 500;');
+      } catch (_e) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;');
+      } catch (_e) {}
+    }
+    await MomentGift.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync MomentGift table:', err.message);
   }
 };
 

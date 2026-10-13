@@ -13,6 +13,9 @@ import {
   unlikeMomentHandler,
   getMomentCommentsHandler,
   getMomentLikesHandler,
+  getMomentGiftsCatalogHandler,
+  sendMomentGiftHandler,
+  getMomentGiftsReceivedHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -30,6 +33,9 @@ import {
   unlikeMomentSchema,
   getMomentCommentsSchema,
   getMomentLikesSchema,
+  sendMomentGiftSchema,
+  getMomentGiftsCatalogSchema,
+  getMomentGiftsReceivedSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -86,6 +92,13 @@ router.get(
   '/user/:userId',
   validate(getUserMomentsSchema),
   getUserMomentsHandler
+);
+
+// General Gifts Catalog & User Coins Balance (GET /api/v1/moments/gifts)
+router.get(
+  '/gifts',
+  validate(getMomentGiftsCatalogSchema),
+  getMomentGiftsCatalogHandler
 );
 
 // 7. Full-screen Moment detail
@@ -151,6 +164,37 @@ router.get(
   '/:momentId/replies',
   validate(getMomentCommentsSchema),
   getMomentCommentsHandler
+);
+
+// 6. Gifts on Moment (Send Gift & Gifts Catalog)
+router.get(
+  '/:momentId/gifts',
+  validate(getMomentGiftsCatalogSchema),
+  getMomentGiftsCatalogHandler
+);
+
+router.post(
+  '/:momentId/gifts',
+  validate(sendMomentGiftSchema),
+  sendMomentGiftHandler
+);
+
+router.post(
+  '/:momentId/send-gift',
+  validate(sendMomentGiftSchema),
+  sendMomentGiftHandler
+);
+
+router.get(
+  '/:momentId/gifts/received',
+  validate(getMomentGiftsReceivedSchema),
+  getMomentGiftsReceivedHandler
+);
+
+router.get(
+  '/:momentId/gifts/list',
+  validate(getMomentGiftsReceivedSchema),
+  getMomentGiftsReceivedHandler
 );
 
 // 6. Report Moment

@@ -1681,6 +1681,84 @@ export class MomentService {
   }
 
   /**
+   * Deletes a comment/reply from a Moment.
+   * Authorized for either the comment author OR the moment creator.
+   * DELETE /api/v1/moments/:momentId/comments/:commentId
+   */
+  public async deleteMomentComment(
+    userId: string,
+    commentId: string,
+    momentId?: string
+  ) {
+    const comment = await ChatMessage.findByPk(commentId);
+    if (!comment) {
+      throw new MomentServiceError(
+        'Comment not found or already deleted',
+        404,
+        'COMMENT_NOT_FOUND'
+      );
+    }
+
+    let parsedMomentId: string | null = null;
+    if (comment.metadata) {
+      try {
+        const parsed =
+          typeof comment.metadata === 'string'
+            ? JSON.parse(comment.metadata)
+            : comment.metadata;
+        parsedMomentId = parsed.momentId || null;
+      } catch {}
+    }
+
+    const resolvedMomentId = momentId || parsedMomentId;
+    let moment: Moment | null = null;
+    if (resolvedMomentId) {
+      moment = await Moment.findByPk(resolvedMomentId);
+    }
+
+    // Authorization: User must be comment author OR moment creator
+    const isCommentAuthor = comment.senderId === userId;
+    const isMomentCreator = moment ? moment.userId === userId : false;
+
+    if (!isCommentAuthor && !isMomentCreator) {
+      throw new MomentServiceError(
+        'You are not authorized to delete this comment',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    const conversationId = comment.conversationId;
+    await comment.destroy();
+
+    // If conversation lastMessage was this deleted comment, update conversation
+    try {
+      const remainingLatestMessage = await ChatMessage.findOne({
+        where: { conversationId },
+        order: [['createdAt', 'DESC']],
+      });
+
+      const conversation = await Conversation.findByPk(conversationId);
+      if (conversation) {
+        if (remainingLatestMessage) {
+          conversation.lastMessage = remainingLatestMessage.content;
+          conversation.lastMessageAt = remainingLatestMessage.createdAt;
+        } else {
+          conversation.lastMessage = '';
+        }
+        await conversation.save();
+      }
+    } catch {}
+
+    return {
+      success: true,
+      message: 'Comment deleted successfully',
+      commentId,
+      momentId: resolvedMomentId,
+    };
+  }
+
+  /**
    * Retrieves likes / reactions list for a Moment
    * GET /api/v1/moments/:momentId/likes (or /reactions)
    */

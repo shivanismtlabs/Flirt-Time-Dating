@@ -385,6 +385,37 @@ export const getMomentCommentsHandler = async (
 };
 
 /**
+ * Controller to delete a comment/reply on a Moment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId
+ */
+export const deleteMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = req.params.commentId as string;
+    const momentId = req.params.momentId as string | undefined;
+    const result = await momentService.deleteMomentComment(
+      userId,
+      commentId,
+      momentId
+    );
+
+    return sendSuccess(res, result.message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting comment', 500);
+  }
+};
+
+/**
  * Controller to get all users who liked / reacted to a Moment
  * GET /api/v1/moments/:momentId/likes or GET /api/v1/moments/:momentId/reactions
  */

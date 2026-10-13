@@ -12,6 +12,7 @@ import {
   deleteMomentHandler,
   unlikeMomentHandler,
   getMomentCommentsHandler,
+  deleteMomentCommentHandler,
   getMomentLikesHandler,
   getMomentGiftsCatalogHandler,
   sendMomentGiftHandler,
@@ -32,6 +33,7 @@ import {
   deleteMomentSchema,
   unlikeMomentSchema,
   getMomentCommentsSchema,
+  deleteMomentCommentSchema,
   getMomentLikesSchema,
   sendMomentGiftSchema,
   getMomentGiftsCatalogSchema,
@@ -164,6 +166,25 @@ router.get(
   '/:momentId/replies',
   validate(getMomentCommentsSchema),
   getMomentCommentsHandler
+);
+
+// Delete Comment / Reply
+router.delete(
+  '/:momentId/comments/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
+);
+
+router.delete(
+  '/:momentId/replies/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
+);
+
+router.delete(
+  '/comments/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
 );
 
 // 6. Gifts on Moment (Send Gift & Gifts Catalog)

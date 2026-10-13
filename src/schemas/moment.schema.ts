@@ -247,4 +247,11 @@ export const unlikeMomentSchema = z.object({
   }),
 });
 
+export const deleteMomentCommentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+});
+
 

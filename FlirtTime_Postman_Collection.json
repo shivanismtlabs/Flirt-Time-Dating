@@ -2693,6 +2693,46 @@
           "response": []
         },
         {
+          "name": "Delete Moment Comment",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Comment UUID to delete"
+                }
+              ]
+            },
+            "description": "Deletes a comment/reply on a Moment. Allowed for either the comment author OR the creator of the moment (canDelete: true). Returns 403 Forbidden if an unauthorized user attempts to delete."
+          },
+          "response": []
+        },
+        {
           "name": "Get General Gifts Catalog & User Balance",
           "request": {
             "method": "GET",

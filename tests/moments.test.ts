@@ -571,6 +571,68 @@ describe('Permanent Moments Feature APIs', () => {
       expect(getRes.body.data.totalComments).toBeGreaterThanOrEqual(1);
       expect(getRes.body.data.comments[0].comment).toBe('Stunning capture! 🔥');
       expect(getRes.body.data.comments[0].user).toBeDefined();
+
+      const createdCommentId = postRes.body.data.commentId;
+
+      // Viewer deletes their own comment -> 200 OK
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${createdCommentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(delRes.status).toBe(200);
+      expect(delRes.body.success).toBe(true);
+      expect(delRes.body.message).toMatch(/deleted successfully/i);
+
+      // Verify comment is gone
+      const getAfterDel = await request(app)
+        .get(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const found = getAfterDel.body.data.comments.find((c: any) => c.commentId === createdCommentId);
+      expect(found).toBeUndefined();
+    });
+
+    it('should allow moment creator to delete someone elses comment on their moment', async () => {
+      // 1. Viewer posts comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Comment by viewer' });
+      const commentId = postRes.body.data.commentId;
+
+      // 2. Creator deletes viewer's comment -> 200 OK
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(delRes.status).toBe(200);
+      expect(delRes.body.success).toBe(true);
+    });
+
+    it('should reject unauthorized user from deleting someone elses comment with 403', async () => {
+      // 1. Viewer posts comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Private thought' });
+      const commentId = postRes.body.data.commentId;
+
+      // 2. BlockedUser (neither author nor moment creator) tries to delete -> 403
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${blockedToken}`);
+
+      expect(delRes.status).toBe(403);
+      expect(delRes.body.success).toBe(false);
+    });
+
+    it('should return 404 when deleting a non-existent comment', async () => {
+      const nonexistentId = '00000000-0000-4000-8000-000000000000';
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${nonexistentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(delRes.status).toBe(404);
+      expect(delRes.body.success).toBe(false);
     });
   });
 

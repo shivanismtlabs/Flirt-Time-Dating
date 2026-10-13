@@ -2453,6 +2453,299 @@
             "description": "Reports an inappropriate Moment for admin moderation."
           },
           "response": []
+        },
+        {
+          "name": "Like / Unlike Toggle Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isLiked\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/like",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "like"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Single toggle endpoint to like or unlike a moment (accepts empty body for auto-toggle, or { isLiked: true/false } or { action: 'like'/'unlike' })."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Likes List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/likes?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "likes"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Returns paginated list of users who liked this moment with names, avatars, verification, and timestamps."
+          },
+          "response": []
+        },
+        {
+          "name": "Post Comment to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"Super cool vibes! 🌸\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Posts a public comment on a Moment (supports own moment commenting and personal replies)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Comments List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Fetches paginated comments on a Moment with commenter profile photo, city, isVerified, and isMyComment indicator."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Gifts Catalog & Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID (or omit for general /api/v1/moments/gifts)"
+                }
+              ]
+            },
+            "description": "Powers the 'Send a gift to [Creator]' modal. Returns user's coin balance (e.g. 500 coins) and the 8 available gift options (Rose, Heart, Chocolate, Teddy, Bouquet, Ring, Crown, Sports car)."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Gift to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"giftCode\": \"rose\",\n  \"quantity\": 1,\n  \"message\": \"Loved your moment! 🌹\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Sends a gift on a Moment with full validation (coin balance check, self-gift check, block check, active moment check). Deducts sender coins and credits recipient."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Gifts Received on Moment",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts/received?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts",
+                "received"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Returns paginated list of gifts sent to this moment with sender details and timestamps."
+          },
+          "response": []
         }
       ]
     },

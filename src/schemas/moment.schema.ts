@@ -10,11 +10,11 @@ export const momentAudienceEnum = z.enum(
 );
 
 export const momentReactionEnum = z.enum(
-  ['heart', 'love_eyes', 'fire', 'laugh', 'surprised', 'clap'],
+  ['like', 'heart', 'love_eyes', 'fire', 'laugh', 'surprised', 'clap'],
   {
     errorMap: () => ({
       message:
-        'Invalid reaction type. Allowed values: heart, love_eyes, fire, laugh, surprised, clap',
+        'Invalid reaction type. Allowed values: like, heart, love_eyes, fire, laugh, surprised, clap',
     }),
   }
 );
@@ -90,9 +90,12 @@ export const reactMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
   }),
-  body: z.object({
-    reaction: momentReactionEnum,
-  }),
+  body: z
+    .object({
+      reaction: momentReactionEnum.optional().default('like'),
+    })
+    .optional()
+    .default({ reaction: 'like' }),
 });
 
 export const replyMomentSchema = z.object({
@@ -167,6 +170,17 @@ export const deleteMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
   }),
+});
+
+export const likeMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  body: z
+    .object({
+      reaction: momentReactionEnum.optional().default('like'),
+    })
+    .optional(),
 });
 
 export const unlikeMomentSchema = z.object({

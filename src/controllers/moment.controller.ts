@@ -258,7 +258,7 @@ export const reactMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { reaction } = req.body;
+    const reaction = req.body?.reaction || 'like';
 
     const result = await momentService.reactToMoment(
       viewerId,
@@ -272,6 +272,38 @@ export const reactMomentHandler = async (
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Error saving moment reaction', 500);
+  }
+};
+
+/**
+ * Controller to like a Moment
+ * POST /api/v1/moments/:momentId/like
+ */
+export const likeMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const reaction = req.body?.reaction || 'like';
+
+    const result = await momentService.reactToMoment(
+      viewerId,
+      momentId,
+      reaction
+    );
+
+    return sendSuccess(res, 'Moment liked successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error liking moment', 500);
   }
 };
 
@@ -392,7 +424,7 @@ export const unlikeMomentHandler = async (
     const momentId = req.params.momentId as string;
     const result = await momentService.unlikeMoment(viewerId, momentId);
 
-    return sendSuccess(res, 'Reaction removed successfully', result, 200);
+    return sendSuccess(res, 'Moment unliked successfully', result, 200);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);

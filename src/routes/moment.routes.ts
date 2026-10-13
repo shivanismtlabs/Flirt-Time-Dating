@@ -2,6 +2,7 @@ import { Router } from 'express';
 import {
   createMomentHandler,
   getMomentDetailHandler,
+  likeMomentHandler,
   reactMomentHandler,
   replyMomentHandler,
   getUserMomentsHandler,
@@ -19,6 +20,7 @@ import {
   createMomentSchema,
   getMomentDetailSchema,
   getUserMomentsSchema,
+  likeMomentSchema,
   reactMomentSchema,
   replyMomentSchema,
   getAllMomentsSchema,
@@ -91,7 +93,14 @@ router.get(
   getMomentDetailHandler
 );
 
-// 4. React to Moment
+// 4. Like Moment
+router.post(
+  '/:momentId/like',
+  validate(likeMomentSchema),
+  likeMomentHandler
+);
+
+// Reaction endpoint (supports specific emoji reactions like fire, laugh, clap, etc.)
 router.post(
   '/:momentId/reactions',
   validate(reactMomentSchema),

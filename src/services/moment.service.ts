@@ -565,6 +565,7 @@ export class MomentService {
       const myReaction = myReactionRecord ? myReactionRecord.reaction : null;
 
       const reactionCounts: Record<string, number> = {
+        like: 0,
         heart: 0,
         love_eyes: 0,
         fire: 0,
@@ -582,7 +583,7 @@ export class MomentService {
       }
 
       const commentsCount = repliesCountMap.get(m.id) || 0;
-      const likesCount = reactionCounts.heart || reactionCounts.total || 0;
+      const likesCount = reactionCounts.total || reactions.length;
 
       return {
         id: m.id,
@@ -914,6 +915,7 @@ export class MomentService {
       const myReaction = myReactionRecord ? myReactionRecord.reaction : null;
 
       const reactionCounts: Record<string, number> = {
+        like: 0,
         heart: 0,
         love_eyes: 0,
         fire: 0,
@@ -932,7 +934,7 @@ export class MomentService {
 
       const isSelf = creator ? creator.id === viewerId : false;
       const commentsCount = repliesCountMap.get(m.id) || 0;
-      const likesCount = reactionCounts.heart || reactionCounts.total || 0;
+      const likesCount = reactionCounts.total || reactions.length;
 
       const creatorDisplayName = creator
         ? creator.firstName ||
@@ -1111,6 +1113,7 @@ export class MomentService {
     const myReaction = myReactionRecord ? myReactionRecord.reaction : null;
 
     const reactionCounts: Record<string, number> = {
+      like: 0,
       heart: 0,
       love_eyes: 0,
       fire: 0,
@@ -1142,7 +1145,7 @@ export class MomentService {
       });
     } catch {}
 
-    const likesCount = reactionCounts.heart || reactions.length;
+    const likesCount = reactions.length;
 
     return {
       id: moment.id,
@@ -1196,7 +1199,7 @@ export class MomentService {
   public async reactToMoment(
     viewerId: string,
     momentId: string,
-    reaction: MomentReactionType
+    reaction: MomentReactionType = 'like'
   ) {
     const moment = await Moment.findByPk(momentId);
     if (!moment || moment.status !== 'active') {
@@ -1264,6 +1267,7 @@ export class MomentService {
     // Calculate updated reaction counts
     const allReactions = await MomentReaction.findAll({ where: { momentId } });
     const reactionCounts: Record<string, number> = {
+      like: 0,
       heart: 0,
       love_eyes: 0,
       fire: 0,
@@ -1280,6 +1284,10 @@ export class MomentService {
 
     return {
       momentId,
+      liked: true,
+      isLiked: true,
+      action: 'liked',
+      likesCount: allReactions.length,
       reaction,
       totalReactions: allReactions.length,
       reactionCounts,
@@ -1503,6 +1511,7 @@ export class MomentService {
     // Recalculate reaction counts
     const allReactions = await MomentReaction.findAll({ where: { momentId } });
     const reactionCounts: Record<string, number> = {
+      like: 0,
       heart: 0,
       love_eyes: 0,
       fire: 0,
@@ -1519,12 +1528,13 @@ export class MomentService {
 
     return {
       momentId,
+      liked: false,
       unliked: true,
-      action: 'removed',
       isLiked: false,
+      action: 'unliked',
       viewerReaction: null,
+      likesCount: allReactions.length,
       totalReactions: allReactions.length,
-      likesCount: reactionCounts.heart || allReactions.length,
       reactionCounts,
     };
   }

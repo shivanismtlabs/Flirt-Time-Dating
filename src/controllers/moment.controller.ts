@@ -290,7 +290,17 @@ export const likeMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const action = req.body?.action;
+    let action: 'like' | 'unlike' | 'toggle' | undefined;
+
+    if (typeof req.body?.isLiked === 'boolean') {
+      action = req.body.isLiked ? 'like' : 'unlike';
+    } else if (typeof req.body?.like === 'boolean') {
+      action = req.body.like ? 'like' : 'unlike';
+    } else if (req.body?.action) {
+      action = req.body.action;
+    } else if (req.body?.type) {
+      action = req.body.type;
+    }
 
     const result = await momentService.toggleLikeMoment(
       viewerId,

@@ -178,8 +178,11 @@ export const likeMomentSchema = z.object({
   }),
   body: z
     .object({
+      like: z.boolean().optional(),
+      isLiked: z.boolean().optional(),
       action: z.enum(['like', 'unlike', 'toggle']).optional(),
-      reaction: momentReactionEnum.optional().default('like'),
+      type: z.enum(['like', 'unlike', 'toggle']).optional(),
+      reaction: z.string().optional(),
     })
     .optional(),
 });

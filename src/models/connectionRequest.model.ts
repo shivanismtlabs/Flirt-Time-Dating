@@ -9,13 +9,18 @@ export interface ConnectionRequestAttributes {
   targetUserId: string;
   status: ConnectionRequestStatus;
   message?: string | null;
+  reason?: string | null;
+  momentId?: string | null;
   respondedAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
 export interface ConnectionRequestCreationAttributes
-  extends Optional<ConnectionRequestAttributes, 'id' | 'status' | 'message' | 'respondedAt' | 'createdAt' | 'updatedAt'> {}
+  extends Optional<
+    ConnectionRequestAttributes,
+    'id' | 'status' | 'message' | 'reason' | 'momentId' | 'respondedAt' | 'createdAt' | 'updatedAt'
+  > {}
 
 export class ConnectionRequest
   extends Model<ConnectionRequestAttributes, ConnectionRequestCreationAttributes>
@@ -26,6 +31,8 @@ export class ConnectionRequest
   declare targetUserId: string;
   declare status: ConnectionRequestStatus;
   declare message: string | null;
+  declare reason: string | null;
+  declare momentId: string | null;
   declare respondedAt: Date | null;
 
   declare readonly createdAt: Date;
@@ -68,6 +75,14 @@ ConnectionRequest.init(
     },
     message: {
       type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    reason: {
+      type: DataTypes.STRING(150),
+      allowNull: true,
+    },
+    momentId: {
+      type: DataTypes.UUID,
       allowNull: true,
     },
     respondedAt: {

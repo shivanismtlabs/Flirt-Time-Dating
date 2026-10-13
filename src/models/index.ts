@@ -642,6 +642,15 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;
               END IF;
             END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'reason') THEN
+                ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'momentId') THEN
+                ALTER TABLE "connection_requests" ADD COLUMN "momentId" UUID;
+              END IF;
+            END IF;
           END $$;
         `);
 
@@ -650,6 +659,13 @@ export const initDb = async (force = false): Promise<void> => {
           await sequelize.query('ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;');
         } catch (_dropErr) {
           // Safe to ignore if moments table does not exist yet or is already nullable
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN IF NOT EXISTS "reason" VARCHAR(150);');
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+        } catch (_crColErr) {
+          // Safe to ignore if connection_requests does not exist yet
         }
 
         // Ensure quick_moments and moment_gifts tables exist immediately on all environments
@@ -669,6 +685,12 @@ export const initDb = async (force = false): Promise<void> => {
     try {
       if (sequelize.getDialect() === 'sqlite') {
         await sequelize.sync({ force: isForce });
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "momentId" VARCHAR(36);');
+        } catch (_) {}
       } else {
         await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
       }

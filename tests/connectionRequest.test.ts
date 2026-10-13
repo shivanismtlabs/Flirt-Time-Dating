@@ -8,6 +8,7 @@ import {
   ConnectionRequest,
   UserDevice,
   Notification,
+  initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import * as firebaseConfig from '../src/config/firebase';
@@ -24,7 +25,7 @@ describe('Connect API & Firebase Push Notifications', () => {
 
   beforeAll(async () => {
     process.env.NODE_ENV = 'test';
-    // Synchronize models
+    await initDb(true);
     const timestamp = Date.now();
 
     // Create test users
@@ -392,6 +393,87 @@ describe('Connect API & Firebase Push Notifications', () => {
       // Verify token in UserDevice was marked inactive
       const device = await UserDevice.findOne({ where: { deviceToken: deadToken } });
       expect(device?.isActive).toBe(false);
+    });
+  });
+
+  describe('7. Connection Reasons & Reason-based Connection Requests (UI Modal)', () => {
+    it('should fetch connection reasons list with general subtitle when no targetUserId is passed', async () => {
+      const res = await request(app)
+        .get('/api/v1/connections/reasons')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.title).toBe('Connect because...');
+      expect(res.body.data.subtitle).toBe('Optional: let them know what caught your eye.');
+      expect(Array.isArray(res.body.data.options)).toBe(true);
+      expect(res.body.data.options).toHaveLength(5);
+      expect(res.body.data.options.map((o: any) => o.label)).toEqual([
+        'Love their vibe',
+        'Same interests',
+        'Liked their Moment',
+        'Great energy',
+        'Want to chat',
+      ]);
+    });
+
+    it('should fetch connection reasons with personalized subtitle containing recipient name', async () => {
+      const res = await request(app)
+        .get(`/api/v1/connections/reasons?targetUserId=${userB.id}`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.title).toBe('Connect because...');
+      expect(res.body.data.subtitle).toBe('Optional: let Diya know what caught your eye.');
+      expect(res.body.data.targetName).toBe('Diya');
+    });
+
+    it('should send connection request with selected reason and persist it in DB', async () => {
+      const res = await request(app)
+        .post('/api/v1/connections/request')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          targetUserId: userB.id,
+          reason: 'Love their vibe',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.reason).toBe('Love their vibe');
+
+      // Verify in DB
+      const record = await ConnectionRequest.findOne({
+        where: { requesterId: userA.id, targetUserId: userB.id },
+      });
+      expect(record).not.toBeNull();
+      expect(record?.reason).toBe('Love their vibe');
+
+      // Verify notification body contains the reason
+      const notif = await Notification.findOne({
+        where: { recipientId: userB.id, senderId: userA.id },
+      });
+      expect(notif).not.toBeNull();
+      expect(notif?.body).toContain('Love their vibe');
+    });
+
+    it('should support REST endpoint alias (POST /api/v1/connections) with reason key normalization', async () => {
+      const res = await request(app)
+        .post('/api/v1/connections')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          targetUserId: userB.id,
+          reason: 'same_interests',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.reason).toBe('Same interests');
+
+      const record = await ConnectionRequest.findOne({
+        where: { requesterId: userA.id, targetUserId: userB.id },
+      });
+      expect(record?.reason).toBe('Same interests');
     });
   });
 });

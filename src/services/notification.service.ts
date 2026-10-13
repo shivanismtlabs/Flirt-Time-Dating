@@ -62,9 +62,14 @@ export class NotificationService {
       requesterId: string;
       requesterName: string;
       requestId: string;
+      reason?: string | null;
     }
   ): Promise<PushNotificationResult> {
     let inAppNotificationId: string | undefined;
+
+    const inAppBody = input.reason
+      ? `${input.requesterName} wants to connect: "${input.reason}"`
+      : `${input.requesterName} wants to connect with you.`;
 
     // 1. Create In-App Notification record
     try {
@@ -73,12 +78,13 @@ export class NotificationService {
         senderId: input.requesterId,
         type: 'connection_request',
         title: 'New Connect Request',
-        body: `${input.requesterName} wants to connect with you.`,
+        body: inAppBody,
         entityId: input.requestId,
         data: {
           type: 'connection_request',
           requestId: input.requestId,
           senderId: input.requesterId,
+          reason: input.reason || '',
           screen: 'connection_requests',
         },
         isRead: false,
@@ -116,12 +122,13 @@ export class NotificationService {
         tokens,
         notification: {
           title: 'New Connect Request',
-          body: 'Someone wants to connect with you.',
+          body: inAppBody,
         },
         data: {
           type: 'connection_request',
           requestId: input.requestId,
           senderId: input.requesterId,
+          reason: input.reason || '',
           screen: 'connection_requests',
         },
         android: {

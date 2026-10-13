@@ -1440,7 +1440,40 @@
       "name": "Connections & Push Notifications",
       "item": [
         {
-          "name": "Send Connect Request (Connect Button)",
+          "name": "Get Connection Reasons (Connect because... Modal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections/reasons?targetUserId=<TARGET_USER_ID>",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "connections",
+                "reasons"
+              ],
+              "query": [
+                {
+                  "key": "targetUserId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "Optional UUID of target user to personalize modal subtitle (e.g. 'Optional: let Nisha know what caught your eye.')"
+                }
+              ]
+            },
+            "description": "Powers the 'Connect because...' modal. Returns modal title, personalized subtitle with recipient's name, and 5 predefined options: 'Love their vibe', 'Same interests', 'Liked their Moment', 'Great energy', 'Want to chat'."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Connection Request (With Reason)",
           "request": {
             "method": "POST",
             "header": [
@@ -1455,7 +1488,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\"\n}"
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"Love their vibe\",\n  \"message\": \"\",\n  \"momentId\": \"<OPTIONAL_MOMENT_ID>\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/connections/request",
@@ -1469,7 +1502,40 @@
                 "request"
               ]
             },
-            "description": "Triggered when user taps the Connect (+) button on a profile detail screen. Creates a connection request, in-app notification, and dispatches a Firebase Cloud Messaging (FCM) push notification to the recipient's active devices."
+            "description": "Triggered when user selects a reason from the 'Connect because...' modal and taps '❤️ Send Connection'. Supports optional reason ('Love their vibe', 'Same interests', 'Liked their Moment', 'Great energy', 'Want to chat'), custom message, and momentId. Creates connection request, in-app notification with reason, and sends FCM push notification. Automatically matches if target user already sent a pending request."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Connection Request (REST Alias POST /api/v1/connections)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"love_their_vibe\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "connections"
+              ]
+            },
+            "description": "Standard RESTful alias for sending connection requests with reason key ('love_their_vibe', 'same_interests', 'liked_their_moment', 'great_energy', 'want_to_chat')."
           },
           "response": []
         },

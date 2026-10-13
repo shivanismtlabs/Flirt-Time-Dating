@@ -1295,6 +1295,136 @@ export class MomentService {
   }
 
   /**
+   * Single unified API to toggle Like / Unlike on a Moment.
+   * If already liked by user -> unlikes it (isLiked: false).
+   * If not liked yet -> likes it (isLiked: true).
+   */
+  public async toggleLikeMoment(
+    viewerId: string,
+    momentId: string,
+    forcedAction?: 'like' | 'unlike' | 'toggle'
+  ) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status !== 'active') {
+      throw new MomentServiceError(
+        'Moment not found or unavailable',
+        404,
+        'MOMENT_NOT_FOUND'
+      );
+    }
+
+    // Block check
+    if (viewerId !== moment.userId) {
+      const blockRecord = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: viewerId, blockedUserId: moment.userId },
+            { userId: moment.userId, blockedUserId: viewerId },
+          ],
+        },
+      });
+
+      if (blockRecord) {
+        throw new MomentServiceError(
+          'Cannot react to this moment due to privacy restrictions',
+          403,
+          'REACTION_FORBIDDEN'
+        );
+      }
+
+      // Audience check
+      if (moment.audience === 'matches_only') {
+        const [u1, u2] = [viewerId, moment.userId].sort();
+        const match = await Match.findOne({
+          where: { user1Id: u1, user2Id: u2, isActive: true },
+        });
+
+        if (!match) {
+          throw new MomentServiceError(
+            'This moment is only visible to matches',
+            403,
+            'AUDIENCE_RESTRICTED'
+          );
+        }
+      }
+    }
+
+    const existingReaction = await MomentReaction.findOne({
+      where: {
+        momentId,
+        userId: viewerId,
+      },
+    });
+
+    let action: 'liked' | 'unliked';
+    let isLiked: boolean;
+
+    if (forcedAction === 'like') {
+      if (!existingReaction) {
+        await MomentReaction.create({
+          momentId,
+          userId: viewerId,
+          reaction: 'like',
+        });
+      } else if (existingReaction.reaction !== 'like') {
+        existingReaction.reaction = 'like';
+        await existingReaction.save();
+      }
+      action = 'liked';
+      isLiked = true;
+    } else if (forcedAction === 'unlike') {
+      if (existingReaction) {
+        await existingReaction.destroy();
+      }
+      action = 'unliked';
+      isLiked = false;
+    } else {
+      // Automatic Toggle (default behavior)
+      if (existingReaction) {
+        await existingReaction.destroy();
+        action = 'unliked';
+        isLiked = false;
+      } else {
+        await MomentReaction.create({
+          momentId,
+          userId: viewerId,
+          reaction: 'like',
+        });
+        action = 'liked';
+        isLiked = true;
+      }
+    }
+
+    const allReactions = await MomentReaction.findAll({ where: { momentId } });
+    const reactionCounts: Record<string, number> = {
+      like: 0,
+      heart: 0,
+      love_eyes: 0,
+      fire: 0,
+      laugh: 0,
+      surprised: 0,
+      clap: 0,
+    };
+
+    for (const r of allReactions) {
+      if (reactionCounts[r.reaction] !== undefined) {
+        reactionCounts[r.reaction]++;
+      }
+    }
+
+    return {
+      momentId,
+      liked: isLiked,
+      unliked: !isLiked,
+      isLiked,
+      action,
+      likesCount: allReactions.length,
+      totalReactions: allReactions.length,
+      reactionCounts,
+    };
+  }
+
+  /**
    * Sends a direct reply to a Quick Moment delivered through the chat conversation system.
    * Enforces expiry check, self-reply prevention, block restrictions, and conversation persistence.
    */

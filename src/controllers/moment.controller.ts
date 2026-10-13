@@ -276,8 +276,8 @@ export const reactMomentHandler = async (
 };
 
 /**
- * Controller to like a Moment
- * POST /api/v1/moments/:momentId/like
+ * Controller to toggle Like / Unlike a Moment from a single endpoint
+ * POST /api/v1/moments/:momentId/like or POST /api/v1/moments/:momentId/toggle-like
  */
 export const likeMomentHandler = async (
   req: AuthenticatedRequest,
@@ -290,20 +290,24 @@ export const likeMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const reaction = req.body?.reaction || 'like';
+    const action = req.body?.action;
 
-    const result = await momentService.reactToMoment(
+    const result = await momentService.toggleLikeMoment(
       viewerId,
       momentId,
-      reaction
+      action
     );
 
-    return sendSuccess(res, 'Moment liked successfully', result, 200);
+    const message = result.isLiked
+      ? 'Moment liked successfully'
+      : 'Moment unliked successfully';
+
+    return sendSuccess(res, message, result, 200);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
-    return sendError(res, error.message || 'Error liking moment', 500);
+    return sendError(res, error.message || 'Error processing like/unlike', 500);
   }
 };
 

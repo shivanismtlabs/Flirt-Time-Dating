@@ -93,9 +93,15 @@ router.get(
   getMomentDetailHandler
 );
 
-// 4. Like Moment
+// 4. Like / Unlike Toggle Moment (Single API)
 router.post(
   '/:momentId/like',
+  validate(likeMomentSchema),
+  likeMomentHandler
+);
+
+router.post(
+  '/:momentId/toggle-like',
   validate(likeMomentSchema),
   likeMomentHandler
 );

@@ -1,6 +1,11 @@
 import { Op } from 'sequelize';
 import { sequelize, User, Interest, UserInterest, UserPhoto } from '../models';
-import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
+import {
+  s3Service,
+  formatMediaUrl,
+  formatThumbnailUrl,
+  extractS3Key,
+} from './s3.service';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -174,7 +179,12 @@ export class OnboardingService {
     };
   }
 
-  public async addPhoto(userId: string, buffer: Buffer, mimeType: string) {
+  public async addPhoto(
+    userId: string,
+    buffer?: Buffer,
+    mimeType?: string,
+    preUploadedKey?: string
+  ) {
     const user = await this.getUserOrThrow(userId);
 
     const existingCount = await UserPhoto.count({ where: { userId } });
@@ -186,8 +196,40 @@ export class OnboardingService {
       );
     }
 
-    // Upload photo to S3
-    const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'photos');
+    let s3Key: string;
+
+    if (buffer && buffer.length > 0) {
+      s3Key = await s3Service.uploadMedia(
+        buffer,
+        userId,
+        mimeType || 'image/jpeg',
+        'photos'
+      );
+    } else if (preUploadedKey) {
+      const cleanKey = extractS3Key(preUploadedKey);
+      if (!cleanKey.startsWith(`${userId}/`) && !cleanKey.includes(`/${userId}/`)) {
+        throw new OnboardingServiceError(
+          'You are not authorized to use this image key',
+          403,
+          'UNAUTHORIZED_IMAGE_KEY'
+        );
+      }
+      const existsMeta = await s3Service.checkObjectExists(cleanKey);
+      if (!existsMeta.exists) {
+        throw new OnboardingServiceError(
+          'Uploaded image not found in storage',
+          400,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+      s3Key = cleanKey;
+    } else {
+      throw new OnboardingServiceError(
+        'No photo file or imageKey provided',
+        400,
+        'MISSING_FILE'
+      );
+    }
 
     const isFirstPhoto = existingCount === 0;
 
@@ -214,6 +256,7 @@ export class OnboardingService {
 
     return {
       ...photo.toJSON(),
+      imageKey: photo.imageUrl,
       imageUrl: formatMediaUrl(photo.imageUrl),
       thumbnailUrl: formatThumbnailUrl(photo.imageUrl),
     };
@@ -269,29 +312,59 @@ export class OnboardingService {
    * demotes any previous primary photo, and saves as UserPhoto (isPrimary: true).
    * Safely cleans up orphaned S3 object if database persistence fails.
    */
-  public async uploadProfilePhoto(userId: string, buffer: Buffer, mimeType: string) {
+  public async uploadProfilePhoto(
+    userId: string,
+    buffer?: Buffer,
+    mimeType?: string,
+    preUploadedKey?: string
+  ) {
     const user = await this.getUserOrThrow(userId);
 
-    if (!buffer || buffer.length === 0) {
+    let s3Key: string;
+    let isDirectUpload = false;
+
+    if (buffer && buffer.length > 0) {
+      // Validate image format using magic bytes
+      const signature = OnboardingService.validateImageSignature(buffer);
+      if (!signature.isValid) {
+        throw new OnboardingServiceError(
+          'Invalid or corrupted image content. File signature does not match supported image format (JPEG, PNG, WebP).',
+          400,
+          'INVALID_IMAGE_CONTENT'
+        );
+      }
+      s3Key = await s3Service.uploadMedia(
+        buffer,
+        userId,
+        mimeType || 'image/jpeg',
+        'photos'
+      );
+      isDirectUpload = true;
+    } else if (preUploadedKey) {
+      const cleanKey = extractS3Key(preUploadedKey);
+      if (!cleanKey.startsWith(`${userId}/`) && !cleanKey.includes(`/${userId}/`)) {
+        throw new OnboardingServiceError(
+          'You are not authorized to use this image key',
+          403,
+          'UNAUTHORIZED_IMAGE_KEY'
+        );
+      }
+      const existsMeta = await s3Service.checkObjectExists(cleanKey);
+      if (!existsMeta.exists) {
+        throw new OnboardingServiceError(
+          'Uploaded image not found in storage',
+          400,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+      s3Key = cleanKey;
+    } else {
       throw new OnboardingServiceError(
-        'Profile photo file is empty or missing',
+        'profilePhoto is required. Attach image in "profilePhoto" field or pass "imageKey"',
         400,
         'MISSING_FILE'
       );
     }
-
-    // Validate image format using magic bytes
-    const signature = OnboardingService.validateImageSignature(buffer);
-    if (!signature.isValid) {
-      throw new OnboardingServiceError(
-        'Invalid or corrupted image content. File signature does not match supported image format (JPEG, PNG, WebP).',
-        400,
-        'INVALID_IMAGE_CONTENT'
-      );
-    }
-
-    // Upload photo to S3
-    const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'photos');
 
     try {
       const result = await sequelize.transaction(async (transaction) => {
@@ -322,15 +395,20 @@ export class OnboardingService {
 
         return {
           photoId: photo.id,
+          imageKey: photo.imageUrl,
           profilePhoto: photo.imageUrl,
+          profileThumbnail: formatThumbnailUrl(photo.imageUrl),
+          imageUrl: formatMediaUrl(photo.imageUrl),
+          thumbnailUrl: formatThumbnailUrl(photo.imageUrl),
           isPrimary: photo.isPrimary,
         };
       });
 
       return result;
     } catch (dbError) {
-      // Safe cleanup of orphaned S3 object
-      await s3Service.deleteObject(s3Key);
+      if (isDirectUpload) {
+        await s3Service.deleteObject(s3Key);
+      }
       throw dbError;
     }
   }

@@ -131,6 +131,39 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
       expect(res.body.data.locationLabel).toBe('📍 Indore, Madhya Pradesh');
       expect(res.body.data.mediaUrl).toBeDefined();
     });
+
+    it('should create an image story using pre-uploaded S3 imageKey and return both imageUrl and thumbnailUrl', async () => {
+      const validKey = `quick_moments/${cindyUser.id}/story_123.jpg`;
+      const res = await request(app)
+        .post('/api/v1/quick-moments')
+        .set('Authorization', `Bearer ${cindyToken}`)
+        .send({
+          imageKey: validKey,
+          caption: 'Sunset in Indore 🌇',
+          locationLabel: 'Indore',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.type).toBe('image');
+      expect(res.body.data.imageKey).toBe(validKey);
+      expect(res.body.data.imageUrl).toContain(validKey);
+      expect(res.body.data.thumbnailUrl).toContain(validKey);
+    });
+
+    it('should reject unauthorized imageKey belonging to another user', async () => {
+      const foreignKey = `quick_moments/${alexUser.id}/alex_story.jpg`;
+      const res = await request(app)
+        .post('/api/v1/quick-moments')
+        .set('Authorization', `Bearer ${cindyToken}`)
+        .send({
+          imageKey: foreignKey,
+          caption: 'Attempting to use someone else photo',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
   });
 
   describe('2. Story Tray Bar (Screen 1 Image 1)', () => {

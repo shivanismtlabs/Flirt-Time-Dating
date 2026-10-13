@@ -6,7 +6,7 @@ import {
   User,
   Notification,
 } from '../models';
-import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from './s3.service';
 
 export class QuickMomentServiceError extends Error {
   public statusCode: number;
@@ -147,14 +147,19 @@ export class QuickMomentService {
               count: reactionSummary.total,
             }
           : null,
-        stories: myMoments.map((m) => ({
-          id: m.id,
-          type: m.type,
-          mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
-          thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
-          text: m.text,
-          createdAt: m.createdAt,
-        })),
+        stories: myMoments.map((m) => {
+          const cleanKey = m.mediaUrl ? extractS3Key(m.mediaUrl) : null;
+          return {
+            id: m.id,
+            type: m.type,
+            imageKey: cleanKey,
+            imageUrl: cleanKey ? formatMediaUrl(cleanKey) : (m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null),
+            thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
+            mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+            text: m.text,
+            createdAt: m.createdAt,
+          };
+        }),
       };
     }
 
@@ -185,10 +190,13 @@ export class QuickMomentService {
       const allReactions = moments.flatMap((m) => m.reactions || []);
       const reactionSummary = buildReactionBadge(allReactions);
 
+      const latestCleanKey = latest.mediaUrl ? extractS3Key(latest.mediaUrl) : null;
       let preview: any = {
         type: latest.type,
-        mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
+        imageKey: latestCleanKey,
+        imageUrl: latestCleanKey ? formatMediaUrl(latestCleanKey) : (latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null),
         thumbnailUrl: formatThumbnailUrl(latest.thumbnailUrl || latest.mediaUrl),
+        mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
         text: latest.text ? (latest.text.length > 30 ? `${latest.text.slice(0, 30)}...` : latest.text) : null,
         backgroundColor: latest.backgroundColor,
       };
@@ -300,6 +308,8 @@ export class QuickMomentService {
         text: m.text,
         backgroundColor: m.backgroundColor || '#2d0b1e',
         textColor: m.textColor || '#ffffff',
+        imageKey: m.mediaUrl ? extractS3Key(m.mediaUrl) : null,
+        imageUrl: m.mediaUrl ? (m.mediaUrl.startsWith('http') ? m.mediaUrl : formatMediaUrl(m.mediaUrl)) : null,
         mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
         thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         caption: m.caption,
@@ -401,6 +411,8 @@ export class QuickMomentService {
         slideIndex: index,
         totalSlides: moments.length,
         type: m.type,
+        imageKey: m.mediaUrl ? extractS3Key(m.mediaUrl) : null,
+        imageUrl: m.mediaUrl ? (m.mediaUrl.startsWith('http') ? m.mediaUrl : formatMediaUrl(m.mediaUrl)) : null,
         mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
         thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         text: m.text,
@@ -743,12 +755,15 @@ export class QuickMomentService {
       caption?: string;
       locationLabel?: string;
       mediaUrl?: string;
+      imageKey?: string;
+      key?: string;
+      imageUrl?: string;
     },
     file?: Express.Multer.File
   ) {
-    let type = data.type || (file || data.mediaUrl ? 'image' : 'text');
-    let mediaUrl = data.mediaUrl || null;
-    let thumbnailUrl = null;
+    const rawImageKey = data.imageKey || data.key || data.imageUrl || data.mediaUrl;
+    let type = data.type || (file || rawImageKey ? 'image' : 'text');
+    let cleanKey: string | null = null;
 
     if (file) {
       type = 'image';
@@ -758,11 +773,40 @@ export class QuickMomentService {
         file.mimetype,
         'quick_moments'
       );
-      mediaUrl = formatMediaUrl(s3Key);
-      thumbnailUrl = formatThumbnailUrl(s3Key);
-    } else if (mediaUrl) {
-      thumbnailUrl = formatThumbnailUrl(mediaUrl);
-      mediaUrl = formatMediaUrl(mediaUrl);
+      cleanKey = extractS3Key(s3Key);
+    } else if (rawImageKey) {
+      type = 'image';
+      cleanKey = extractS3Key(rawImageKey);
+
+      // Verify user ownership
+      const isAuthorized =
+        cleanKey.startsWith(`${userId}/`) ||
+        cleanKey.includes(`/${userId}/`) ||
+        cleanKey.startsWith('http://') ||
+        cleanKey.startsWith('https://');
+
+      if (!isAuthorized) {
+        throw new QuickMomentServiceError('Unauthorized image key', 403, 'UNAUTHORIZED_IMAGE_KEY');
+      }
+
+      // Verify object exists in storage and size limit
+      if (!cleanKey.startsWith('http://') && !cleanKey.startsWith('https://')) {
+        const objectCheck = await s3Service.checkObjectExists(cleanKey);
+        if (!objectCheck.exists) {
+          throw new QuickMomentServiceError(
+            'Uploaded image does not exist in storage',
+            400,
+            'IMAGE_NOT_FOUND'
+          );
+        }
+        if (objectCheck.contentLength && objectCheck.contentLength > 5 * 1024 * 1024) {
+          throw new QuickMomentServiceError(
+            'Image file size exceeds 5MB limit',
+            400,
+            'IMAGE_SIZE_EXCEEDED'
+          );
+        }
+      }
     }
 
     if (type === 'text' && !data.text) {
@@ -778,8 +822,8 @@ export class QuickMomentService {
     const moment = await QuickMoment.create({
       userId,
       type,
-      mediaUrl,
-      thumbnailUrl,
+      mediaUrl: cleanKey,
+      thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
       text: data.text || null,
       backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
       textColor: data.textColor || '#ffffff',
@@ -792,12 +836,17 @@ export class QuickMomentService {
       expiresAt,
     });
 
+    const finalImageUrl = cleanKey ? formatMediaUrl(cleanKey) : null;
+    const finalThumbnailUrl = cleanKey ? formatThumbnailUrl(cleanKey) : null;
+
     return {
       id: moment.id,
       userId: moment.userId,
       type: moment.type,
-      mediaUrl: moment.mediaUrl,
-      thumbnailUrl: moment.thumbnailUrl,
+      imageKey: cleanKey || null,
+      imageUrl: finalImageUrl,
+      thumbnailUrl: finalThumbnailUrl,
+      mediaUrl: finalImageUrl,
       text: moment.text,
       backgroundColor: moment.backgroundColor,
       textColor: moment.textColor,

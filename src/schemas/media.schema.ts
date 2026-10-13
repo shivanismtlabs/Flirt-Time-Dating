@@ -3,9 +3,9 @@ import { z } from 'zod';
 export const generatePresignedUrlSchema = z.object({
   body: z.object({
     folder: z
-      .enum(['uploads', 'photos', 'moments', 'verifications', 'avatars', 'quick-moments', 'audio'], {
+      .enum(['uploads', 'photos', 'moments', 'verifications', 'avatars', 'quick-moments', 'quick_moments', 'audio'], {
         errorMap: () => ({
-          message: 'Invalid folder. Allowed values: uploads, photos, moments, verifications, avatars, quick-moments, audio',
+          message: 'Invalid folder. Allowed values: uploads, photos, moments, verifications, avatars, quick-moments, quick_moments, audio',
         }),
       })
       .optional()

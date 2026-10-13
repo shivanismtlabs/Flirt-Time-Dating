@@ -40,13 +40,60 @@ export const uploadFaceVerification = async (req: AuthenticatedRequest, res: Res
       files?.['profile_image']?.[0] ||
       files?.['profile_photo']?.[0];
 
-    if (!imageFile || !imageFile.buffer || imageFile.buffer.length === 0) {
+    const rawImageKey =
+      req.body?.imageKey ||
+      req.body?.image_key ||
+      req.body?.key ||
+      req.body?.mediaUrl ||
+      req.body?.imageUrl;
+
+    if ((!imageFile || !imageFile.buffer || imageFile.buffer.length === 0) && !rawImageKey) {
       return sendError(
         res,
-        'No selfie image provided. Please upload an image in the "selfie_image", "image", "selfie", or "file" form field.',
+        'No selfie image provided. Please upload an image in the "selfie_image", "image", "selfie", or "file" form field or provide an imageKey.',
         400,
         'MISSING_IMAGE_FILE'
       );
+    }
+
+    const { s3Service, extractS3Key } = await import('../services/s3.service');
+
+    let imageBuffer: Buffer;
+    let originalFilename: string;
+    let mimeType = 'image/jpeg';
+    let fileSize: number;
+
+    if (imageFile && imageFile.buffer && imageFile.buffer.length > 0) {
+      imageBuffer = imageFile.buffer;
+      originalFilename = imageFile.originalname;
+      mimeType = imageFile.mimetype;
+      fileSize = imageFile.size;
+    } else {
+      const cleanKey = extractS3Key(rawImageKey);
+      const isAuthorized =
+        cleanKey.startsWith(`${userId}/`) ||
+        cleanKey.includes(`/${userId}/`) ||
+        cleanKey.startsWith('http://') ||
+        cleanKey.startsWith('https://');
+
+      if (!isAuthorized) {
+        return sendError(res, 'Unauthorized image key', 403, 'UNAUTHORIZED_IMAGE_KEY');
+      }
+
+      imageBuffer = await s3Service.getObjectBuffer(cleanKey);
+      originalFilename = cleanKey.split('/').pop() || 'selfie.jpg';
+      fileSize = imageBuffer.length;
+    }
+
+    let referenceImageBuffer = referenceFile?.buffer;
+    const rawRefKey = req.body?.referenceImageKey || req.body?.reference_image_key;
+    if (!referenceImageBuffer && rawRefKey) {
+      try {
+        const cleanRefKey = extractS3Key(rawRefKey);
+        referenceImageBuffer = await s3Service.getObjectBuffer(cleanRefKey);
+      } catch (err: any) {
+        console.warn('[Face Verification] Failed to load reference image from key:', err.message);
+      }
     }
 
     const verificationType =
@@ -57,12 +104,12 @@ export const uploadFaceVerification = async (req: AuthenticatedRequest, res: Res
     // 3. Run AWS Face Verification Workflow
     const result = await faceVerificationService.processFaceVerification({
       userId,
-      imageBuffer: imageFile.buffer,
-      originalFilename: imageFile.originalname,
-      mimeType: imageFile.mimetype,
-      fileSize: imageFile.size,
+      imageBuffer,
+      originalFilename,
+      mimeType,
+      fileSize,
       verificationType,
-      referenceImageBuffer: referenceFile?.buffer,
+      referenceImageBuffer,
     });
 
     let message = 'Identity verification completed';

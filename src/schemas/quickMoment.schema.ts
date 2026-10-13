@@ -17,7 +17,10 @@ export const createQuickMomentSchema = z.object({
     textColor: z.string().max(50).optional(),
     caption: z.string().max(500).optional(),
     locationLabel: z.string().max(150).optional(),
-    mediaUrl: z.string().url().max(1000).optional(),
+    mediaUrl: z.string().max(1000).optional(),
+    imageKey: z.string().max(1000).optional(),
+    key: z.string().max(1000).optional(),
+    imageUrl: z.string().max(1000).optional(),
   }),
 });
 

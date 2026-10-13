@@ -138,6 +138,43 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(updatedUser?.isFaceVerified).toBe(true);
       expect(updatedUser?.profilePicture).toBe('verifications/user99/test_selfie.jpg');
     });
+
+    it('should successfully process verification using pre-uploaded S3 imageKey', async () => {
+      testUser.profilePicture = null;
+      await testUser.save();
+
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.5, brightness: 82, sharpness: 90 }],
+      });
+
+      const validKey = `verifications/${testUser.id}/selfie_abc.jpg`;
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          imageKey: validKey,
+          verificationType: 'gesture',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('approved');
+    });
+
+    it('should reject unauthorized imageKey belonging to another user in face verification', async () => {
+      const foreignKey = 'verifications/other_user_id/selfie_foreign.jpg';
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          imageKey: foreignKey,
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.error).toBe('UNAUTHORIZED_IMAGE_KEY');
+    });
   });
 
   describe('6. No Face Detected in Selfie', () => {

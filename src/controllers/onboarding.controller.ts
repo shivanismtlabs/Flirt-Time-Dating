@@ -127,12 +127,24 @@ export const uploadPhoto = async (req: AuthenticatedRequest, res: Response) => {
 
     const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
     const photoFile = files?.['photo']?.[0] || files?.['image']?.[0] || req.file;
+    const { imageKey, imageUrl } = req.body || {};
+    const preUploadedKey = imageKey || imageUrl;
 
-    if (!photoFile || !photoFile.buffer) {
-      return sendError(res, 'No photo file provided. Attach image in "photo" or "image" field', 400, 'MISSING_FILE');
+    if (!photoFile?.buffer && !preUploadedKey) {
+      return sendError(
+        res,
+        'No photo file provided. Attach image in "photo" or "image" field or pass "imageKey"',
+        400,
+        'MISSING_FILE'
+      );
     }
 
-    const photo = await onboardingService.addPhoto(userId, photoFile.buffer, photoFile.mimetype);
+    const photo = await onboardingService.addPhoto(
+      userId,
+      photoFile?.buffer,
+      photoFile?.mimetype,
+      preUploadedKey
+    );
     return sendSuccess(res, 'Photo uploaded successfully', { photo }, 201);
   } catch (err: any) {
     return handleControllerError(res, err);
@@ -156,10 +168,16 @@ export const uploadProfilePhoto = async (req: AuthenticatedRequest, res: Respons
       files?.['image']?.[0] ||
       req.file;
 
-    if (!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) {
+    const { imageKey, imageUrl } = req.body || {};
+    const preUploadedKey = imageKey || imageUrl;
+
+    if (
+      (!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) &&
+      !preUploadedKey
+    ) {
       return sendError(
         res,
-        'profilePhoto is required. Attach image in "profilePhoto" field',
+        'profilePhoto is required. Attach image in "profilePhoto" field or pass "imageKey"',
         400,
         'MISSING_FILE'
       );
@@ -167,8 +185,9 @@ export const uploadProfilePhoto = async (req: AuthenticatedRequest, res: Respons
 
     const result = await onboardingService.uploadProfilePhoto(
       userId,
-      photoFile.buffer,
-      photoFile.mimetype
+      photoFile?.buffer,
+      photoFile?.mimetype,
+      preUploadedKey
     );
 
     return sendSuccess(res, 'Profile photo uploaded successfully', result, 201);

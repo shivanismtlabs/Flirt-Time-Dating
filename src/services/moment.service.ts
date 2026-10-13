@@ -500,11 +500,13 @@ export class MomentService {
       offset,
     });
 
-    // 6. Replies / comments counts
+    // 6. Replies / comments counts & gifts counts
     const momentIds = moments.map((m: any) => m.id);
     const repliesCountMap = new Map<string, number>();
+    const giftsCountMap = new Map<string, number>();
     for (const id of momentIds) {
       repliesCountMap.set(id, 0);
+      giftsCountMap.set(id, 0);
     }
 
     if (momentIds.length > 0) {
@@ -533,6 +535,21 @@ export class MomentService {
                 );
               }
             } catch {}
+          }
+        }
+      } catch {}
+
+      try {
+        const giftRecords = await MomentGift.findAll({
+          where: { momentId: { [Op.in]: momentIds } },
+          attributes: ['momentId', 'quantity'],
+        });
+
+        for (const g of giftRecords) {
+          const mId = g.momentId;
+          const qty = Number(g.quantity) || 1;
+          if (giftsCountMap.has(mId)) {
+            giftsCountMap.set(mId, (giftsCountMap.get(mId) || 0) + qty);
           }
         }
       } catch {}
@@ -620,7 +637,7 @@ export class MomentService {
         })),
         likesCount,
         commentsCount,
-        giftsCount: 0,
+        giftsCount: giftsCountMap.get(m.id) || 0,
         sharesCount: 0,
         isLiked: !!myReaction,
         viewerReaction: myReaction,
@@ -872,11 +889,13 @@ export class MomentService {
       offset,
     });
 
-    // Batch query comment/reply counts for all moments in page
+    // Batch query comment/reply counts and gifts counts for all moments in page
     const momentIds = moments.map((m: any) => m.id);
     const repliesCountMap = new Map<string, number>();
+    const giftsCountMap = new Map<string, number>();
     for (const id of momentIds) {
       repliesCountMap.set(id, 0);
+      giftsCountMap.set(id, 0);
     }
 
     if (momentIds.length > 0) {
@@ -905,6 +924,21 @@ export class MomentService {
                 );
               }
             } catch {}
+          }
+        }
+      } catch {}
+
+      try {
+        const giftRecords = await MomentGift.findAll({
+          where: { momentId: { [Op.in]: momentIds } },
+          attributes: ['momentId', 'quantity'],
+        });
+
+        for (const g of giftRecords) {
+          const mId = g.momentId;
+          const qty = Number(g.quantity) || 1;
+          if (giftsCountMap.has(mId)) {
+            giftsCountMap.set(mId, (giftsCountMap.get(mId) || 0) + qty);
           }
         }
       } catch {}
@@ -993,7 +1027,7 @@ export class MomentService {
         createdAt: m.createdAt,
         likesCount,
         commentsCount,
-        giftsCount: 0,
+        giftsCount: giftsCountMap.get(m.id) || 0,
         sharesCount: 0,
         isLiked: !!myReaction,
         viewerReaction: myReaction,

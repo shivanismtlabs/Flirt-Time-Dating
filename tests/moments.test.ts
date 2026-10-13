@@ -6,6 +6,7 @@ import {
   Moment,
   MomentMedia,
   MomentReaction,
+  MomentGift,
   Conversation,
   ChatMessage,
   Match,
@@ -51,6 +52,7 @@ describe('Permanent Moments Feature APIs', () => {
 
   beforeEach(async () => {
     // Clear all tables
+    await MomentGift.destroy({ where: {} });
     await ChatMessage.destroy({ where: {} });
     await Conversation.destroy({ where: {} });
     await MomentReaction.destroy({ where: {} });
@@ -732,6 +734,75 @@ describe('Permanent Moments Feature APIs', () => {
 
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
+    });
+  });
+
+  describe('8. Gifts Count in Moments Feed and User Profiles', () => {
+    it('should accurately calculate and return giftsCount in feed and user moments after gifts are sent', async () => {
+      // 1. Create a moment
+      const createRes = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Gift test moment')
+        .attach('images', validJpegBuffer, 'gift_test.jpg');
+
+      expect(createRes.status).toBe(201);
+      const testMomentId = createRes.body.data.momentId;
+
+      // 2. Initial feed check: giftsCount should be 0
+      const feedRes1 = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInFeed1 = feedRes1.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInFeed1).toBeDefined();
+      expect(momentInFeed1.giftsCount).toBe(0);
+
+      // 3. Send 3 gifts (rose qty 1, chocolate qty 2)
+      await MomentGift.create({
+        momentId: testMomentId,
+        senderId: viewerUser.id,
+        recipientId: creatorUser.id,
+        giftCode: 'rose',
+        giftName: 'Rose',
+        icon: '🌹',
+        coins: 1,
+        quantity: 1,
+        totalCoins: 1,
+      });
+
+      await MomentGift.create({
+        momentId: testMomentId,
+        senderId: viewerUser.id,
+        recipientId: creatorUser.id,
+        giftCode: 'chocolate',
+        giftName: 'Chocolate',
+        icon: '🍫',
+        coins: 10,
+        quantity: 2,
+        totalCoins: 20,
+      });
+
+      // 4. Feed check: giftsCount should now be 3 (1 + 2)
+      const feedRes2 = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInFeed2 = feedRes2.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInFeed2).toBeDefined();
+      expect(momentInFeed2.giftsCount).toBe(3);
+
+      // 5. User moments check: giftsCount should also be 3
+      const userMomentsRes = await request(app)
+        .get(`/api/v1/users/${creatorUser.id}/moments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInUser = userMomentsRes.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInUser).toBeDefined();
+      expect(momentInUser.giftsCount).toBe(3);
+
+      // 6. Moment detail check: giftsCount should also be 3
+      const detailRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(detailRes.body.data.giftsCount).toBe(3);
     });
   });
 });

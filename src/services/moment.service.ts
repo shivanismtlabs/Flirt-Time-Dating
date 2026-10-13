@@ -1572,7 +1572,11 @@ export class MomentService {
     const { count, rows } = await ChatMessage.findAndCountAll({
       where: {
         messageType: 'moment_reply',
-        metadata: { [Op.like]: `%"momentId":"${momentId}"%` },
+        [Op.or]: [
+          { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
+          { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
+          { metadata: { [Op.like]: `%"momentId":"${momentId}"` } },
+        ],
       },
       include: [
         {
@@ -1589,15 +1593,19 @@ export class MomentService {
     const comments = rows.map((c: any) => ({
       id: c.id,
       commentId: c.id,
+      replyId: c.id,
       momentId,
       comment: c.content,
       message: c.content,
       createdAt: c.createdAt,
       timeAgo: formatTimeAgoShort(c.createdAt),
+      isMyComment: c.senderId === viewerId,
+      canDelete: c.senderId === viewerId || moment.userId === viewerId,
       user: {
         id: c.sender?.id,
         name: c.sender?.fullName || c.sender?.nickName || 'User',
         profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
+        avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
         isVerified: !!c.sender?.isFaceVerified,
         city: c.sender?.city || null,
       },
@@ -1606,10 +1614,109 @@ export class MomentService {
     return {
       momentId,
       totalComments: count,
+      totalReplies: count,
       page,
       limit,
       totalPages: Math.ceil(count / limit),
       comments,
+      replies: comments,
+    };
+  }
+
+  /**
+   * Retrieves likes / reactions list for a Moment
+   * GET /api/v1/moments/:momentId/likes (or /reactions)
+   */
+  public async getMomentLikes(
+    viewerId: string,
+    momentId: string,
+    options?: { page?: number; limit?: number; reaction?: string }
+  ) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.max(1, Math.min(100, options?.limit || 20));
+    const offset = (page - 1) * limit;
+
+    const whereClause: any = { momentId };
+    if (options?.reaction) {
+      whereClause.reaction = options.reaction;
+    }
+
+    // Check if current viewer has liked / reacted
+    const viewerReaction = await MomentReaction.findOne({
+      where: { momentId, userId: viewerId },
+    });
+
+    // 1. Total reactions breakdown across all reactions
+    const allReactions = await MomentReaction.findAll({
+      where: { momentId },
+      attributes: ['reaction'],
+    });
+
+    const reactionCounts: Record<string, number> = {
+      like: 0,
+      heart: 0,
+      love_eyes: 0,
+      fire: 0,
+      laugh: 0,
+      surprised: 0,
+      clap: 0,
+    };
+
+    for (const r of allReactions) {
+      if (reactionCounts[r.reaction] !== undefined) {
+        reactionCounts[r.reaction]++;
+      }
+    }
+
+    // 2. Query paginated likes/reactions with User details
+    const { count, rows } = await MomentReaction.findAndCountAll({
+      where: whereClause,
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const likes = rows.map((r: any) => ({
+      id: r.id,
+      reactionId: r.id,
+      reaction: r.reaction,
+      isLike: r.reaction === 'like',
+      createdAt: r.createdAt,
+      timeAgo: formatTimeAgoShort(r.createdAt),
+      user: {
+        id: r.user?.id,
+        name: r.user?.fullName || r.user?.nickName || 'User',
+        profilePhoto: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
+        avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
+        isVerified: !!r.user?.isFaceVerified,
+        city: r.user?.city || null,
+      },
+    }));
+
+    return {
+      momentId,
+      totalLikes: allReactions.filter((r) => r.reaction === 'like').length,
+      totalReactions: allReactions.length,
+      reactionCounts,
+      hasLiked: !!viewerReaction,
+      myReaction: viewerReaction ? viewerReaction.reaction : null,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit),
+      likes,
+      reactions: likes,
     };
   }
 

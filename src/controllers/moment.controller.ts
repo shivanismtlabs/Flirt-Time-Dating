@@ -385,6 +385,38 @@ export const getMomentCommentsHandler = async (
 };
 
 /**
+ * Controller to get all users who liked / reacted to a Moment
+ * GET /api/v1/moments/:momentId/likes or GET /api/v1/moments/:momentId/reactions
+ */
+export const getMomentLikesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit, reaction } = req.query as any;
+
+    const result = await momentService.getMomentLikes(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      reaction: reaction ? String(reaction) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment likes fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching moment likes', 500);
+  }
+};
+
+/**
  * Controller to securely report a Moment
  * POST /api/v1/moments/:momentId/report
  */

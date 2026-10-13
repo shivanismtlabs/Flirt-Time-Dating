@@ -125,6 +125,19 @@ export const getMomentCommentsSchema = z.object({
     .optional(),
 });
 
+export const getMomentLikesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+      reaction: z.string().optional(),
+    })
+    .optional(),
+});
+
 export const getAllMomentsSchema = z.object({
   query: z.object({
     page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),

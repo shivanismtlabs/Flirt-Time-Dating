@@ -12,6 +12,7 @@ import {
   deleteMomentHandler,
   unlikeMomentHandler,
   getMomentCommentsHandler,
+  getMomentLikesHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -28,6 +29,7 @@ import {
   deleteMomentSchema,
   unlikeMomentSchema,
   getMomentCommentsSchema,
+  getMomentLikesSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -111,6 +113,19 @@ router.post(
   '/:momentId/reactions',
   validate(reactMomentSchema),
   reactMomentHandler
+);
+
+// Get Likes / Reactions List for a Moment
+router.get(
+  '/:momentId/likes',
+  validate(getMomentLikesSchema),
+  getMomentLikesHandler
+);
+
+router.get(
+  '/:momentId/reactions',
+  validate(getMomentLikesSchema),
+  getMomentLikesHandler
 );
 
 // 5. Comments & Replies to Moment

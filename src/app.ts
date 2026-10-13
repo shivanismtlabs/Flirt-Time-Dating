@@ -5,6 +5,12 @@ import morgan from 'morgan';
 import routes from './routes';
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 import { sequelize } from './config/database';
+import { authenticate } from './middlewares/auth.middleware';
+import { handleUploadSelfie } from './middlewares/upload.middleware';
+import {
+  uploadFaceVerification,
+  getGestureVerificationInfo,
+} from './controllers/faceVerification.controller';
 
 const app: Application = express();
 
@@ -39,6 +45,10 @@ app.get(['/health', '/api/health', '/api/v1/health'], async (_req, res) => {
 // API Routes (supports /api and /api/v1)
 app.use('/api', routes);
 app.use('/api/v1', routes);
+
+// Direct root aliases for gesture endpoints (backward compatibility with legacy clients)
+app.get(['/gesture-upload', '/gesture'], authenticate, getGestureVerificationInfo);
+app.post(['/gesture-upload', '/gesture'], authenticate, handleUploadSelfie, uploadFaceVerification);
 
 // Error Handling Middlewares
 app.use(notFoundHandler);

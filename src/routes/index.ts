@@ -11,7 +11,10 @@ import connectionRoutes from './connection.routes';
 import mediaRoutes from './media.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
-import { uploadFaceVerification } from '../controllers/faceVerification.controller';
+import {
+  uploadFaceVerification,
+  getGestureVerificationInfo,
+} from '../controllers/faceVerification.controller';
 
 const router = Router();
 
@@ -26,7 +29,10 @@ router.use('/quick-moments', quickMomentRoutes);
 router.use('/connections', connectionRoutes);
 router.use('/media', mediaRoutes);
 
-// Direct Laravel-compatible gesture-upload endpoint: POST /api/v1/gesture-upload (and /api/gesture-upload)
+// Direct Laravel-compatible gesture endpoints: /api/v1/gesture-upload, /api/gesture-upload, /api/v1/gesture
+router.get('/gesture-upload', authenticate, getGestureVerificationInfo);
 router.post('/gesture-upload', authenticate, handleUploadSelfie, uploadFaceVerification);
+router.get('/gesture', authenticate, getGestureVerificationInfo);
+router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification);
 
 export default router;

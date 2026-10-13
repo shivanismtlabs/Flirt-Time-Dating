@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
 import { User } from '../models/user.model';
+import { UserPhoto } from '../models/userPhoto.model';
 import { FaceVerification, FaceVerificationStatus } from '../models/faceVerification.model';
 import { s3Service, S3ServiceError } from './s3.service';
 import { rekognitionService, RekognitionServiceError } from './rekognition.service';
@@ -146,6 +147,28 @@ export class FaceVerificationService {
               'STORAGE_UNAVAILABLE'
             );
           }
+        }
+      }
+
+      // 4b. Fallback: Lookup UserPhoto if profilePicture is not directly on user model
+      if (!hasReferencePhoto || !targetImageBuffer) {
+        try {
+          const candidatePhoto =
+            (await UserPhoto.findOne({
+              where: { userId: user.id, isPrimary: true },
+              order: [['createdAt', 'DESC']],
+            })) ||
+            (await UserPhoto.findOne({
+              where: { userId: user.id },
+              order: [['displayOrder', 'ASC'], ['createdAt', 'DESC']],
+            }));
+
+          if (candidatePhoto?.imageUrl && typeof candidatePhoto.imageUrl === 'string' && candidatePhoto.imageUrl.trim()) {
+            targetImageBuffer = await s3Service.getObjectBuffer(candidatePhoto.imageUrl.trim());
+            hasReferencePhoto = true;
+          }
+        } catch (photoErr: any) {
+          console.warn('[UserPhoto Reference Fallback Warning]:', photoErr.message);
         }
       }
 

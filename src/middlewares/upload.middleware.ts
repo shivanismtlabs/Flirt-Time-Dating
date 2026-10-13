@@ -39,9 +39,16 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
   const upload = uploadSelfie.fields([
     { name: 'selfie_image', maxCount: 1 },
     { name: 'image', maxCount: 1 },
+    { name: 'selfie', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
+    { name: 'gesture', maxCount: 1 },
+    { name: 'gesture_image', maxCount: 1 },
+    { name: 'avatar', maxCount: 1 },
     { name: 'referenceImage', maxCount: 1 },
     { name: 'reference_image', maxCount: 1 },
     { name: 'profile_image', maxCount: 1 },
+    { name: 'profile_photo', maxCount: 1 },
   ]);
 
   upload(req, res, (err: any) => {
@@ -58,7 +65,7 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
         if (err.code === 'LIMIT_UNEXPECTED_FILE') {
           return sendError(
             res,
-            `Unexpected field '${err.field}'. Use 'selfie_image' or 'image' for the selfie file.`,
+            `Unexpected field '${err.field}'. Use 'selfie_image', 'image', 'selfie', or 'file' for the selfie file.`,
             400,
             'UNEXPECTED_FIELD'
           );

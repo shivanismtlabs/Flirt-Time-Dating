@@ -1,6 +1,6 @@
 import request from 'supertest';
 import app from '../src/app';
-import { sequelize, User, FaceVerification } from '../src/models';
+import { sequelize, User, FaceVerification, UserPhoto } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import {
   createSingleFaceImage,
@@ -515,6 +515,139 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.body.success).toBe(false);
       expect(res.body.error).toBe('RATE_LIMIT_EXCEEDED');
       expect(res.body.message).toMatch(/maximum verification attempts/i);
+    });
+  });
+
+  describe('17. Flexible Field Names Support (file, selfie, photo, gesture)', () => {
+    it('should accept upload when field is named "file"', async () => {
+      const validImage = await createSingleFaceImage(400, 400);
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.0, brightness: 80, sharpness: 85 }],
+      });
+      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
+        isMatch: true,
+        similarity: 90.0,
+        confidence: 99.0,
+        threshold: 85,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('file', validImage, 'selfie.jpg');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('approved');
+    });
+
+    it('should accept upload when field is named "selfie" or "photo"', async () => {
+      const validImage = await createSingleFaceImage(400, 400);
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.0 }],
+      });
+      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
+        isMatch: true,
+        similarity: 92.0,
+        confidence: 99.0,
+        threshold: 85,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('selfie', validImage, 'selfie.jpg');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+    });
+  });
+
+  describe('18. GET Gesture Verification Info and Guidelines', () => {
+    it('should return verification status and instructions on GET /api/v1/gesture-upload', async () => {
+      const res = await request(app)
+        .get('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toHaveProperty('isFaceVerified');
+      expect(res.body.data).toHaveProperty('guidelines');
+      expect(res.body.data.guidelines.supportedFieldNames).toContain('selfie_image');
+      expect(res.body.data.guidelines.supportedFieldNames).toContain('file');
+    });
+
+    it('should return status on GET /api/v1/face-verification/status', async () => {
+      const res = await request(app)
+        .get('/api/v1/face-verification/status')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isFaceVerified).toBe(false);
+    });
+  });
+
+  describe('19. Fallback to UserPhoto Model', () => {
+    it('should use UserPhoto primary photo if user.profilePicture is null', async () => {
+      testUser.profilePicture = null;
+      await testUser.save();
+
+      await UserPhoto.create({
+        userId: testUser.id,
+        imageUrl: 'photos/user99/primary.jpg',
+        isPrimary: true,
+        displayOrder: 0,
+        status: 'approved',
+      });
+
+      const validImage = await createSingleFaceImage(400, 400);
+      const getBufferSpy = jest.spyOn(s3Service, 'getObjectBuffer');
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.0 }],
+      });
+      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
+        isMatch: true,
+        similarity: 95.0,
+        confidence: 99.0,
+        threshold: 85,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('selfie_image', validImage, 'selfie.jpg');
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('approved');
+      expect(getBufferSpy).toHaveBeenCalledWith('photos/user99/primary.jpg');
+    });
+  });
+
+  describe('20. Root Route /gesture-upload Alias', () => {
+    it('should support root POST /gesture-upload for legacy client compatibility', async () => {
+      const validImage = await createSingleFaceImage(400, 400);
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.0 }],
+      });
+      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
+        isMatch: true,
+        similarity: 89.0,
+        confidence: 99.0,
+        threshold: 85,
+      });
+
+      const res = await request(app)
+        .post('/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('selfie_image', validImage, 'selfie.jpg');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
     });
   });
 });

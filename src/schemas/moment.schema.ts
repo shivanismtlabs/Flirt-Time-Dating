@@ -34,6 +34,24 @@ export const createMomentSchema = z.object({
       .max(100, 'Location label must not exceed 100 characters')
       .optional()
       .nullable(),
+    location: z
+      .union([
+        z.string().trim().max(100),
+        z.object({
+          name: z.string().trim().max(100).optional(),
+          latitude: z.number().optional(),
+          longitude: z.number().optional(),
+        }),
+      ])
+      .optional()
+      .nullable(),
+    imageKey: z.string().min(1).optional(),
+    imageKeys: z
+      .union([
+        z.array(z.string().min(1)),
+        z.string().min(1).transform((s) => [s]),
+      ])
+      .optional(),
     mediaUrls: z
       .union([
         z.array(z.string().min(1)),

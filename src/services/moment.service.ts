@@ -185,16 +185,84 @@ export class MomentService {
       }
     }
 
-    // 4. Collect uploaded and pre-uploaded media keys preserving order
+    // 4. Validate and verify pre-uploaded S3 keys preserving order
     const uploadedMediaKeys: Array<{
       key: string;
       order: number;
       isDirectUpload?: boolean;
     }> = [];
 
-    // Pre-uploaded URLs first
+    // Pre-uploaded URLs first with strict authorization and storage validation
     for (const preUrl of validMediaUrls) {
       const key = extractS3Key(preUrl);
+
+      // a. Path traversal protection
+      if (!key || key.includes('..') || key.startsWith('/')) {
+        throw new MomentServiceError('Invalid S3 object key', 400, 'INVALID_KEY');
+      }
+
+      // b. Folder authorization check (must be inside allowed media directories)
+      const isAllowedFolder = ['moments/', 'uploads/', 'photos/'].some((prefix) =>
+        key.startsWith(prefix)
+      );
+      if (!isAllowedFolder && key.includes('/')) {
+        throw new MomentServiceError(
+          'Image key must be within an authorized storage folder',
+          400,
+          'INVALID_FOLDER'
+        );
+      }
+
+      // c. User authorization check: The key must belong to creatorId
+      const isAuthorizedUser =
+        key.startsWith(`${creatorId}/`) || key.includes(`/${creatorId}/`);
+
+      if (!isAuthorizedUser) {
+        throw new MomentServiceError(
+          'You are not authorized to attach uploads belonging to another user',
+          403,
+          'UNAUTHORIZED_IMAGE_KEY'
+        );
+      }
+
+      // d. Duplicate submission check: ensure key hasn't already been used in another Moment
+      const alreadyUsed = await MomentMedia.findOne({
+        where: { mediaUrl: key },
+      });
+      if (alreadyUsed) {
+        throw new MomentServiceError(
+          'This image has already been submitted for another Moment',
+          409,
+          'DUPLICATE_IMAGE_SUBMISSION'
+        );
+      }
+
+      // e. S3 Object existence & metadata validation
+      const objectMeta = await s3Service.checkObjectExists(key);
+      if (!objectMeta.exists) {
+        throw new MomentServiceError(
+          'Uploaded image not found in storage. Please upload the image to S3 before creating the Moment.',
+          400,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+
+      if (objectMeta.contentLength && objectMeta.contentLength > 5 * 1024 * 1024) {
+        throw new MomentServiceError(
+          'Uploaded image exceeds the 5MB size limit',
+          400,
+          'FILE_TOO_LARGE'
+        );
+      }
+
+      if (objectMeta.contentType && !objectMeta.contentType.startsWith('image/')) {
+        throw new MomentServiceError(
+          'Uploaded file is not a supported image format',
+          400,
+          'INVALID_IMAGE_TYPE'
+        );
+      }
+
       uploadedMediaKeys.push({
         key,
         order: uploadedMediaKeys.length,
@@ -272,8 +340,10 @@ export class MomentService {
         publishedAt: moment.publishedAt,
         expiresAt: moment.expiresAt,
         locationLabel: moment.locationLabel,
+        location: moment.locationLabel ? { name: moment.locationLabel } : null,
         media: mediaRecords.map((m) => ({
           mediaId: m.id,
+          imageKey: m.mediaUrl,
           mediaUrl: formatMediaUrl(m.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
           mediaType: m.mediaType,
@@ -495,6 +565,7 @@ export class MomentService {
         creator: creatorInfo,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
+          imageKey: media.mediaUrl,
           mediaUrl: formatMediaUrl(media.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
@@ -859,6 +930,7 @@ export class MomentService {
           : null,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
+          imageKey: media.mediaUrl,
           mediaUrl: formatMediaUrl(media.mediaUrl),
           thumbnailUrl: formatThumbnailUrl(media.mediaUrl),
           mediaType: media.mediaType,
@@ -983,6 +1055,7 @@ export class MomentService {
       .sort((a: any, b: any) => a.displayOrder - b.displayOrder)
       .map((m: any) => ({
         mediaId: m.id,
+        imageKey: m.mediaUrl,
         mediaUrl: formatMediaUrl(m.mediaUrl),
         thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
         mediaType: m.mediaType,

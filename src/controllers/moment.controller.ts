@@ -41,13 +41,39 @@ export const createMomentHandler = async (
       caption,
       audience,
       locationLabel,
+      location,
+      imageKey,
+      imageKeys,
       mediaUrls,
       mediaUrl,
       images,
     } = req.body || {};
 
+    // Resolve location label from string or location object
+    let resolvedLocation: string | null = null;
+    if (typeof location === 'string' && location.trim()) {
+      resolvedLocation = location.trim();
+    } else if (location && typeof location === 'object' && location.name) {
+      resolvedLocation = String(location.name).trim();
+    } else if (typeof locationLabel === 'string' && locationLabel.trim()) {
+      resolvedLocation = locationLabel.trim();
+    }
+
     // Collect pre-uploaded URLs or S3 keys
     let preUploadedUrls: string[] = [];
+
+    if (typeof imageKey === 'string' && imageKey.trim()) {
+      preUploadedUrls.push(imageKey.trim());
+    }
+
+    if (Array.isArray(imageKeys)) {
+      preUploadedUrls = preUploadedUrls.concat(
+        imageKeys.filter((k) => typeof k === 'string' && k.trim())
+      );
+    } else if (typeof imageKeys === 'string' && imageKeys.trim()) {
+      preUploadedUrls.push(imageKeys.trim());
+    }
+
     if (Array.isArray(mediaUrls)) {
       preUploadedUrls = preUploadedUrls.concat(mediaUrls);
     } else if (typeof mediaUrls === 'string' && mediaUrls.trim()) {
@@ -74,7 +100,7 @@ export const createMomentHandler = async (
       creatorId,
       caption,
       audience,
-      locationLabel,
+      locationLabel: resolvedLocation,
       files,
       mediaUrls: preUploadedUrls,
     });

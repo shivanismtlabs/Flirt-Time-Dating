@@ -158,7 +158,72 @@ describe('Permanent Moments Feature APIs', () => {
       expect(orders).toEqual([0, 1, 2, 3, 4]);
     });
 
+    it('should successfully generate presigned upload URL with imageKey for moments', async () => {
+      const res = await request(app)
+        .post('/api/v1/media/presigned-url')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          folder: 'moments',
+          mimeType: 'image/jpeg',
+          expiresInSeconds: 900,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.uploadUrl).toBeDefined();
+      expect(res.body.data.imageKey).toBeDefined();
+      expect(res.body.data.key).toBeDefined();
+      expect(res.body.data.imageKey).toBe(res.body.data.key);
+      expect(res.body.data.imageKey).toMatch(new RegExp(`^moments/${creatorUser.id}/`));
+      expect(res.body.data.publicUrl).toBeDefined();
+      expect(res.body.data.thumbnailUrl).toBeDefined();
+    });
+
+    it('should successfully create a moment with imageKey, caption, and location object', async () => {
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_unique1.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: testKey,
+          caption: 'Enjoying my evening',
+          location: {
+            name: 'Indore',
+            latitude: 22.7196,
+            longitude: 75.8577,
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Enjoying my evening');
+      expect(res.body.data.locationLabel).toBe('Indore');
+      expect(res.body.data.location).toEqual({ name: 'Indore' });
+      expect(res.body.data.media).toHaveLength(1);
+      expect(res.body.data.media[0].imageKey).toBe(testKey);
+      expect(res.body.data.media[0].mediaUrl).toContain(testKey);
+      expect(res.body.data.media[0].thumbnailUrl).toContain('thumbnails');
+
+      // Verify PostgreSQL database persistence
+      const savedMoment = await Moment.findByPk(res.body.data.momentId);
+      expect(savedMoment).not.toBeNull();
+      expect(savedMoment?.userId).toBe(creatorUser.id);
+      expect(savedMoment?.caption).toBe('Enjoying my evening');
+      expect(savedMoment?.locationLabel).toBe('Indore');
+
+      const savedMedia = await MomentMedia.findAll({
+        where: { momentId: res.body.data.momentId },
+      });
+      expect(savedMedia).toHaveLength(1);
+      expect(savedMedia[0].mediaUrl).toBe(testKey);
+    });
+
     it('should successfully create a moment with pre-uploaded S3 mediaUrls in JSON body', async () => {
+      const testKey1 = `moments/${creatorUser.id}/${Date.now()}_pic1.jpg`;
+      const testKey2 = `moments/${creatorUser.id}/${Date.now()}_pic2.jpg`;
+
       const res = await request(app)
         .post('/api/v1/moments')
         .set('Authorization', `Bearer ${creatorToken}`)
@@ -167,8 +232,8 @@ describe('Permanent Moments Feature APIs', () => {
           audience: 'everyone',
           locationLabel: 'Goa Beach',
           mediaUrls: [
-            'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/pic1.jpg',
-            'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/pic2.jpg',
+            `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey1}`,
+            `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey2}`,
           ],
         });
 
@@ -178,21 +243,106 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.data.caption).toBe('Direct S3 uploaded moment');
       expect(res.body.data.media).toHaveLength(2);
       expect(res.body.data.media[0].displayOrder).toBe(0);
+      expect(res.body.data.media[0].imageKey).toBe(testKey1);
       expect(res.body.data.media[1].displayOrder).toBe(1);
+      expect(res.body.data.media[1].imageKey).toBe(testKey2);
     });
 
     it('should successfully create a moment with single mediaUrl in JSON body', async () => {
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_single.jpg`;
+
       const res = await request(app)
         .post('/api/v1/moments')
         .set('Authorization', `Bearer ${creatorToken}`)
         .send({
           caption: 'Single photo moment',
-          mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/user1/single.jpg',
+          mediaUrl: `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey}`,
         });
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.media).toHaveLength(1);
+      expect(res.body.data.media[0].imageKey).toBe(testKey);
+    });
+
+    it('should reject attaching unauthorized S3 uploads belonging to another user with 403', async () => {
+      const foreignKey = `moments/${viewerUser.id}/${Date.now()}_foreign.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: foreignKey,
+          caption: 'Trying to steal someone else upload',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not authorized/i);
+    });
+
+    it('should reject duplicate submission of the same imageKey with 409', async () => {
+      const uniqueKey = `moments/${creatorUser.id}/${Date.now()}_first_submit.jpg`;
+
+      // 1. Submit first time
+      const res1 = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: uniqueKey,
+          caption: 'Original post',
+        });
+      expect(res1.status).toBe(201);
+
+      // 2. Submit same key second time
+      const res2 = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: uniqueKey,
+          caption: 'Duplicate attempt',
+        });
+      expect(res2.status).toBe(409);
+      expect(res2.body.success).toBe(false);
+      expect(res2.body.message).toMatch(/already been submitted/i);
+    });
+
+    it('should reject creation when S3 object does not exist in storage with 400', async () => {
+      const missingKey = `moments/${creatorUser.id}/${Date.now()}_missing.jpg`;
+      jest.spyOn(s3Service, 'checkObjectExists').mockResolvedValueOnce({ exists: false });
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: missingKey,
+          caption: 'Missing upload test',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not found in storage/i);
+    });
+
+    it('should reject creation when S3 object exceeds 5MB size limit with 400', async () => {
+      const oversizedKey = `moments/${creatorUser.id}/${Date.now()}_big.jpg`;
+      jest.spyOn(s3Service, 'checkObjectExists').mockResolvedValueOnce({
+        exists: true,
+        contentLength: 6 * 1024 * 1024, // 6MB
+        contentType: 'image/jpeg',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: oversizedKey,
+          caption: 'Oversized upload test',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/exceeds the 5MB size limit/i);
     });
   });
 

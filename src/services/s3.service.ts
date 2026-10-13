@@ -2,6 +2,7 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import crypto from 'crypto';
 import { getS3Client } from '../config/aws';
@@ -267,6 +268,54 @@ export class S3Service {
   }
 
   /**
+   * Verifies if an object exists in the S3 bucket and returns its metadata
+   */
+  public async checkObjectExists(key: string): Promise<{
+    exists: boolean;
+    contentLength?: number;
+    contentType?: string;
+  }> {
+    if (!key || typeof key !== 'string') return { exists: false };
+
+    // In test environment or if credentials not configured, allow mock verification
+    if (
+      process.env.NODE_ENV === 'test' ||
+      !env.AWS_ACCESS_KEY_ID ||
+      !env.AWS_SECRET_ACCESS_KEY
+    ) {
+      return {
+        exists: true,
+        contentLength: 1024 * 100,
+        contentType: 'image/jpeg',
+      };
+    }
+
+    const s3 = getS3Client();
+    try {
+      const command = new HeadObjectCommand({
+        Bucket: this.bucket,
+        Key: key,
+      });
+      const response = await s3.send(command);
+      return {
+        exists: true,
+        contentLength: response.ContentLength,
+        contentType: response.ContentType,
+      };
+    } catch (err: any) {
+      if (
+        err.name === 'NotFound' ||
+        err.name === 'NoSuchKey' ||
+        err.$metadata?.httpStatusCode === 404
+      ) {
+        return { exists: false };
+      }
+      console.warn(`[S3 HeadObject Warning] Error checking ${key}:`, err.message);
+      return { exists: false };
+    }
+  }
+
+  /**
    * Generates a presigned S3 PUT URL for direct client-side media uploads
    */
   public async generatePresignedUploadUrl(
@@ -277,6 +326,7 @@ export class S3Service {
   ): Promise<{
     uploadUrl: string;
     key: string;
+    imageKey: string;
     publicUrl: string;
     thumbnailUrl: string;
     expiresInSeconds: number;
@@ -302,6 +352,7 @@ export class S3Service {
       return {
         uploadUrl: `${publicUrl}?mock_upload=true`,
         key,
+        imageKey: key,
         publicUrl,
         thumbnailUrl,
         expiresInSeconds,
@@ -363,6 +414,7 @@ export class S3Service {
       return {
         uploadUrl,
         key,
+        imageKey: key,
         publicUrl,
         thumbnailUrl,
         expiresInSeconds,
@@ -375,6 +427,7 @@ export class S3Service {
       return {
         uploadUrl: publicUrl,
         key,
+        imageKey: key,
         publicUrl,
         thumbnailUrl,
         expiresInSeconds,

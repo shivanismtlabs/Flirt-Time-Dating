@@ -528,6 +528,7 @@ export class MomentService {
                 typeof msg.metadata === 'string'
                   ? JSON.parse(msg.metadata)
                   : msg.metadata;
+              if (parsed.type === 'gift') continue;
               if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
                 repliesCountMap.set(
                   parsed.momentId,
@@ -917,6 +918,7 @@ export class MomentService {
                 typeof msg.metadata === 'string'
                   ? JSON.parse(msg.metadata)
                   : msg.metadata;
+              if (parsed.type === 'gift') continue;
               if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
                 repliesCountMap.set(
                   parsed.momentId,
@@ -1174,13 +1176,19 @@ export class MomentService {
       creator.nickName ||
       creator.username;
 
-    // Count comments/replies for this moment
+    // Count comments/replies for this moment (excluding gift transactions)
     let commentsCount = 0;
     try {
       commentsCount = await ChatMessage.count({
         where: {
           messageType: 'moment_reply',
-          metadata: { [Op.like]: `%"momentId":"${moment.id}"%` },
+          metadata: {
+            [Op.like]: `%"momentId":"${moment.id}"%`,
+            [Op.notLike]: '%"type":"gift"%',
+          },
+          content: {
+            [Op.notLike]: '🎁%',
+          },
         },
       });
     } catch {}
@@ -1620,7 +1628,11 @@ export class MomentService {
         [Op.or]: [
           { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
           { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
-          { metadata: { [Op.like]: `%"momentId":"${momentId}"` } },
+        ],
+        [Op.and]: [
+          { metadata: { [Op.notLike]: '%"type":"gift"%' } },
+          { metadata: { [Op.notLike]: '%"type": "gift"%' } },
+          { content: { [Op.notLike]: '🎁%' } },
         ],
       },
       include: [
@@ -2135,7 +2147,7 @@ export class MomentService {
         senderId,
         recipientId: moment.userId,
         content: giftMsgContent,
-        messageType: 'moment_reply',
+        messageType: 'moment_gift',
         metadata: JSON.stringify({
           type: 'gift',
           momentId: moment.id,

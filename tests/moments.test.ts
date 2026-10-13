@@ -804,6 +804,50 @@ describe('Permanent Moments Feature APIs', () => {
         .set('Authorization', `Bearer ${viewerToken}`);
       expect(detailRes.body.data.giftsCount).toBe(3);
     });
+
+    it('should NOT show gifts in comments list or inflate commentsCount when a gift is sent', async () => {
+      // 1. Create a moment
+      const createRes = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Gift comment isolation test')
+        .attach('images', validJpegBuffer, 'isolation.jpg');
+      const testMomentId = createRes.body.data.momentId;
+
+      // 2. Post 1 legitimate text comment
+      const commentRes = await request(app)
+        .post(`/api/v1/moments/${testMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Awesome picture!' });
+      expect(commentRes.status).toBe(201);
+
+      // 3. Send a gift via POST /api/v1/moments/:momentId/gifts
+      const giftRes = await request(app)
+        .post(`/api/v1/moments/${testMomentId}/gifts`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({
+          giftCode: 'rose',
+          quantity: 1,
+          message: 'Enjoy this rose!',
+        });
+      expect(giftRes.status).toBe(201);
+
+      // 4. Retrieve comments list: should only contain the 1 text comment, NOT the gift!
+      const commentsListRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(commentsListRes.status).toBe(200);
+      expect(commentsListRes.body.data.totalComments).toBe(1);
+      expect(commentsListRes.body.data.comments).toHaveLength(1);
+      expect(commentsListRes.body.data.comments[0].comment).toBe('Awesome picture!');
+
+      // 5. Retrieve moment detail: commentsCount should be 1, giftsCount should be 1
+      const detailRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(detailRes.body.data.commentsCount).toBe(1);
+      expect(detailRes.body.data.giftsCount).toBe(1);
+    });
   });
 });
 

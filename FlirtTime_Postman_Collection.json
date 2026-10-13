@@ -2837,6 +2837,39 @@
             "description": "Returns paginated list of gifts sent to this moment with sender details and timestamps."
           },
           "response": []
+        },
+        {
+          "name": "Delete Moment (Author Only)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID to delete (Must be owned by authenticated user)"
+                }
+              ]
+            },
+            "description": "Permanently deletes or soft-deletes a Moment. Only the author/creator can delete their own moments. Returns 403 Forbidden if non-author attempts to delete."
+          },
+          "response": []
         }
       ]
     },

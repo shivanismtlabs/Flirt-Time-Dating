@@ -27,6 +27,7 @@ import {
   MOMENT_GIFTS_CATALOG,
   GiftCatalogItem,
 } from './momentGift.model';
+import { DeepLink } from './deepLink.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -446,6 +447,18 @@ QuickMomentView.belongsTo(User, {
   as: 'viewer',
 });
 
+// User <-> DeepLink associations
+User.hasMany(DeepLink, {
+  foreignKey: 'creatorId',
+  as: 'deepLinks',
+  onDelete: 'CASCADE',
+});
+
+DeepLink.belongsTo(User, {
+  foreignKey: 'creatorId',
+  as: 'creator',
+});
+
 export {
   sequelize,
   User,
@@ -474,6 +487,7 @@ export {
   MomentGift,
   MOMENT_GIFTS_CATALOG,
   GiftCatalogItem,
+  DeepLink,
 };
 
 export const initDb = async (force = false): Promise<void> => {

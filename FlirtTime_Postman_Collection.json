@@ -3259,6 +3259,435 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Quick Moments (24-Hour Stories)",
+      "item": [
+        {
+          "name": "Get Quick Moments Story Tray",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "tray"]
+            },
+            "description": "Screen 1: Horizontal active story avatars tray with unread rings, reaction badges, and own status."
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Active Quick Moments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "me"]
+            },
+            "description": "Screen 2: View authenticated user's own active slides, reaction summary badge, and viewers list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Other User Quick Moments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", "user", ":userId"],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "",
+                  "description": "Target user ID"
+                }
+              ]
+            },
+            "description": "Screen 3: View other user's active story slides with media, caption, location, and reaction emojis."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Quick Moment (Text or Media)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"text\",\n  \"text\": \"Heading out for the evening ✨\",\n  \"backgroundColor\": \"#2d0b1e\",\n  \"textColor\": \"#ffffff\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments"]
+            },
+            "description": "Publishes a new 24-hour Quick Moment story (text or pre-uploaded image)."
+          },
+          "response": []
+        },
+        {
+          "name": "React to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emoji\": \"😍\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "react"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Reacts with emoji (😍, 🔥, 😂, 😮, 👏, ❤️). Toggle behavior removes reaction if same emoji sent again."
+          },
+          "response": []
+        },
+        {
+          "name": "Reply to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Looking stunning!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "reply"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Sends a private DM reply to the story author."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Quick Moment as Viewed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "view"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Records story view/seen status and adds viewer to story viewers list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Quick Moment Reactions List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "quick-moments", ":momentId", "reactions"],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Screen 1 reaction list popup: Returns who gave reactions to this quick moment with user info, emoji, and timestamps."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Deep Links & Content Sharing",
+      "item": [
+        {
+          "name": "Create Deep Link (Permanent Moment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"moment\",\n  \"contentId\": \"b25ea3df-3d44-4f0e-b7e8-5b123456789a\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links"]
+            },
+            "description": "Generates an unguessable, secure share link for a permanent Moment. Reuses active links to avoid duplicates."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Deep Link (Quick Moment 24h Story)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"quick_moment\",\n  \"contentId\": \"c36fb4ea-4e55-5f1f-c8f9-6c234567890b\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links"]
+            },
+            "description": "Generates a share link for a Quick Moment. The link strictly inherits the 24-hour story expiration."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Deep Link (User Profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"profile\",\n  \"contentId\": \"a14da2ce-2c33-3e0d-a6d7-4a0123456789\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links"]
+            },
+            "description": "Generates a share link for a public user profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve Deep Link",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Optional: provides viewer authorization to evaluate mutual matches or blocked status"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links", ":code"],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Resolves link code and returns target navigation identifier, current availability status, and safe display metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Share Preview Metadata (Open Graph)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code/preview",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links", ":code", "preview"],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Public Open Graph link preview endpoint for social media crawlers and share sheets."
+          },
+          "response": []
+        },
+        {
+          "name": "Track Deep Link Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"app_opened\",\n  \"platform\": \"ios\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code/track",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "deep-links", ":code", "track"],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Records deep link conversion events (app_opened, content_viewed, share_clicked)."
+          },
+          "response": []
+        },
+        {
+          "name": "Web Landing Page (Fallback)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/l/:code",
+              "host": ["{{baseUrl}}"],
+              "path": ["l", ":code"],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Universal Link fallback HTML page with Open Graph meta tags, iOS smart app banner, and native app redirect script."
+          },
+          "response": []
+        },
+        {
+          "name": "Apple App Site Association",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/apple-app-site-association",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "apple-app-site-association"]
+            },
+            "description": "Apple App Site Association JSON file for iOS Universal Links verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Android Asset Links",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/assetlinks.json",
+              "host": ["{{baseUrl}}"],
+              "path": [".well-known", "assetlinks.json"]
+            },
+            "description": "Android Digital Asset Links JSON file for verified App Links."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

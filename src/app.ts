@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import routes from './routes';
+import webLinkRoutes from './routes/webLink.routes';
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 import { sequelize } from './config/database';
 import { authenticate } from './middlewares/auth.middleware';
@@ -15,7 +16,7 @@ import {
 const app: Application = express();
 
 // Security and utility middlewares
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -41,6 +42,9 @@ app.get(['/health', '/api/health', '/api/v1/health'], async (_req, res) => {
     environment: process.env.NODE_ENV || 'development',
   });
 });
+
+// Public short link redirection (/l/:code) & mobile app verification (.well-known)
+app.use('/', webLinkRoutes);
 
 // API Routes (supports /api and /api/v1)
 app.use('/api', routes);

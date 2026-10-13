@@ -59,6 +59,12 @@ export const env = {
   TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID || '',
   TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN || '',
   TWILIO_PHONE_NUMBER: process.env.TWILIO_PHONE_NUMBER || '',
+
+  // Deep Linking & Content Sharing Configuration
+  APP_DOMAIN: process.env.APP_DOMAIN || process.env.DEEP_LINK_DOMAIN || 'flirttimeapi.walit.in',
+  DEEP_LINK_BASE_URL: process.env.DEEP_LINK_BASE_URL || (process.env.APP_DOMAIN ? `https://${process.env.APP_DOMAIN}` : 'https://flirttimeapi.walit.in'),
+  IOS_APP_STORE_ID: process.env.IOS_APP_STORE_ID || 'id6741234567',
+  ANDROID_PACKAGE_NAME: process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
 };
 
 

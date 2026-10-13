@@ -38,9 +38,19 @@ router.post(
   createConnectionRequestHandler
 );
 
-// 4. Register FCM device token
+// 4. Register FCM device token (and aliases: /fcm-token, /token)
 router.post(
   '/device-token',
+  validate(registerDeviceTokenSchema),
+  registerDeviceTokenHandler
+);
+router.post(
+  '/fcm-token',
+  validate(registerDeviceTokenSchema),
+  registerDeviceTokenHandler
+);
+router.post(
+  '/token',
   validate(registerDeviceTokenSchema),
   registerDeviceTokenHandler
 );

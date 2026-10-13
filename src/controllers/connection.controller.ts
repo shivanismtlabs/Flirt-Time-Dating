@@ -107,10 +107,20 @@ export const registerDeviceTokenHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const { deviceToken, platform, deviceId } = req.body;
+    const rawToken =
+      req.body.deviceToken ||
+      req.body.fcmToken ||
+      req.body.token ||
+      req.body.device_token;
+
+    const platform = (req.body.platform || 'android').toLowerCase() as
+      | 'ios'
+      | 'android'
+      | 'web';
+    const deviceId = req.body.deviceId;
 
     const result = await notificationService.registerDeviceToken(userId, {
-      deviceToken,
+      deviceToken: rawToken,
       platform,
       deviceId,
     });

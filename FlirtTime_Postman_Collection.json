@@ -1572,6 +1572,139 @@
             "description": "Registers or refreshes the authenticated user's FCM device token for receiving push notifications. Platforms: 'ios' | 'android' | 'web'."
           },
           "response": []
+        },
+        {
+          "name": "Send Test Push Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"YOUR_DEVICE_FCM_REGISTRATION_TOKEN\",\n  \"title\": \"FlirtTime Test Alert\",\n  \"body\": \"Firebase push notification is working perfectly!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/test-push",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "test-push"
+              ]
+            },
+            "description": "Dispatches a test push notification to verify FCM setup on a mobile device immediately."
+          },
+          "response": []
+        },
+        {
+          "name": "Get In-App Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "unreadOnly",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Fetches paginated list of in-app notifications and unread count for current user."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_ID>",
+                  "description": "Notification UUID"
+                }
+              ]
+            },
+            "description": "Marks an in-app notification as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark All Notifications as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Marks all in-app notifications as read for current user."
+          },
+          "response": []
         }
       ]
     },
@@ -3439,8 +3572,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "tray"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "tray"
+              ]
             },
             "description": "Screen 1: Horizontal active story avatars tray with unread rings, reaction badges, and own status."
           },
@@ -3458,8 +3598,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "me"
+              ]
             },
             "description": "Screen 2: View authenticated user's own active slides, reaction summary badge, and viewers list."
           },
@@ -3477,8 +3624,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "user", ":userId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "user",
+                ":userId"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -3511,8 +3666,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
             },
             "description": "Publishes a new 24-hour Quick Moment story (text or pre-uploaded image)."
           },
@@ -3538,8 +3699,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "react"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "react"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -3572,8 +3741,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reply"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reply"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -3598,8 +3775,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "view"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "view"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -3624,8 +3809,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reactions"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -3663,8 +3856,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
             },
             "description": "Generates an unguessable, secure share link for a permanent Moment. Reuses active links to avoid duplicates."
           },
@@ -3690,8 +3889,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
             },
             "description": "Generates a share link for a Quick Moment. The link strictly inherits the 24-hour story expiration."
           },
@@ -3717,8 +3922,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
             },
             "description": "Generates a share link for a public user profile."
           },
@@ -3737,8 +3948,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links/:code",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links", ":code"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code"
+              ],
               "variable": [
                 {
                   "key": "code",
@@ -3758,8 +3976,16 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links/:code/preview",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links", ":code", "preview"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code",
+                "preview"
+              ],
               "variable": [
                 {
                   "key": "code",
@@ -3788,8 +4014,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/deep-links/:code/track",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "deep-links", ":code", "track"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code",
+                "track"
+              ],
               "variable": [
                 {
                   "key": "code",
@@ -3809,8 +4043,13 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/l/:code",
-              "host": ["{{baseUrl}}"],
-              "path": ["l", ":code"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "l",
+                ":code"
+              ],
               "variable": [
                 {
                   "key": "code",
@@ -3830,8 +4069,13 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/.well-known/apple-app-site-association",
-              "host": ["{{baseUrl}}"],
-              "path": [".well-known", "apple-app-site-association"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "apple-app-site-association"
+              ]
             },
             "description": "Apple App Site Association JSON file for iOS Universal Links verification."
           },
@@ -3844,8 +4088,13 @@
             "header": [],
             "url": {
               "raw": "{{baseUrl}}/.well-known/assetlinks.json",
-              "host": ["{{baseUrl}}"],
-              "path": [".well-known", "assetlinks.json"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "assetlinks.json"
+              ]
             },
             "description": "Android Digital Asset Links JSON file for verified App Links."
           },

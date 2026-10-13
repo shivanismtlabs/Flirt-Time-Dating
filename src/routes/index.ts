@@ -10,6 +10,7 @@ import quickMomentRoutes from './quickMoment.routes';
 import connectionRoutes from './connection.routes';
 import mediaRoutes from './media.routes';
 import deepLinkRoutes from './deepLink.routes';
+import notificationRoutes from './notification.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
@@ -30,6 +31,7 @@ router.use('/interests', interestRoutes);
 router.use('/moments', momentRoutes);
 router.use('/quick-moments', quickMomentRoutes);
 router.use('/connections', connectionRoutes);
+router.use('/notifications', notificationRoutes);
 router.use('/media', mediaRoutes);
 router.use('/deep-links', deepLinkRoutes);
 

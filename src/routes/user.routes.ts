@@ -30,8 +30,10 @@ const router = Router();
 // All user management routes require authentication
 router.use(authenticate);
 
-// Device token registration for push notifications
+// Device token registration for push notifications (and aliases)
 router.post('/device-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
+router.post('/fcm-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
+router.post('/token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
 
 // Profile Onboarding Endpoints
 router.get('/profile', (req, res) => getProfile(req, res));

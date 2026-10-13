@@ -58,12 +58,28 @@ export const getConnectionReasonsSchema = z.object({
 });
 
 export const registerDeviceTokenSchema = z.object({
-  body: z.object({
-    deviceToken: z
-      .string({ required_error: 'deviceToken is required' })
-      .trim()
-      .min(1, 'deviceToken cannot be empty'),
-    platform: z.enum(['ios', 'android', 'web']).optional().default('android'),
-    deviceId: z.string().trim().max(255).optional().nullable(),
-  }),
+  body: z
+    .object({
+      deviceToken: z.string().trim().min(1).optional(),
+      fcmToken: z.string().trim().min(1).optional(),
+      token: z.string().trim().min(1).optional(),
+      device_token: z.string().trim().min(1).optional(),
+      platform: z
+        .string()
+        .optional()
+        .transform((val) => (val ? val.toLowerCase() : 'android'))
+        .refine((val) => ['ios', 'android', 'web'].includes(val), {
+          message: 'Invalid platform. Allowed values: ios, android, web',
+        })
+        .default('android'),
+      deviceId: z.string().trim().max(255).optional().nullable(),
+    })
+    .refine(
+      (data) =>
+        Boolean(data.deviceToken || data.fcmToken || data.token || data.device_token),
+      {
+        message: 'deviceToken or fcmToken is required',
+        path: ['deviceToken'],
+      }
+    ),
 });

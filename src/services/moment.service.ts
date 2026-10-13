@@ -618,7 +618,7 @@ export class MomentService {
         isLiked: !!myReaction,
         viewerReaction: myReaction,
         reactionCounts,
-        canReply: !isSelf,
+        canReply: true,
       };
     });
 
@@ -990,7 +990,7 @@ export class MomentService {
         isLiked: !!myReaction,
         viewerReaction: myReaction,
         reactionCounts,
-        canReply: !isSelf,
+        canReply: true,
       };
     });
 
@@ -1185,7 +1185,7 @@ export class MomentService {
       myReaction,
       totalReactions: reactions.length,
       reactionCounts,
-      canReply: !isSelf,
+      canReply: true,
     };
   }
 
@@ -1325,46 +1325,40 @@ export class MomentService {
       );
     }
 
-    // Prevent self-reply
-    if (senderId === moment.userId) {
-      throw new MomentServiceError(
-        'You cannot reply to your own Moment',
-        400,
-        'SELF_REPLY_NOT_ALLOWED'
-      );
-    }
-
-    // Block check
-    const blockRecord = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: senderId, blockedUserId: moment.userId },
-          { userId: moment.userId, blockedUserId: senderId },
-        ],
-      },
-    });
-
-    if (blockRecord) {
-      throw new MomentServiceError(
-        'Cannot reply due to privacy restrictions',
-        403,
-        'REPLY_FORBIDDEN'
-      );
-    }
-
-    // Audience check
-    if (moment.audience === 'matches_only') {
-      const [u1, u2] = [senderId, moment.userId].sort();
-      const match = await Match.findOne({
-        where: { user1Id: u1, user2Id: u2, isActive: true },
+    // Allow personal commenting on own moment; block & audience checks only apply when replying to others
+    if (senderId !== moment.userId) {
+      // Block check
+      const blockRecord = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: senderId, blockedUserId: moment.userId },
+            { userId: moment.userId, blockedUserId: senderId },
+          ],
+        },
       });
 
-      if (!match) {
+      if (blockRecord) {
         throw new MomentServiceError(
-          'This moment is only visible to matches',
+          'Cannot reply due to privacy restrictions',
           403,
-          'AUDIENCE_RESTRICTED'
+          'REPLY_FORBIDDEN'
         );
+      }
+
+      // Audience check
+      if (moment.audience === 'matches_only') {
+        const [u1, u2] = [senderId, moment.userId].sort();
+        const match = await Match.findOne({
+          where: { user1Id: u1, user2Id: u2, isActive: true },
+        });
+
+        if (!match) {
+          throw new MomentServiceError(
+            'This moment is only visible to matches',
+            403,
+            'AUDIENCE_RESTRICTED'
+          );
+        }
       }
     }
 
@@ -1400,7 +1394,7 @@ export class MomentService {
       content: trimmedMessage,
       messageType: 'moment_reply',
       metadata,
-      isRead: false,
+      isRead: senderId === moment.userId,
     });
 
     conversation.lastMessage = trimmedMessage;

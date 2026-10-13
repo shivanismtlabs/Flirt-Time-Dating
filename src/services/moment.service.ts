@@ -1372,11 +1372,161 @@ export class MomentService {
 
     return {
       replyId: chatMessage.id,
+      commentId: chatMessage.id,
       conversationId: conversation.id,
       momentId: moment.id,
       recipientId: moment.userId,
       message: trimmedMessage,
+      comment: trimmedMessage,
       createdAt: chatMessage.createdAt,
+    };
+  }
+
+  /**
+   * Retrieves comments / replies for a Moment
+   * GET /api/v1/moments/:momentId/comments (or /replies)
+   */
+  public async getMomentComments(
+    viewerId: string,
+    momentId: string,
+    options?: { page?: number; limit?: number }
+  ) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.max(1, Math.min(100, options?.limit || 20));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await ChatMessage.findAndCountAll({
+      where: {
+        messageType: 'moment_reply',
+        metadata: { [Op.like]: `%"momentId":"${momentId}"%` },
+      },
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const comments = rows.map((c: any) => ({
+      id: c.id,
+      commentId: c.id,
+      momentId,
+      comment: c.content,
+      message: c.content,
+      createdAt: c.createdAt,
+      timeAgo: formatTimeAgoShort(c.createdAt),
+      user: {
+        id: c.sender?.id,
+        name: c.sender?.fullName || c.sender?.nickName || 'User',
+        profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
+        isVerified: !!c.sender?.isFaceVerified,
+        city: c.sender?.city || null,
+      },
+    }));
+
+    return {
+      momentId,
+      totalComments: count,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit),
+      comments,
+    };
+  }
+
+  /**
+   * Unlike or remove reaction from a Moment
+   * DELETE /api/v1/moments/:momentId/reactions or POST /api/v1/moments/:momentId/unlike
+   */
+  public async unlikeMoment(viewerId: string, momentId: string) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError(
+        'Moment not found or unavailable',
+        404,
+        'MOMENT_NOT_FOUND'
+      );
+    }
+
+    const existingReaction = await MomentReaction.findOne({
+      where: {
+        momentId,
+        userId: viewerId,
+      },
+    });
+
+    if (existingReaction) {
+      await existingReaction.destroy();
+    }
+
+    // Recalculate reaction counts
+    const allReactions = await MomentReaction.findAll({ where: { momentId } });
+    const reactionCounts: Record<string, number> = {
+      heart: 0,
+      love_eyes: 0,
+      fire: 0,
+      laugh: 0,
+      surprised: 0,
+      clap: 0,
+    };
+
+    for (const r of allReactions) {
+      if (reactionCounts[r.reaction] !== undefined) {
+        reactionCounts[r.reaction]++;
+      }
+    }
+
+    return {
+      momentId,
+      unliked: true,
+      action: 'removed',
+      isLiked: false,
+      viewerReaction: null,
+      totalReactions: allReactions.length,
+      likesCount: reactionCounts.heart || allReactions.length,
+      reactionCounts,
+    };
+  }
+
+  /**
+   * Permanently delete a Moment (Author only)
+   * DELETE /api/v1/moments/:momentId
+   */
+  public async deleteMoment(userId: string, momentId: string) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError(
+        'Moment not found or already deleted',
+        404,
+        'MOMENT_NOT_FOUND'
+      );
+    }
+
+    if (moment.userId !== userId) {
+      throw new MomentServiceError(
+        'You can only delete your own moments',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    moment.status = 'deleted';
+    await moment.save();
+
+    return {
+      success: true,
+      message: 'Moment deleted successfully',
+      momentId,
     };
   }
 }

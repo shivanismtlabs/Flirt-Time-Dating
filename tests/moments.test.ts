@@ -544,8 +544,31 @@ describe('Permanent Moments Feature APIs', () => {
         .set('Authorization', `Bearer ${viewerToken}`)
         .send({ message: 'Nice!' });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
+    });
+
+    it('should successfully post a comment via POST /api/v1/moments/:momentId/comments and retrieve via GET /api/v1/moments/:momentId/comments', async () => {
+      // Post comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Stunning capture! 🔥' });
+
+      expect(postRes.status).toBe(201);
+      expect(postRes.body.success).toBe(true);
+      expect(postRes.body.data.comment).toBe('Stunning capture! 🔥');
+
+      // Get comments list
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.success).toBe(true);
+      expect(getRes.body.data.totalComments).toBeGreaterThanOrEqual(1);
+      expect(getRes.body.data.comments[0].comment).toBe('Stunning capture! 🔥');
+      expect(getRes.body.data.comments[0].user).toBeDefined();
     });
   });
 
@@ -636,4 +659,80 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.message).toMatch(/privacy restrictions/i);
     });
   });
+
+  describe('7. Delete Moment and Unlike APIs', () => {
+    let momentId: string;
+
+    beforeEach(async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Moment to test delete and unlike')
+        .attach('images', validJpegBuffer, 'delete_test.jpg');
+      momentId = res.body.data.momentId;
+    });
+
+    it('should successfully unlike / remove reaction via DELETE /api/v1/moments/:momentId/reactions', async () => {
+      // First, like the moment
+      await request(app)
+        .post(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ reaction: 'heart' });
+
+      // Then unlike the moment
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.unliked).toBe(true);
+      expect(res.body.data.isLiked).toBe(false);
+      expect(res.body.data.totalReactions).toBe(0);
+    });
+
+    it('should successfully unlike via POST /api/v1/moments/:momentId/unlike', async () => {
+      // First, like the moment
+      await request(app)
+        .post(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ reaction: 'fire' });
+
+      // Then unlike
+      const res = await request(app)
+        .post(`/api/v1/moments/${momentId}/unlike`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.unliked).toBe(true);
+    });
+
+    it('should allow author to delete their own moment via DELETE /api/v1/moments/:momentId', async () => {
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toMatch(/deleted successfully/i);
+
+      // Verify moment is no longer available
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(getRes.status).toBe(404);
+    });
+
+    it('should reject non-author from deleting another user moment with 403', async () => {
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+  });
 });
+

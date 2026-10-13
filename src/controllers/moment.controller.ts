@@ -276,8 +276,8 @@ export const reactMomentHandler = async (
 };
 
 /**
- * Controller to send a direct reply to a Moment
- * POST /api/v1/moments/:momentId/replies
+ * Controller to send a comment or direct reply to a Moment
+ * POST /api/v1/moments/:momentId/replies or POST /api/v1/moments/:momentId/comments
  */
 export const replyMomentHandler = async (
   req: AuthenticatedRequest,
@@ -290,7 +290,7 @@ export const replyMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { message } = req.body;
+    const message = req.body.comment || req.body.message || req.body.text;
 
     const result = await momentService.replyToMoment(
       senderId,
@@ -298,12 +298,43 @@ export const replyMomentHandler = async (
       message
     );
 
-    return sendSuccess(res, 'Reply sent successfully', result, 200);
+    return sendSuccess(res, 'Comment posted successfully', result, 201);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
-    return sendError(res, error.message || 'Error replying to moment', 500);
+    return sendError(res, error.message || 'Error posting comment to moment', 500);
+  }
+};
+
+/**
+ * Controller to get all comments on a Moment
+ * GET /api/v1/moments/:momentId/comments or GET /api/v1/moments/:momentId/replies
+ */
+export const getMomentCommentsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentComments(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment comments fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching moment comments', 500);
   }
 };
 
@@ -343,3 +374,56 @@ export const reportMomentHandler = async (
     );
   }
 };
+
+/**
+ * Controller to unlike or remove reaction from a Moment
+ * DELETE /api/v1/moments/:momentId/reactions or POST /api/v1/moments/:momentId/unlike
+ */
+export const unlikeMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const result = await momentService.unlikeMoment(viewerId, momentId);
+
+    return sendSuccess(res, 'Reaction removed successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error removing moment reaction', 500);
+  }
+};
+
+/**
+ * Controller to delete a Moment (Author only)
+ * DELETE /api/v1/moments/:momentId
+ */
+export const deleteMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const result = await momentService.deleteMoment(userId, momentId);
+
+    return sendSuccess(res, result.message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting moment', 500);
+  }
+};
+

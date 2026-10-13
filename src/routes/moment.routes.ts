@@ -8,6 +8,9 @@ import {
   getAllMomentsHandler,
   getMyMomentsHandler,
   reportMomentHandler,
+  deleteMomentHandler,
+  unlikeMomentHandler,
+  getMomentCommentsHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -20,6 +23,9 @@ import {
   replyMomentSchema,
   getAllMomentsSchema,
   reportMomentSchema,
+  deleteMomentSchema,
+  unlikeMomentSchema,
+  getMomentCommentsSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -92,11 +98,29 @@ router.post(
   reactMomentHandler
 );
 
-// 5. Reply to Moment
+// 5. Comments & Replies to Moment
+router.post(
+  '/:momentId/comments',
+  validate(replyMomentSchema),
+  replyMomentHandler
+);
+
 router.post(
   '/:momentId/replies',
   validate(replyMomentSchema),
   replyMomentHandler
+);
+
+router.get(
+  '/:momentId/comments',
+  validate(getMomentCommentsSchema),
+  getMomentCommentsHandler
+);
+
+router.get(
+  '/:momentId/replies',
+  validate(getMomentCommentsSchema),
+  getMomentCommentsHandler
 );
 
 // 6. Report Moment
@@ -106,4 +130,31 @@ router.post(
   reportMomentHandler
 );
 
+// 7. Delete Moment (Author only)
+router.delete(
+  '/:momentId',
+  validate(deleteMomentSchema),
+  deleteMomentHandler
+);
+
+// 8. Unlike Moment / Remove Reaction
+router.delete(
+  '/:momentId/reactions',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
+router.delete(
+  '/:momentId/like',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
+router.post(
+  '/:momentId/unlike',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
 export default router;
+

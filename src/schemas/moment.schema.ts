@@ -99,13 +99,27 @@ export const replyMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
   }),
-  body: z.object({
-    message: z
-      .string({ required_error: 'Reply message is required' })
-      .trim()
-      .min(1, 'Reply message cannot be empty')
-      .max(1000, 'Reply message must not exceed 1000 characters'),
+  body: z
+    .object({
+      message: z.string().trim().min(1).max(1000).optional(),
+      comment: z.string().trim().min(1).max(1000).optional(),
+      text: z.string().trim().min(1).max(1000).optional(),
+    })
+    .refine((data) => Boolean(data.message || data.comment || data.text), {
+      message: 'Comment or reply message cannot be empty',
+    }),
+});
+
+export const getMomentCommentsSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
   }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
 });
 
 export const getAllMomentsSchema = z.object({
@@ -148,4 +162,17 @@ export const reportMomentSchema = z.object({
       .nullable(),
   }),
 });
+
+export const deleteMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+});
+
+export const unlikeMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+});
+
 

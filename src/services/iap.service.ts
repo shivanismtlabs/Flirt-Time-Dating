@@ -1,6 +1,10 @@
+import axios from 'axios';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+
+export const IOS_IAP_BUNDLE_ID = env.APPLE_BUNDLE_ID || 'com.flirttime.app';
+export const ANDROID_IAP_PACKAGE_NAME = env.GOOGLE_PACKAGE_NAME || 'com.app.flirttime';
 
 export interface VerifiedTransactionDetails {
   platform: 'ios' | 'android';
@@ -55,23 +59,272 @@ export class IAPServiceError extends Error {
   }
 }
 
+/**
+ * Verifies an Apple transaction using the App Store Server API with Production -> Sandbox fallback
+ */
+export const verifyAppleTransaction = async (transactionId: string) => {
+  const issuerId = process.env.APPLE_IAP_ISSUER_ID || env.APPLE_TEAM_ID || '';
+  const keyId = process.env.APPLE_IAP_KEY_ID || env.APPLE_KEY_ID || '';
+  const rawKey = process.env.APPLE_IAP_PRIVATE_KEY || env.APPLE_PRIVATE_KEY || '';
+  const privateKey = rawKey.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
+
+  if (!issuerId || !keyId || !privateKey) {
+    if (process.env.NODE_ENV === 'test') {
+      return {
+        transactionId,
+        bundleId: IOS_IAP_BUNDLE_ID,
+        productId: 'starter_pack',
+        environment: 'sandbox',
+        purchaseDate: new Date().toISOString(),
+      };
+    }
+    throw new IAPServiceError('Apple IAP credentials not configured.', 500, 'APPLE_CONFIG_MISSING');
+  }
+
+  // Generate JWT for Apple App Store Server API
+  const token = jwt.sign(
+    {
+      iss: issuerId,
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      aud: 'appstoreconnect-v1',
+      bid: IOS_IAP_BUNDLE_ID,
+    },
+    privateKey,
+    {
+      algorithm: 'ES256',
+      keyid: keyId,
+    }
+  );
+
+  const verifyRequest = async (isProd: boolean) => {
+    const baseUrl = isProd
+      ? 'https://api.storekit.itunes.apple.com'
+      : 'https://api.storekit-sandbox.itunes.apple.com';
+
+    const url = `${baseUrl}/inApps/v1/transactions/${encodeURIComponent(transactionId)}`;
+
+    return await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  };
+
+  try {
+    let response: any;
+    try {
+      // Always try production first
+      response = await verifyRequest(true);
+    } catch (prodError: any) {
+      // If production fails (e.g., 404 for sandbox receipt), fallback to sandbox
+      if (
+        prodError.response &&
+        (prodError.response.status === 404 || prodError.response.status === 401)
+      ) {
+        console.log(`Production verification failed for ${transactionId}, retrying in Sandbox...`);
+        response = await verifyRequest(false);
+      } else {
+        throw prodError; // Rethrow if it's a different error
+      }
+    }
+
+    const signedTransactionInfo = response.data?.signedTransactionInfo;
+    if (!signedTransactionInfo) {
+      throw new IAPServiceError('No signedTransactionInfo in Apple response.', 400, 'NO_SIGNED_TRANSACTION');
+    }
+
+    // Decode the JWS payload (header.payload.signature)
+    const payloadBase64 = signedTransactionInfo.split('.')[1];
+    const decodedPayload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf8'));
+
+    if (decodedPayload.bundleId && decodedPayload.bundleId !== IOS_IAP_BUNDLE_ID) {
+      throw new IAPServiceError(
+        `Bundle ID mismatch. Expected ${IOS_IAP_BUNDLE_ID}, got ${decodedPayload.bundleId}`,
+        400,
+        'BUNDLE_ID_MISMATCH'
+      );
+    }
+
+    return decodedPayload;
+  } catch (error: any) {
+    if (error instanceof IAPServiceError) {
+      throw error;
+    }
+    const errorDetails = error?.response?.data || error.message;
+    console.error('Apple Verification Error:', errorDetails);
+    throw new IAPServiceError(
+      `Apple transaction verification failed: ${JSON.stringify(errorDetails)}`,
+      400,
+      'APPLE_VERIFICATION_FAILED'
+    );
+  }
+};
+
+/**
+ * Retrieves a Google OAuth2 access token for Android Publisher API
+ */
+export const getGoogleAccessToken = async (): Promise<string> => {
+  const clientEmail =
+    process.env.GOOGLE_PLAY_CLIENT_EMAIL ||
+    env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
+    process.env.FIREBASE_CLIENT_EMAIL ||
+    '';
+  const rawKey =
+    process.env.GOOGLE_PLAY_PRIVATE_KEY ||
+    env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY ||
+    process.env.FIREBASE_PRIVATE_KEY ||
+    '';
+  const privateKey = rawKey.replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
+
+  if (!clientEmail || !privateKey) {
+    throw new IAPServiceError('Google Play API credentials not configured.', 500, 'GOOGLE_CONFIG_MISSING');
+  }
+
+  const token = jwt.sign(
+    {
+      iss: clientEmail,
+      scope: 'https://www.googleapis.com/auth/androidpublisher',
+      aud: 'https://oauth2.googleapis.com/token',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+      iat: Math.floor(Date.now() / 1000),
+    },
+    privateKey,
+    { algorithm: 'RS256' }
+  );
+
+  try {
+    const response = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: token,
+      }).toString(),
+      {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      }
+    );
+    return response.data.access_token;
+  } catch (error: any) {
+    console.error('Google Access Token Error:', error?.message || 'Error retrieving Google access token');
+    throw new IAPServiceError(
+      `Google access token retrieval failed: ${error?.message || 'unknown error'}`,
+      500,
+      'GOOGLE_AUTH_FAILED'
+    );
+  }
+};
+
+/**
+ * Verifies a Google Play Store in-app product purchase
+ */
+export const verifyGooglePurchase = async (purchaseToken: string, productId: string) => {
+  let accessToken: string;
+  try {
+    accessToken = await getGoogleAccessToken();
+  } catch (authErr) {
+    if (process.env.NODE_ENV === 'test') {
+      return {
+        orderId: `GPA.${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+        packageName: ANDROID_IAP_PACKAGE_NAME,
+        productId,
+        purchaseState: 0,
+        consumptionState: 0,
+        acknowledgementState: 1,
+        purchaseTimeMillis: String(Date.now()),
+      };
+    }
+    throw authErr;
+  }
+
+  const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${ANDROID_IAP_PACKAGE_NAME}/purchases/products/${encodeURIComponent(
+    productId
+  )}/tokens/${encodeURIComponent(purchaseToken)}`;
+
+  console.log('verifyGooglePurchase');
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    const purchaseData = response.data;
+
+    // Validate purchaseState (0 = Purchased)
+    if (purchaseData.purchaseState !== 0) {
+      if (purchaseData.purchaseState === 1) {
+        throw new IAPServiceError('Google Play purchase was canceled', 400, 'PURCHASE_CANCELED');
+      }
+      if (purchaseData.purchaseState === 2) {
+        throw new IAPServiceError('Google Play purchase is pending payment confirmation', 400, 'PURCHASE_PENDING');
+      }
+      throw new IAPServiceError('Purchase is not in a completed state.', 400, 'PURCHASE_NOT_COMPLETED');
+    }
+
+    return purchaseData;
+  } catch (error: any) {
+    if (error instanceof IAPServiceError) {
+      throw error;
+    }
+    console.error('Google Verification Error:', error?.response?.data || error.message);
+    throw new IAPServiceError('Google purchase verification failed.', 400, 'GOOGLE_VERIFICATION_FAILED');
+  }
+};
+
 export class IAPService {
-  /**
-   * Resolves the configured FlirtTime Apple Bundle ID
-   */
   public getAppleBundleId(): string {
-    return env.APPLE_BUNDLE_ID || env.APPLE_CLIENT_ID || 'com.flirttime.app';
+    return IOS_IAP_BUNDLE_ID;
   }
 
-  /**
-   * Resolves the configured FlirtTime Android Package Name
-   */
   public getGooglePackageName(): string {
-    return env.GOOGLE_PACKAGE_NAME || env.ANDROID_PACKAGE_NAME || 'com.app.flirttime';
+    return ANDROID_IAP_PACKAGE_NAME;
   }
 
   /**
-   * Verifies an Apple App Store transaction using JWS or App Store Server API
+   * Decodes and validates Apple JWS (JSON Web Signature)
+   */
+  public decodeAndVerifyAppleJWS(jws: string): any {
+    const parts = jws.split('.');
+    if (parts.length !== 3) {
+      throw new IAPServiceError('Malformed Apple JWS signedTransactionInfo', 400, 'INVALID_JWS_FORMAT');
+    }
+
+    const [headerB64, payloadB64, signatureB64] = parts;
+    let header: any;
+    let payload: any;
+
+    try {
+      header = JSON.parse(Buffer.from(headerB64, 'base64url').toString('utf8'));
+      payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+    } catch (_err) {
+      throw new IAPServiceError('Unable to parse Apple JWS header or payload', 400, 'JWS_PARSE_ERROR');
+    }
+
+    if (process.env.NODE_ENV === 'test') {
+      return payload;
+    }
+
+    if (header.x5c && Array.isArray(header.x5c) && header.x5c.length > 0) {
+      try {
+        const leafCertPem = `-----BEGIN CERTIFICATE-----\n${header.x5c[0]}\n-----END CERTIFICATE-----`;
+        const verifier = crypto.createVerify('sha256');
+        verifier.update(`${headerB64}.${payloadB64}`);
+        const isValid = verifier.verify(leafCertPem, Buffer.from(signatureB64, 'base64url'));
+        if (!isValid) {
+          throw new IAPServiceError('Apple JWS signature verification failed', 400, 'INVALID_JWS_SIGNATURE');
+        }
+      } catch (certErr: any) {
+        if (certErr instanceof IAPServiceError) throw certErr;
+        throw new IAPServiceError('Apple JWS certificate verification error: ' + certErr.message, 400, 'CERT_VERIFY_ERROR');
+      }
+    }
+
+    return payload;
+  }
+
+  /**
+   * Comprehensive Apple Transaction Verification (Coin Purchase)
    */
   public async verifyAppleTransaction(input: {
     transactionId?: string;
@@ -93,7 +346,6 @@ export class IAPService {
     if (signedTransactionInfo) {
       const decodedPayload = this.decodeAndVerifyAppleJWS(signedTransactionInfo);
 
-      // Validate bundleId
       const expectedBundleId = this.getAppleBundleId();
       if (decodedPayload.bundleId && decodedPayload.bundleId !== expectedBundleId) {
         throw new IAPServiceError(
@@ -103,7 +355,6 @@ export class IAPService {
         );
       }
 
-      // Check revocation / refund
       if (decodedPayload.revocationDate || decodedPayload.revocationReason) {
         throw new IAPServiceError(
           'Transaction has been revoked or refunded by the App Store',
@@ -144,167 +395,56 @@ export class IAPService {
       };
     }
 
-    // 2. If transactionId is provided and server credentials exist, call App Store Server API
+    // 2. If transactionId is provided, query via verifyAppleTransaction helper
     if (transactionId) {
-      const serverResult = await this.queryAppStoreServerAPI(transactionId);
-      if (serverResult) {
-        return serverResult;
-      }
+      const decoded = await verifyAppleTransaction(transactionId);
+      const resolvedProductId = String(decoded.productId || expectedProductId || 'starter_pack');
+      const rawEnv = (decoded.environment || '').toLowerCase();
+      const environment: 'production' | 'sandbox' = rawEnv.includes('sandbox') ? 'sandbox' : 'production';
 
-      // If credentials are not configured in test/dev, handle safely
-      if (process.env.NODE_ENV === 'test') {
-        const expectedBundleId = this.getAppleBundleId();
-        return {
-          platform: 'ios',
-          storeTransactionId: transactionId,
-          productId: expectedProductId || 'starter_pack',
-          environment: 'sandbox',
-          purchaseDate: new Date(),
-          isAcknowledged: true,
-          status: 'completed',
-          rawResponse: {
-            transactionId,
-            bundleId: expectedBundleId,
-            productId: expectedProductId || 'starter_pack',
-            environment: 'sandbox',
-          },
-        };
-      }
-
-      throw new IAPServiceError(
-        'Apple App Store Server API credentials not configured and signedTransactionInfo not provided',
-        500,
-        'APPLE_CONFIG_MISSING'
-      );
+      return {
+        platform: 'ios',
+        storeTransactionId: transactionId,
+        productId: resolvedProductId,
+        environment,
+        purchaseDate: decoded.purchaseDate ? new Date(decoded.purchaseDate) : new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: decoded,
+      };
     }
 
     throw new IAPServiceError('Invalid Apple transaction proof', 400, 'INVALID_PROOF');
   }
 
   /**
-   * Decodes and validates Apple JWS (JSON Web Signature)
+   * Queries Google Play Developer API (purchases.products.get)
    */
-  public decodeAndVerifyAppleJWS(jws: string): any {
-    const parts = jws.split('.');
-    if (parts.length !== 3) {
-      throw new IAPServiceError('Malformed Apple JWS signedTransactionInfo', 400, 'INVALID_JWS_FORMAT');
-    }
-
-    let header: any;
-    let payload: any;
+  public async queryGooglePlayDeveloperAPI(
+    packageName: string,
+    productId: string,
+    purchaseToken: string
+  ): Promise<any | null> {
     try {
-      header = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
-      payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    } catch (_err) {
-      throw new IAPServiceError('Failed to parse Apple JWS components', 400, 'INVALID_JWS_JSON');
-    }
-
-    // In production or test with x5c header, verify signature if cert chain is present
-    if (header.x5c && Array.isArray(header.x5c) && header.x5c.length > 0) {
-      try {
-        const leafCertDer = Buffer.from(header.x5c[0], 'base64');
-        const leafCertPem = `-----BEGIN CERTIFICATE-----\n${leafCertDer.toString('base64').match(/.{1,64}/g)?.join('\n')}\n-----END CERTIFICATE-----`;
-        
-        const verifier = crypto.createVerify('RSA-SHA256');
-        verifier.update(`${parts[0]}.${parts[1]}`);
-        const isValid = verifier.verify(leafCertPem, Buffer.from(parts[2], 'base64url'));
-
-        if (!isValid) {
-          // If RSA-SHA256 failed, try with ES256 (Apple StoreKit 2 default alg)
-          const esVerifier = crypto.createVerify('SHA256');
-          esVerifier.update(`${parts[0]}.${parts[1]}`);
-          const isEsValid = esVerifier.verify(leafCertPem, Buffer.from(parts[2], 'base64url'));
-          
-          if (!isEsValid && process.env.NODE_ENV !== 'test') {
-            throw new IAPServiceError('Apple JWS signature verification failed', 400, 'INVALID_JWS_SIGNATURE');
-          }
-        }
-      } catch (certErr: any) {
-        if (certErr instanceof IAPServiceError) throw certErr;
-        if (process.env.NODE_ENV !== 'test') {
-          throw new IAPServiceError('Error verifying Apple certificate chain: ' + certErr.message, 400, 'CERT_VERIFICATION_FAILED');
-        }
-      }
-    }
-
-    return payload;
-  }
-
-  /**
-   * Queries Apple App Store Server API for transaction details
-   */
-  public async queryAppStoreServerAPI(transactionId: string): Promise<VerifiedTransactionDetails | null> {
-    if (!env.APPLE_KEY_ID || !env.APPLE_PRIVATE_KEY || !env.APPLE_TEAM_ID) {
-      return null;
-    }
-
-    const token = this.generateAppleServerJwt();
-    const envChoice = (env.APPLE_IAP_ENVIRONMENT || 'Sandbox').toLowerCase();
-    const primaryHost = envChoice === 'production'
-      ? 'https://api.storekit.itunes.apple.com'
-      : 'https://api.storekit-sandbox.itunes.apple.com';
-    const fallbackHost = envChoice === 'production'
-      ? 'https://api.storekit-sandbox.itunes.apple.com'
-      : 'https://api.storekit.itunes.apple.com';
-
-    let res = await this.fetchAppleTransaction(primaryHost, transactionId, token);
-    if (!res && envChoice === 'production') {
-      // Fallback for TestFlight sandbox purchases
-      res = await this.fetchAppleTransaction(fallbackHost, transactionId, token);
-    }
-
-    if (!res) {
-      throw new IAPServiceError('Transaction not found on App Store Server', 404, 'TRANSACTION_NOT_FOUND');
-    }
-
-    const signedTx = res.signedTransactionInfo;
-    if (signedTx) {
-      return this.verifyAppleTransaction({ signedTransactionInfo: signedTx, transactionId });
-    }
-
-    return null;
-  }
-
-  private async fetchAppleTransaction(baseUrl: string, txId: string, jwtToken: string): Promise<any | null> {
-    try {
-      const url = `${baseUrl}/inApps/v1/transactions/${encodeURIComponent(txId)}`;
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${jwtToken}`,
-          Accept: 'application/json',
-        },
-      });
-
-      if (response.status === 200) {
-        return await response.json();
-      }
-      return null;
+      return await verifyGooglePurchase(purchaseToken, productId);
     } catch (_e) {
+      if (process.env.NODE_ENV === 'test') {
+        return {
+          orderId: `GPA.${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          packageName,
+          productId,
+          purchaseState: 0,
+          consumptionState: 0,
+          acknowledgementState: 1,
+          purchaseTimeMillis: String(Date.now()),
+        };
+      }
       return null;
     }
   }
 
   /**
-   * Generates ES256 JWT for Apple App Store Server API authentication
-   */
-  public generateAppleServerJwt(): string {
-    const payload = {
-      iss: env.APPLE_TEAM_ID,
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 3600,
-      aud: 'appstoreconnect-v1',
-      bid: this.getAppleBundleId(),
-    };
-
-    return jwt.sign(payload, env.APPLE_PRIVATE_KEY, {
-      algorithm: 'ES256',
-      keyid: env.APPLE_KEY_ID,
-    });
-  }
-
-  /**
-   * Verifies a Google Play Store in-app product purchase
+   * Comprehensive Google Purchase Verification (Coin Purchase)
    */
   public async verifyGooglePurchase(input: {
     productId: string;
@@ -331,199 +471,71 @@ export class IAPService {
       );
     }
 
-    // Call Google Play Developer API if credentials are configured
     const playDetails = await this.queryGooglePlayDeveloperAPI(expectedPackage, productId, purchaseToken);
 
-    if (playDetails) {
-      // 0 = Purchased, 1 = Canceled, 2 = Pending
-      if (playDetails.purchaseState === 1) {
-        throw new IAPServiceError('Google Play purchase was canceled', 400, 'PURCHASE_CANCELED');
-      }
-      if (playDetails.purchaseState === 2) {
-        throw new IAPServiceError('Google Play purchase is pending payment confirmation', 400, 'PURCHASE_PENDING');
-      }
-
-      const storeTxId = playDetails.orderId || orderId || purchaseToken;
-      const isConsumed = playDetails.consumptionState === 1;
-      const isAcknowledged = playDetails.acknowledgementState === 1 || isConsumed;
-      const purchaseTime = playDetails.purchaseTimeMillis ? new Date(parseInt(playDetails.purchaseTimeMillis, 10)) : new Date();
-
-      return {
-        platform: 'android',
-        storeTransactionId: storeTxId,
-        purchaseToken,
-        productId,
-        environment: 'production',
-        purchaseDate: purchaseTime,
-        isAcknowledged,
-        status: 'completed',
-        rawResponse: {
-          orderId: storeTxId,
-          packageName: expectedPackage,
-          productId,
-          purchaseState: playDetails.purchaseState,
-          consumptionState: playDetails.consumptionState,
-          acknowledgementState: playDetails.acknowledgementState,
-          purchaseTimeMillis: playDetails.purchaseTimeMillis,
-        },
-      };
+    if (!playDetails) {
+      throw new IAPServiceError('Failed to retrieve purchase details from Google Play', 400, 'GOOGLE_VERIFICATION_FAILED');
     }
 
-    // Fallback in test / dev environment if Google service account credentials are not present
-    if (process.env.NODE_ENV === 'test') {
-      const storeTxId = orderId || `GPA.${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-      return {
-        platform: 'android',
-        storeTransactionId: storeTxId,
-        purchaseToken,
-        productId,
-        environment: 'sandbox',
-        purchaseDate: new Date(),
-        isAcknowledged: false,
-        status: 'completed',
-        rawResponse: {
-          orderId: storeTxId,
-          packageName: expectedPackage,
-          productId,
-          purchaseState: 0,
-          consumptionState: 0,
-        },
-      };
+    // Validate purchaseState (0 = Purchased, 1 = Canceled, 2 = Pending)
+    if (playDetails.purchaseState === 1) {
+      throw new IAPServiceError('Google Play purchase was canceled', 400, 'PURCHASE_CANCELED');
+    }
+    if (playDetails.purchaseState === 2) {
+      throw new IAPServiceError('Google Play purchase is pending payment confirmation', 400, 'PURCHASE_PENDING');
+    }
+    if (playDetails.purchaseState !== 0) {
+      throw new IAPServiceError('Purchase is not in a completed state.', 400, 'PURCHASE_NOT_COMPLETED');
     }
 
-    throw new IAPServiceError(
-      'Google Play Developer API service account credentials not configured',
-      500,
-      'GOOGLE_CONFIG_MISSING'
-    );
+    const storeTxId = playDetails.orderId || orderId || purchaseToken;
+    const isConsumed = playDetails.consumptionState === 1;
+    const isAcknowledged = playDetails.acknowledgementState === 1 || isConsumed;
+    const purchaseTime = playDetails.purchaseTimeMillis ? new Date(parseInt(playDetails.purchaseTimeMillis, 10)) : new Date();
+
+    return {
+      platform: 'android',
+      storeTransactionId: storeTxId,
+      purchaseToken,
+      productId,
+      environment: 'production',
+      purchaseDate: purchaseTime,
+      isAcknowledged,
+      status: 'completed',
+      rawResponse: playDetails,
+    };
   }
 
   /**
-   * Queries Google Play Developer API (purchases.products.get)
-   */
-  public async queryGooglePlayDeveloperAPI(
-    packageName: string,
-    productId: string,
-    purchaseToken: string
-  ): Promise<any | null> {
-    if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-      return null;
-    }
-
-    try {
-      const accessToken = await this.getGoogleOAuthToken();
-      if (!accessToken) return null;
-
-      const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
-        packageName
-      )}/purchases/products/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}`;
-
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          Accept: 'application/json',
-        },
-      });
-
-      if (response.status === 200) {
-        return await response.json();
-      }
-
-      if (response.status === 404) {
-        throw new IAPServiceError('Purchase token not found on Google Play', 404, 'PURCHASE_NOT_FOUND');
-      }
-
-      if (response.status >= 400 && response.status < 500) {
-        const errorData = (await response.json().catch(() => ({}))) as any;
-        throw new IAPServiceError(
-          errorData?.error?.message || 'Invalid Google Play purchase verification request',
-          response.status,
-          'GOOGLE_API_ERROR'
-        );
-      }
-
-      return null;
-    } catch (err: any) {
-      if (err instanceof IAPServiceError) throw err;
-      return null;
-    }
-  }
-
-  /**
-   * Consumes a Google Play in-app purchase token so it can be purchased again
+   * Consumes a Google Play in-app purchase so user can buy again
    */
   public async consumeGooglePurchase(
     packageName: string,
     productId: string,
     purchaseToken: string
   ): Promise<boolean> {
-    if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-      return true; // Graceful fallback in test/mock mode
+    let accessToken: string;
+    try {
+      accessToken = await getGoogleAccessToken();
+    } catch (_e) {
+      return true; // Mock success in dev/test
     }
 
     try {
-      const accessToken = await this.getGoogleOAuthToken();
-      if (!accessToken) return false;
-
       const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(
         packageName
       )}/purchases/products/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(purchaseToken)}:consume`;
 
-      const response = await fetch(url, {
-        method: 'POST',
+      const response = await axios.post(url, {}, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: 'application/json',
-          'Content-Length': '0',
         },
       });
 
       return response.status === 200 || response.status === 204;
     } catch (_e) {
       return false;
-    }
-  }
-
-  /**
-   * Generates Google OAuth2 Access Token from Service Account credentials
-   */
-  public async getGoogleOAuthToken(): Promise<string | null> {
-    if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY) {
-      return null;
-    }
-
-    try {
-      const now = Math.floor(Date.now() / 1000);
-      const claim = {
-        iss: env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
-        scope: 'https://www.googleapis.com/auth/androidpublisher',
-        aud: 'https://oauth2.googleapis.com/token',
-        exp: now + 3600,
-        iat: now,
-      };
-
-      const assertion = jwt.sign(claim, env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY, {
-        algorithm: 'RS256',
-      });
-
-      const params = new URLSearchParams();
-      params.append('grant_type', 'urn:ietf:params:oauth:grant-type:jwt-bearer');
-      params.append('assertion', assertion);
-
-      const res = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: params.toString(),
-      });
-
-      if (res.status === 200) {
-        const data = (await res.json()) as any;
-        return data.access_token || null;
-      }
-      return null;
-    } catch (_e) {
-      return null;
     }
   }
 
@@ -601,9 +613,7 @@ export class IAPService {
               Number(renewalPayload.gracePeriodExpiresDate) || renewalPayload.gracePeriodExpiresDate
             );
           }
-        } catch (_renewalErr) {
-          // If renewal info cannot be parsed, rely on transaction info
-        }
+        } catch (_renewalErr) {}
       }
 
       // 3. Evaluate entitlement and lifecycle status
@@ -620,7 +630,7 @@ export class IAPService {
         } else {
           if (!autoRenewing) {
             status = 'canceled';
-            isEntitled = true; // Still entitled until expiry date!
+            isEntitled = true;
           } else {
             status = 'active';
             isEntitled = true;
@@ -656,40 +666,27 @@ export class IAPService {
       };
     }
 
-    // If transactionId is supplied without signedTransactionInfo, query App Store Server API
     if (transactionId) {
-      if (process.env.NODE_ENV === 'test') {
-        const expectedBundleId = this.getAppleBundleId();
-        const purchaseDate = new Date();
-        const expiresDate = new Date(purchaseDate.getTime() + 7 * 86400000);
-        return {
-          platform: 'ios',
-          storeTransactionId: transactionId,
-          originalTransactionId: transactionId,
-          productId: expectedProductId || 'com.flirttime.weekly',
-          environment: 'sandbox',
-          purchaseDate,
-          expiresDate,
-          gracePeriodExpiresDate: null,
-          autoRenewing: true,
-          cancelReason: null,
-          status: 'active',
-          isEntitled: true,
-          isAcknowledged: true,
-          rawResponse: {
-            transactionId,
-            bundleId: expectedBundleId,
-            productId: expectedProductId || 'com.flirttime.weekly',
-            environment: 'sandbox',
-          },
-        };
-      }
+      const decoded = await verifyAppleTransaction(transactionId);
+      const purchaseDate = new Date();
+      const expiresDate = new Date(purchaseDate.getTime() + 7 * 86400000);
 
-      throw new IAPServiceError(
-        'Apple App Store Server API credentials not configured and signedTransactionInfo not provided',
-        500,
-        'APPLE_CONFIG_MISSING'
-      );
+      return {
+        platform: 'ios',
+        storeTransactionId: transactionId,
+        originalTransactionId: transactionId,
+        productId: expectedProductId || 'com.flirttime.weekly',
+        environment: 'sandbox',
+        purchaseDate,
+        expiresDate,
+        gracePeriodExpiresDate: null,
+        autoRenewing: true,
+        cancelReason: null,
+        status: 'active',
+        isEntitled: true,
+        isAcknowledged: true,
+        rawResponse: decoded,
+      };
     }
 
     throw new IAPServiceError('Invalid Apple subscription proof', 400, 'INVALID_PROOF');
@@ -703,8 +700,10 @@ export class IAPService {
     subscriptionId: string,
     purchaseToken: string
   ): Promise<any> {
-    const accessToken = await this.getGoogleOAuthToken();
-    if (!accessToken) {
+    let accessToken: string;
+    try {
+      accessToken = await getGoogleAccessToken();
+    } catch (_e) {
       return null;
     }
 
@@ -713,17 +712,14 @@ export class IAPService {
         packageName
       )}/purchases/subscriptions/${encodeURIComponent(subscriptionId)}/tokens/${encodeURIComponent(purchaseToken)}`;
 
-      const response = await fetch(url, {
+      const response = await axios.get(url, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
           Accept: 'application/json',
         },
       });
 
-      if (response.status === 200) {
-        return await response.json();
-      }
-      return null;
+      return response.data;
     } catch (_e) {
       return null;
     }
@@ -737,9 +733,11 @@ export class IAPService {
     subscriptionId: string,
     purchaseToken: string
   ): Promise<boolean> {
-    const accessToken = await this.getGoogleOAuthToken();
-    if (!accessToken) {
-      return true; // Mock true in dev/test if no credentials
+    let accessToken: string;
+    try {
+      accessToken = await getGoogleAccessToken();
+    } catch (_e) {
+      return true; // Mock true in dev/test
     }
 
     try {
@@ -749,15 +747,16 @@ export class IAPService {
         purchaseToken
       )}:acknowledge`;
 
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-          Accept: 'application/json',
-        },
-        body: JSON.stringify({ developerPayload: 'flirttime_subscription' }),
-      });
+      const response = await axios.post(
+        url,
+        { developerPayload: 'flirttime_subscription' },
+        {
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
 
       return response.status === 200 || response.status === 204;
     } catch (_e) {
@@ -808,7 +807,6 @@ export class IAPService {
       let isEntitled = true;
       let cancelReason: string | null = null;
 
-      // paymentState: 0 = Pending, 1 = Payment received, 2 = Free trial, 3 = Deferred
       if (playDetails.paymentState === 0) {
         status = 'pending';
         isEntitled = false;
@@ -820,14 +818,13 @@ export class IAPService {
         isEntitled = false;
       } else {
         if (playDetails.cancelReason !== undefined && playDetails.cancelReason !== null) {
-          // 0 = User canceled, 1 = Billing error, 2 = Replaced, 3 = Canceled by developer
           if (playDetails.cancelReason === 1) {
             status = 'in_grace_period';
             isEntitled = true;
             cancelReason = 'billing_error_in_grace_period';
           } else {
             status = 'canceled';
-            isEntitled = true; // Canceled but entitled until expiryTime!
+            isEntitled = true;
             cancelReason = `canceled_reason_${playDetails.cancelReason}`;
           }
         } else if (!autoRenewing) {
@@ -841,7 +838,6 @@ export class IAPService {
 
       const storeTxId = playDetails.orderId || orderId || purchaseToken;
 
-      // Auto-acknowledge if pending acknowledgement
       let acknowledgedNow = isAcknowledged;
       if (!isAcknowledged) {
         acknowledgedNow = await this.acknowledgeGoogleSubscription(expectedPackage, productId, purchaseToken);
@@ -866,7 +862,6 @@ export class IAPService {
       };
     }
 
-    // Fallback in test/dev environment if Google credentials not configured
     if (process.env.NODE_ENV === 'test') {
       const now = Date.now();
       const purchaseDate = new Date();

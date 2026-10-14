@@ -4756,6 +4756,209 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Coin Packages",
+      "item": [
+        {
+          "name": "Get Coin Packages (Default - Public/Active Packages)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ]
+            },
+            "description": "Fetches all active coin packages in Laravel-compatible order (sort_order ASC, id ASC). Public endpoint (authentication optional)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Dual Route /api/coin-packages)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/coin-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "coin-packages"
+              ]
+            },
+            "description": "Alias route for legacy clients without /v1 prefix."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Paginated page=1&limit=5)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?page=1&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (min 1, default 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "Items per page (1-50, default 10)"
+                }
+              ]
+            },
+            "description": "Paginated list with database-calculated metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Sort by Price ASC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?sortBy=price&sortOrder=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "price"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "Sort active packages by price ascending with id ASC tie-breaker."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Sort by Coins DESC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?sortBy=coins&sortOrder=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "coins"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "desc"
+                }
+              ]
+            },
+            "description": "Sort active packages by coin balance descending."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Filter by Price Range)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?minPrice=49&maxPrice=249",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "minPrice",
+                  "value": "49"
+                },
+                {
+                  "key": "maxPrice",
+                  "value": "249"
+                }
+              ]
+            },
+            "description": "Filter packages between minPrice and maxPrice with decimal safety."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Filter by Coins Range)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?minCoins=100&maxCoins=600",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "minCoins",
+                  "value": "100"
+                },
+                {
+                  "key": "maxCoins",
+                  "value": "600"
+                }
+              ]
+            },
+            "description": "Filter packages between minCoins and maxCoins."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

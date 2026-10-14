@@ -13,6 +13,7 @@ import deepLinkRoutes from './deepLink.routes';
 import notificationRoutes from './notification.routes';
 import interactionRoutes from './interaction.routes';
 import deviceRoutes from './device.routes';
+import coinPackageRoutes from './coinPackage.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
@@ -38,6 +39,7 @@ router.use('/interactions', interactionRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/media', mediaRoutes);
 router.use('/deep-links', deepLinkRoutes);
+router.use('/coin-packages', coinPackageRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);

@@ -12,10 +12,6 @@ describe('Production-Ready Coin Packages API (GET /api/v1/coin-packages)', () =>
     await initDb(true);
   });
 
-  afterAll(async () => {
-    await sequelize.close();
-  });
-
   beforeEach(async () => {
     // Clear packages and test users
     await CoinPackage.destroy({ where: {} });

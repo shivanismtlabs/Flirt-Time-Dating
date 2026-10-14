@@ -1,5 +1,5 @@
 import { connectDatabase } from '../config/database';
-import { initDb } from '../models';
+import { ensureCoinPackageTables } from '../models';
 import { seedCoinPackages } from '../services/seedCoinPackage.service';
 
 const run = async () => {
@@ -11,7 +11,8 @@ const run = async () => {
   }
 
   try {
-    await initDb();
+    // Only ensure coin_packages table exists, isolated from other tables
+    await ensureCoinPackageTables();
     console.log('🌱 Seeding production coin packages idempotently...');
     const result = await seedCoinPackages(true);
     console.log('📊 Result summary:', {

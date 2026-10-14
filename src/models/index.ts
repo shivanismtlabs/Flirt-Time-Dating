@@ -685,6 +685,15 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
             END IF;
 
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_reports') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'targetType') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "targetType" VARCHAR(20) DEFAULT 'user';
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'momentId') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "momentId" UUID;
+              END IF;
+            END IF;
+
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'reason') THEN
                 ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);
@@ -692,26 +701,27 @@ export const initDb = async (force = false): Promise<void> => {
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'momentId') THEN
                 ALTER TABLE "connection_requests" ADD COLUMN "momentId" UUID;
               END IF;
-              IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'coin_packages') THEN
-                CREATE TABLE IF NOT EXISTS "coin_packages" (
-                  "id" SERIAL PRIMARY KEY,
-                  "name" VARCHAR(255) NOT NULL,
-                  "price" DECIMAL(10, 2) NOT NULL,
-                  "currency" VARCHAR(10) NOT NULL DEFAULT 'INR',
-                  "coins" INTEGER NOT NULL,
-                  "bonus_coins" INTEGER NOT NULL DEFAULT 0,
-                  "google_product_id" VARCHAR(255),
-                  "apple_product_id" VARCHAR(255),
-                  "is_active" BOOLEAN NOT NULL DEFAULT true,
-                  "sort_order" INTEGER NOT NULL DEFAULT 0,
-                  "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                  "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-                );
-                CREATE INDEX IF NOT EXISTS "coin_packages_is_active_idx" ON "coin_packages" ("is_active");
-                CREATE INDEX IF NOT EXISTS "coin_packages_sort_order_idx" ON "coin_packages" ("is_active", "sort_order", "id");
-                CREATE INDEX IF NOT EXISTS "coin_packages_price_idx" ON "coin_packages" ("price");
-                CREATE INDEX IF NOT EXISTS "coin_packages_coins_idx" ON "coin_packages" ("coins");
-              END IF;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'coin_packages') THEN
+              CREATE TABLE IF NOT EXISTS "coin_packages" (
+                "id" SERIAL PRIMARY KEY,
+                "name" VARCHAR(255) NOT NULL,
+                "price" DECIMAL(10, 2) NOT NULL,
+                "currency" VARCHAR(10) NOT NULL DEFAULT 'INR',
+                "coins" INTEGER NOT NULL,
+                "bonus_coins" INTEGER NOT NULL DEFAULT 0,
+                "google_product_id" VARCHAR(255),
+                "apple_product_id" VARCHAR(255),
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "coin_packages_is_active_idx" ON "coin_packages" ("is_active");
+              CREATE INDEX IF NOT EXISTS "coin_packages_sort_order_idx" ON "coin_packages" ("is_active", "sort_order", "id");
+              CREATE INDEX IF NOT EXISTS "coin_packages_price_idx" ON "coin_packages" ("price");
+              CREATE INDEX IF NOT EXISTS "coin_packages_coins_idx" ON "coin_packages" ("coins");
             END IF;
           END $$;
         `);
@@ -721,6 +731,13 @@ export const initDb = async (force = false): Promise<void> => {
           await sequelize.query('ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;');
         } catch (_dropErr) {
           // Safe to ignore if moments table does not exist yet or is already nullable
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "targetType" VARCHAR(20) DEFAULT \'user\';');
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+        } catch (_urColErr) {
+          // Safe to ignore if user_reports does not exist yet
         }
 
         try {

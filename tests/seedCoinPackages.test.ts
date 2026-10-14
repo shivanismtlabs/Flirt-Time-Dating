@@ -11,10 +11,6 @@ describe('Production Coin Packages Seeder (Idempotent & Transaction-Safe)', () =
     await sequelize.sync({ force: true });
   });
 
-  afterAll(async () => {
-    await sequelize.close();
-  });
-
   beforeEach(async () => {
     await CoinPackage.destroy({ where: {}, truncate: true });
   });

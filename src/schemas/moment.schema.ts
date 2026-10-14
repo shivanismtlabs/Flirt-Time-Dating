@@ -39,6 +39,9 @@ export const createMomentSchema = z.object({
         z.string().trim().max(100),
         z.object({
           name: z.string().trim().max(100).optional(),
+          city: z.string().trim().max(100).optional(),
+          label: z.string().trim().max(100).optional(),
+          address: z.string().trim().max(100).optional(),
           latitude: z.number().optional(),
           longitude: z.number().optional(),
         }),

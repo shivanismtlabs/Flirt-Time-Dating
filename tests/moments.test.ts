@@ -141,6 +141,25 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.data.media).toHaveLength(1);
       expect(res.body.data.media[0].displayOrder).toBe(0);
       expect(res.body.data.expiresAt).toBeNull();
+      expect(res.body.data.locationLabel).toBe('Bandra, Mumbai');
+      expect(res.body.data.location).toEqual({ name: 'Bandra, Mumbai' });
+    });
+
+    it('should successfully create a moment with location string field (alias for locationLabel)', async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Sunset at the beach 🌅')
+        .field('audience', 'everyone')
+        .field('location', 'Goa Beach')
+        .attach('images', validJpegBuffer, 'sunset.jpg');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Sunset at the beach 🌅');
+      expect(res.body.data.locationLabel).toBe('Goa Beach');
+      expect(res.body.data.location).toEqual({ name: 'Goa Beach' });
     });
 
     it('should successfully create a moment with 5 images and preserve ordering', async () => {

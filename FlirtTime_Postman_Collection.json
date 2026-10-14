@@ -2433,6 +2433,12 @@
                   "description": "everyone | matches_only | close_friends"
                 },
                 {
+                  "key": "location",
+                  "value": "Bandra, Mumbai",
+                  "type": "text",
+                  "description": "Location name or city (e.g. Bandra, Mumbai or Goa, India)"
+                },
+                {
                   "key": "locationLabel",
                   "value": "Bandra, Mumbai",
                   "type": "text"

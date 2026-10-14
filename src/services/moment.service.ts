@@ -626,6 +626,7 @@ export class MomentService {
         relativeAge: formatRelativeAge(m.publishedAt),
         timeAgo: formatTimeAgoShort(m.publishedAt),
         locationLabel: m.locationLabel || targetUser.city || null,
+        location: m.locationLabel ? { name: m.locationLabel } : (targetUser.city ? { name: targetUser.city } : null),
         creator: creatorInfo,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
@@ -996,6 +997,7 @@ export class MomentService {
         relativeAge: formatRelativeAge(m.publishedAt),
         timeAgo: formatTimeAgoShort(m.publishedAt),
         locationLabel: m.locationLabel || (creator ? creator.city : null) || null,
+        location: m.locationLabel ? { name: m.locationLabel } : (creator && creator.city ? { name: creator.city } : null),
         creator: creator
           ? {
               id: creator.id,
@@ -1232,6 +1234,7 @@ export class MomentService {
       expiresAt: moment.expiresAt || null,
       timeRemainingMinutes: null,
       locationLabel: moment.locationLabel || creator.city || null,
+      location: moment.locationLabel ? { name: moment.locationLabel } : (creator && creator.city ? { name: creator.city } : null),
       likesCount,
       commentsCount,
       giftsCount,

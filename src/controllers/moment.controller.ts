@@ -49,12 +49,27 @@ export const createMomentHandler = async (
       images,
     } = req.body || {};
 
-    // Resolve location label from string or location object
+    // Resolve location label from string or location object (supports string, JSON string, or object)
     let resolvedLocation: string | null = null;
     if (typeof location === 'string' && location.trim()) {
-      resolvedLocation = location.trim();
-    } else if (location && typeof location === 'object' && location.name) {
-      resolvedLocation = String(location.name).trim();
+      const locStr = location.trim();
+      if (locStr.startsWith('{') && locStr.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(locStr);
+          resolvedLocation = parsed.name || parsed.city || parsed.label || parsed.address || locStr;
+        } catch (_e) {
+          resolvedLocation = locStr;
+        }
+      } else {
+        resolvedLocation = locStr;
+      }
+    } else if (location && typeof location === 'object') {
+      resolvedLocation =
+        (location.name && String(location.name).trim()) ||
+        (location.city && String(location.city).trim()) ||
+        (location.label && String(location.label).trim()) ||
+        (location.address && String(location.address).trim()) ||
+        null;
     } else if (typeof locationLabel === 'string' && locationLabel.trim()) {
       resolvedLocation = locationLabel.trim();
     }

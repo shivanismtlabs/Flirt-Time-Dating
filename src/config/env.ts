@@ -32,15 +32,25 @@ export const env = {
   SMTP_FROM: process.env.SMTP_FROM || '"FlirtTime" <noreply@flirttime.app>',
   SMTP_SECURE: process.env.SMTP_SECURE === 'true',
 
-  APPLE_CLIENT_ID: process.env.APPLE_CLIENT_ID || 'com.flirttime.app',
+  APPLE_CLIENT_ID: process.env.APPLE_CLIENT_ID || 'com.app.flirttime',
+  APPLE_BUNDLE_ID: process.env.APPLE_BUNDLE_ID || 'com.flirttime.app',
   APPLE_TEAM_ID: process.env.APPLE_TEAM_ID || '',
   APPLE_KEY_ID: process.env.APPLE_KEY_ID || '',
-  APPLE_PRIVATE_KEY: process.env.APPLE_PRIVATE_KEY || '',
+  APPLE_PRIVATE_KEY: process.env.APPLE_PRIVATE_KEY ? process.env.APPLE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
+  APPLE_IAP_ENVIRONMENT: process.env.APPLE_IAP_ENVIRONMENT || (process.env.NODE_ENV === 'production' ? 'Production' : 'Sandbox'),
 
   FIREBASE_PROJECT_ID: process.env.FIREBASE_PROJECT_ID || '',
   FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL || '',
   FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
   FIREBASE_SERVICE_ACCOUNT_PATH: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
+
+  GOOGLE_PACKAGE_NAME: process.env.GOOGLE_PACKAGE_NAME || process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
+  GOOGLE_SERVICE_ACCOUNT_EMAIL: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || process.env.FIREBASE_CLIENT_EMAIL || '',
+  GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY
+    ? process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY.replace(/\\n/g, '\n')
+    : process.env.FIREBASE_PRIVATE_KEY
+      ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n')
+      : '',
 
   // AWS S3, Rekognition & Lambda Configuration
   AWS_REGION: process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'ap-south-1',

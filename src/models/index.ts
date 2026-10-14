@@ -32,6 +32,8 @@ import { CoinPackage } from './coinPackage.model';
 import { SubscriptionPlan } from './subscriptionPlan.model';
 import { SubscriptionFeature } from './subscriptionFeature.model';
 import { PlanFeature } from './planFeature.model';
+import { CoinPurchase } from './coinPurchase.model';
+import { CoinTransaction } from './coinTransaction.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -500,6 +502,42 @@ PlanFeature.belongsTo(SubscriptionFeature, {
   as: 'feature',
 });
 
+// User <-> CoinPurchase associations
+User.hasMany(CoinPurchase, {
+  foreignKey: 'userId',
+  as: 'coinPurchases',
+  onDelete: 'CASCADE',
+});
+
+CoinPurchase.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// CoinPackage <-> CoinPurchase associations
+CoinPackage.hasMany(CoinPurchase, {
+  foreignKey: 'packageId',
+  as: 'purchases',
+  onDelete: 'SET NULL',
+});
+
+CoinPurchase.belongsTo(CoinPackage, {
+  foreignKey: 'packageId',
+  as: 'package',
+});
+
+// User <-> CoinTransaction (ledger) associations
+User.hasMany(CoinTransaction, {
+  foreignKey: 'userId',
+  as: 'coinTransactions',
+  onDelete: 'CASCADE',
+});
+
+CoinTransaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 export {
   sequelize,
   User,
@@ -533,6 +571,8 @@ export {
   SubscriptionPlan,
   SubscriptionFeature,
   PlanFeature,
+  CoinPurchase,
+  CoinTransaction,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -918,6 +958,7 @@ export const initDb = async (force = false): Promise<void> => {
 
     await ensureCoinPackageTables();
     await ensureSubscriptionTables();
+    await ensureCoinPurchaseTables();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -1048,6 +1089,18 @@ export const ensureSubscriptionTables = async (): Promise<void> => {
     await PlanFeature.sync();
   } catch (err: any) {
     console.warn('⚠️ Could not sync Subscription tables:', err.message);
+  }
+};
+
+/**
+ * Ensures coin_purchases and coin_transactions tables exist with required constraints on all database environments
+ */
+export const ensureCoinPurchaseTables = async (): Promise<void> => {
+  try {
+    await CoinPurchase.sync();
+    await CoinTransaction.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction tables:', err.message);
   }
 };
 

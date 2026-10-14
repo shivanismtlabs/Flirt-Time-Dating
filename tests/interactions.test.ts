@@ -182,7 +182,8 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(typeof item.user.age).toBe('number');
       expect(item.user.isVerified).toBe(true);
       expect(typeof item.user.distanceKm).toBe('number');
-      expect(item.user.locationLabel).toBe('Mumbai');
+      expect(item.username).toBe('user_cindy');
+      expect(item.user.username).toBe('user_cindy');
       expect(item.interaction.type).toBe('likes');
       expect(item.interaction.action).toBe('like');
     });

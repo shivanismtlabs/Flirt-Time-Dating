@@ -15,6 +15,7 @@ import { InteractionType } from '../schemas/interaction.schema';
 export interface InteractionUserCard {
   id: string;
   name: string;
+  username: string;
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
@@ -24,6 +25,7 @@ export interface InteractionUserCard {
 
 export interface InteractionItemDTO {
   interactionId: string;
+  username: string;
   user: InteractionUserCard;
   interaction: {
     type: InteractionType;
@@ -165,6 +167,7 @@ export class InteractionService {
     return {
       id: targetUser.id,
       name: resolveDisplayName(targetUser),
+      username: targetUser.username || targetUser.nickName || '',
       age: calculateAge(targetUser.dateOfBirth),
       profilePhotoUrl: this.resolvePrimaryPhoto(targetUser.profilePicture, targetUser.photos),
       isVerified: Boolean(targetUser.isFaceVerified),
@@ -290,15 +293,19 @@ export class InteractionService {
     const hasMore = rows.length > limit;
     const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
 
-    const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => ({
-      interactionId: swipe.id,
-      user: this.formatUserCard((swipe as any).user, currentUser),
-      interaction: {
-        type: 'likes',
-        createdAt: swipe.createdAt.toISOString(),
-        action: swipe.action as 'like' | 'super_like',
-      },
-    }));
+    const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => {
+      const userCard = this.formatUserCard((swipe as any).user, currentUser);
+      return {
+        interactionId: swipe.id,
+        username: userCard.username,
+        user: userCard,
+        interaction: {
+          type: 'likes',
+          createdAt: swipe.createdAt.toISOString(),
+          action: swipe.action as 'like' | 'super_like',
+        },
+      };
+    });
 
     const nextCursor =
       hasMore && itemsToReturn.length > 0
@@ -394,16 +401,20 @@ export class InteractionService {
       });
     }
 
-    const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => ({
-      interactionId: swipe.id,
-      user: this.formatUserCard((swipe as any).targetUser, currentUser),
-      interaction: {
-        type: 'you_liked',
-        createdAt: swipe.createdAt.toISOString(),
-        action: swipe.action as 'like' | 'super_like',
-        isMatched: matchMap.has(swipe.targetUserId),
-      },
-    }));
+    const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => {
+      const userCard = this.formatUserCard((swipe as any).targetUser, currentUser);
+      return {
+        interactionId: swipe.id,
+        username: userCard.username,
+        user: userCard,
+        interaction: {
+          type: 'you_liked',
+          createdAt: swipe.createdAt.toISOString(),
+          action: swipe.action as 'like' | 'super_like',
+          isMatched: matchMap.has(swipe.targetUserId),
+        },
+      };
+    });
 
     const nextCursor =
       hasMore && itemsToReturn.length > 0
@@ -495,9 +506,11 @@ export class InteractionService {
 
     const items: InteractionItemDTO[] = itemsToReturn.map((match) => {
       const partner = match.user1Id === currentUser.id ? (match as any).user2 : (match as any).user1;
+      const userCard = this.formatUserCard(partner, currentUser);
       return {
         interactionId: match.id,
-        user: this.formatUserCard(partner, currentUser),
+        username: userCard.username,
+        user: userCard,
         interaction: {
           type: 'matches',
           createdAt: match.createdAt.toISOString(),
@@ -596,19 +609,23 @@ export class InteractionService {
       });
     }
 
-    const items: InteractionItemDTO[] = itemsToReturn.map((req) => ({
-      interactionId: req.id,
-      user: this.formatUserCard((req as any).requester, currentUser),
-      interaction: {
-        type: 'compliments',
-        createdAt: req.createdAt.toISOString(),
-        reason: req.reason || null,
-        message: req.message || null,
-        momentId: req.momentId || null,
-        status: req.status,
-        isRead: readNotifications.has(req.id),
-      },
-    }));
+    const items: InteractionItemDTO[] = itemsToReturn.map((req) => {
+      const userCard = this.formatUserCard((req as any).requester, currentUser);
+      return {
+        interactionId: req.id,
+        username: userCard.username,
+        user: userCard,
+        interaction: {
+          type: 'compliments',
+          createdAt: req.createdAt.toISOString(),
+          reason: req.reason || null,
+          message: req.message || null,
+          momentId: req.momentId || null,
+          status: req.status,
+          isRead: readNotifications.has(req.id),
+        },
+      };
+    });
 
     const nextCursor =
       hasMore && itemsToReturn.length > 0

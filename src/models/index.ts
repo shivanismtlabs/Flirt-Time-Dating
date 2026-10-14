@@ -29,6 +29,9 @@ import {
 } from './momentGift.model';
 import { DeepLink } from './deepLink.model';
 import { CoinPackage } from './coinPackage.model';
+import { SubscriptionPlan } from './subscriptionPlan.model';
+import { SubscriptionFeature } from './subscriptionFeature.model';
+import { PlanFeature } from './planFeature.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -460,6 +463,43 @@ DeepLink.belongsTo(User, {
   as: 'creator',
 });
 
+// SubscriptionPlan <-> SubscriptionFeature Many-to-Many associations
+SubscriptionPlan.belongsToMany(SubscriptionFeature, {
+  through: PlanFeature,
+  as: 'features',
+  foreignKey: 'subscription_plan_id',
+  otherKey: 'subscription_feature_id',
+});
+
+SubscriptionFeature.belongsToMany(SubscriptionPlan, {
+  through: PlanFeature,
+  as: 'plans',
+  foreignKey: 'subscription_feature_id',
+  otherKey: 'subscription_plan_id',
+});
+
+SubscriptionPlan.hasMany(PlanFeature, {
+  foreignKey: 'subscription_plan_id',
+  as: 'planFeatures',
+  onDelete: 'CASCADE',
+});
+
+PlanFeature.belongsTo(SubscriptionPlan, {
+  foreignKey: 'subscription_plan_id',
+  as: 'plan',
+});
+
+SubscriptionFeature.hasMany(PlanFeature, {
+  foreignKey: 'subscription_feature_id',
+  as: 'planFeatures',
+  onDelete: 'CASCADE',
+});
+
+PlanFeature.belongsTo(SubscriptionFeature, {
+  foreignKey: 'subscription_feature_id',
+  as: 'feature',
+});
+
 export {
   sequelize,
   User,
@@ -490,6 +530,9 @@ export {
   GiftCatalogItem,
   DeepLink,
   CoinPackage,
+  SubscriptionPlan,
+  SubscriptionFeature,
+  PlanFeature,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -575,6 +618,10 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'profilePicture') THEN
                 ALTER TABLE "users" ADD COLUMN "profilePicture" VARCHAR(500);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coverPicture') THEN
+                ALTER TABLE "users" ADD COLUMN "coverPicture" VARCHAR(500);
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lookingFor') THEN
@@ -723,6 +770,60 @@ export const initDb = async (force = false): Promise<void> => {
               CREATE INDEX IF NOT EXISTS "coin_packages_price_idx" ON "coin_packages" ("price");
               CREATE INDEX IF NOT EXISTS "coin_packages_coins_idx" ON "coin_packages" ("coins");
             END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscription_plans') THEN
+              CREATE TABLE IF NOT EXISTS "subscription_plans" (
+                "id" SERIAL PRIMARY KEY,
+                "name" VARCHAR(255) NOT NULL,
+                "description" TEXT,
+                "price" DECIMAL(10, 2) NOT NULL,
+                "currency" VARCHAR(10) NOT NULL DEFAULT 'USD',
+                "duration_days" INTEGER NOT NULL,
+                "billing_cycle" VARCHAR(50) NOT NULL DEFAULT 'monthly',
+                "trial_period" INTEGER,
+                "is_recurring" BOOLEAN NOT NULL DEFAULT true,
+                "bonus_coins" INTEGER NOT NULL DEFAULT 0,
+                "google_product_id" VARCHAR(255),
+                "apple_product_id" VARCHAR(255),
+                "icon" VARCHAR(500),
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "deleted_at" TIMESTAMP WITH TIME ZONE,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "subscription_plans_is_active_idx" ON "subscription_plans" ("is_active");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_sort_order_idx" ON "subscription_plans" ("is_active", "sort_order", "id");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_google_product_id_idx" ON "subscription_plans" ("google_product_id");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_apple_product_id_idx" ON "subscription_plans" ("apple_product_id");
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscription_features') THEN
+              CREATE TABLE IF NOT EXISTS "subscription_features" (
+                "id" SERIAL PRIMARY KEY,
+                "text" VARCHAR(255) NOT NULL,
+                "image" VARCHAR(500) NOT NULL,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "subscription_features_is_active_idx" ON "subscription_features" ("is_active");
+              CREATE INDEX IF NOT EXISTS "subscription_features_sort_order_idx" ON "subscription_features" ("sort_order");
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'plan_features') THEN
+              CREATE TABLE IF NOT EXISTS "plan_features" (
+                "id" SERIAL PRIMARY KEY,
+                "subscription_plan_id" INTEGER NOT NULL REFERENCES "subscription_plans"("id") ON DELETE CASCADE,
+                "subscription_feature_id" INTEGER NOT NULL REFERENCES "subscription_features"("id") ON DELETE CASCADE,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                CONSTRAINT "plan_features_plan_feature_unique" UNIQUE ("subscription_plan_id", "subscription_feature_id")
+              );
+              CREATE INDEX IF NOT EXISTS "plan_features_sort_order_idx" ON "plan_features" ("sort_order");
+            END IF;
           END $$;
         `);
 
@@ -789,6 +890,7 @@ export const initDb = async (force = false): Promise<void> => {
     }
 
     await ensureCoinPackageTables();
+    await ensureSubscriptionTables();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -807,6 +909,14 @@ export const initDb = async (force = false): Promise<void> => {
       await seedCoinPackages(false);
     } catch (coinSeedErr: any) {
       console.warn('⚠️ Could not seed coin packages:', coinSeedErr.message);
+    }
+
+    // Seed verified subscription plans idempotently
+    try {
+      const { seedSubscriptions } = await import('../services/seedSubscription.service');
+      await seedSubscriptions(false);
+    } catch (subSeedErr: any) {
+      console.warn('⚠️ Could not seed subscription plans:', subSeedErr.message);
     }
 
     console.log('✅ Database models synchronized successfully.');
@@ -885,6 +995,19 @@ export const ensureCoinPackageTables = async (): Promise<void> => {
     await CoinPackage.sync();
   } catch (err: any) {
     console.warn('⚠️ Could not sync CoinPackage table:', err.message);
+  }
+};
+
+/**
+ * Ensures subscription_plans, subscription_features, and plan_features tables exist on all database environments
+ */
+export const ensureSubscriptionTables = async (): Promise<void> => {
+  try {
+    await SubscriptionPlan.sync();
+    await SubscriptionFeature.sync();
+    await PlanFeature.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync Subscription tables:', err.message);
   }
 };
 

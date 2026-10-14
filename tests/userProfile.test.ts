@@ -1,8 +1,11 @@
 import request from 'supertest';
 import app from '../src/app';
-import { sequelize, User } from '../src/models';
+import { sequelize, User, EmailVerification, PhoneVerification } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { hashPassword } from '../src/utils/password';
+import { s3Service } from '../src/services/s3.service';
+import { emailProvider } from '../src/services/email.service';
+import { smsProvider } from '../src/services/sms.service';
 
 describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   let testUser: User;
@@ -416,6 +419,318 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
 
       expect(loginRes.status).toBe(200);
       expect(loginRes.body.data.token).toBeDefined();
+    });
+  });
+
+  describe('6. Cover Picture Upload API (POST /api/v1/users/cover-photo)', () => {
+    const validJpegBuffer = Buffer.from([
+      0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x60,
+      0x00, 0x60, 0x00, 0x00, 0xff, 0xdb, 0x00, 0x43, 0x00, 0xff, 0xc0, 0x00, 0x11, 0x08, 0x00, 0x01,
+      0xff, 0xd9,
+    ]);
+
+    it('should reject unauthenticated request with 401', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/cover-photo')
+        .attach('coverPhoto', validJpegBuffer, 'cover.jpg');
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject missing cover image file with 400', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/cover-photo')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({});
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should upload cover photo successfully and persist in user.coverPicture', async () => {
+      jest.spyOn(s3Service, 'uploadMedia').mockImplementation(async (_buf, uid) => {
+        return `covers/${uid}/cover_12345.jpg`;
+      });
+      jest.spyOn(s3Service, 'generateAndUploadThumbnail').mockResolvedValue('thumbnails/covers/mock.jpg');
+      jest.spyOn(s3Service, 'deleteObject').mockResolvedValue();
+
+      const res = await request(app)
+        .post('/api/v1/users/cover-photo')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('coverPhoto', validJpegBuffer, 'cover.jpg');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toMatch(/cover picture uploaded successfully/i);
+      expect(res.body.data.coverPicture).toBeDefined();
+      expect(res.body.data.coverPhoto).toBeDefined();
+      expect(res.body.data.key).toBe(`covers/${testUser.id}/cover_12345.jpg`);
+
+      // Verify in DB
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.coverPicture).toBe(`covers/${testUser.id}/cover_12345.jpg`);
+    });
+
+    it('should also support cover-picture and profile/cover-photo aliases', async () => {
+      jest.spyOn(s3Service, 'uploadMedia').mockImplementation(async (_buf, uid) => {
+        return `covers/${uid}/cover_alias.jpg`;
+      });
+      jest.spyOn(s3Service, 'generateAndUploadThumbnail').mockResolvedValue('thumbnails/covers/mock.jpg');
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/cover-photo')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('coverPicture', validJpegBuffer, 'cover.jpg');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.key).toBe(`covers/${testUser.id}/cover_alias.jpg`);
+    });
+  });
+
+  describe('7. Profile Email OTP Verification Flow', () => {
+    let capturedOtp = '';
+
+    beforeEach(() => {
+      capturedOtp = '';
+      jest.spyOn(emailProvider, 'sendOtp').mockImplementation(async (_email, otp) => {
+        capturedOtp = otp;
+        return true;
+      });
+    });
+
+    it('should request an Email OTP for a new email address from profile', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'newemail@example.com' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.verificationId).toBeDefined();
+      expect(res.body.data.email).toBe('newemail@example.com');
+      expect(capturedOtp).toMatch(/^\d{6}$/);
+    });
+
+    it('should reject email OTP request if email is already taken by another account with 409', async () => {
+      await User.create({
+        username: 'other_user',
+        email: 'other@example.com',
+        role: 'user',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'other@example.com' });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/already associated with another account/i);
+    });
+
+    it('should reject incorrect OTP with 401', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'verified@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: '000000',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should successfully verify email OTP and update user email in database', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'verified.user@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.email).toBe('verified.user@example.com');
+
+      // Verify user in DB
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.email).toBe('verified.user@example.com');
+    });
+
+    it('should reject already consumed OTP with 400', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'consume.test@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // First verify: success
+      await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      // Second verify: already used
+      const res2 = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toMatch(/already been used/i);
+    });
+  });
+
+  describe('8. Profile Phone OTP Verification Flow', () => {
+    let capturedOtp = '';
+
+    beforeEach(() => {
+      capturedOtp = '';
+      jest.spyOn(smsProvider, 'sendOtp').mockImplementation(async (_phone, otp) => {
+        capturedOtp = otp;
+        return true;
+      });
+    });
+
+    it('should request a Phone OTP for a new phone number from profile', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9876543210',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.verificationId).toBeDefined();
+      expect(res.body.data.phone).toBe('+919876543210');
+      expect(capturedOtp).toMatch(/^\d{6}$/);
+    });
+
+    it('should reject phone OTP request if phone is already taken by another account with 409', async () => {
+      await User.create({
+        username: 'other_phone_user',
+        phone: '+919876543210',
+        role: 'user',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9876543210',
+        });
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/already associated with another account/i);
+    });
+
+    it('should successfully verify phone OTP and update user phone and isPhoneVerified in database', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9988776655',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.phone).toBe('+919988776655');
+      expect(res.body.data.isPhoneVerified).toBe(true);
+
+      // Verify user in DB
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.phone).toBe('+919988776655');
+      expect(updatedUser?.isPhoneVerified).toBe(true);
+    });
+  });
+
+  describe('9. Complete Profile Fetch (GET /api/v1/users/profile)', () => {
+    it('should include coverPicture, coverPhoto, email, phone, and isPhoneVerified in profile response', async () => {
+      testUser.coverPicture = 'covers/test_cover.jpg';
+      testUser.phone = '+919988776655';
+      testUser.isPhoneVerified = true;
+      await testUser.save();
+
+      const res = await request(app)
+        .get('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.profile.coverPhoto).toBeDefined();
+      expect(res.body.data.profile.coverPicture).toBeDefined();
+      expect(res.body.data.profile.email).toBe(testUser.email);
+      expect(res.body.data.profile.phone).toBe('+919988776655');
+      expect(res.body.data.profile.isPhoneVerified).toBe(true);
+    });
+  });
+
+  describe('10. User Interests on Edit Profile (PUT /api/v1/users/interests)', () => {
+    it('should update user interests using UUID string array', async () => {
+      const { Interest } = await import('../src/models');
+      const interest = await Interest.create({
+        name: 'Photography_Test',
+        icon: '📷',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .put('/api/v1/users/interests')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ interestIds: [interest.id] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      const getRes = await request(app)
+        .get('/api/v1/users/interests')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.data.interests).toHaveLength(1);
+      expect(getRes.body.data.interests[0].name).toBe('Photography_Test');
     });
   });
 });

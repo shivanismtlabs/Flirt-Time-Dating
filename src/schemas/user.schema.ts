@@ -92,6 +92,8 @@ export const updateProfileSchema = z.object({
     haircolor: z.string().trim().max(50).optional().nullable(),
     living: z.string().trim().max(100).optional().nullable(),
     relationship: z.string().trim().max(50).optional().nullable(),
+    coverPicture: z.string().trim().max(500).optional().nullable(),
+    coverPhoto: z.string().trim().max(500).optional().nullable(),
     moreAboutMe: z.record(z.any()).optional().nullable(),
   }),
 });
@@ -185,6 +187,97 @@ export const reportUserSchema = z.object({
       .optional()
       .nullable(),
   }),
+});
+
+// Profile Email OTP Schemas
+export const requestProfileEmailOtpSchema = z.object({
+  body: z.object({
+    email: z
+      .string({ required_error: 'email is required' })
+      .trim()
+      .min(1, 'email cannot be empty')
+      .email('Invalid email address format'),
+  }),
+});
+
+export const verifyProfileEmailOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      email: z.string().trim().email('Invalid email address format').optional(),
+      otp: z
+        .string({ required_error: 'otp is required' })
+        .regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+    })
+    .refine((data) => data.verificationId || data.email, {
+      message: 'Either verificationId or email must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+export const resendProfileEmailOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      email: z.string().trim().email('Invalid email address format').optional(),
+    })
+    .refine((data) => data.verificationId || data.email, {
+      message: 'Either verificationId or email must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+// Profile Phone OTP Schemas
+export const requestProfilePhoneOtpSchema = z.object({
+  body: z.object({
+    countryCode: z
+      .string()
+      .trim()
+      .regex(/^\+?[1-9]\d{0,3}$/, 'Invalid country code format (e.g. +91, +1)')
+      .optional(),
+    phone: z
+      .string({ required_error: 'phone is required' })
+      .trim()
+      .min(1, 'phone cannot be empty')
+      .refine(
+        (val) => {
+          const digits = val.replace(/\D/g, '');
+          return digits.length >= 4 && digits.length <= 15;
+        },
+        {
+          message: 'Invalid phone number format (must contain 4-15 digits)',
+        }
+      ),
+  }),
+});
+
+export const verifyProfilePhoneOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      phone: z.string().trim().optional(),
+      countryCode: z.string().trim().optional(),
+      otp: z
+        .string({ required_error: 'otp is required' })
+        .regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+    })
+    .refine((data) => data.verificationId || data.phone, {
+      message: 'Either verificationId or phone must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+export const resendProfilePhoneOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      phone: z.string().trim().optional(),
+      countryCode: z.string().trim().optional(),
+    })
+    .refine((data) => data.verificationId || data.phone, {
+      message: 'Either verificationId or phone must be provided',
+      path: ['verificationId'],
+    }),
 });
 
 

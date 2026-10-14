@@ -44,6 +44,8 @@ export interface UpdateProfileInput {
   haircolor?: string | null;
   living?: string | null;
   relationship?: string | null;
+  coverPicture?: string | null;
+  coverPhoto?: string | null;
   moreAboutMe?: {
     drinking?: string | null;
     education?: string | null;
@@ -224,6 +226,9 @@ export const updateUserProfile = async (
   if (data.relationship !== undefined || moreSource.relationship !== undefined) {
     user.relationship = data.relationship !== undefined ? data.relationship : moreSource.relationship || null;
   }
+  if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
+    user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
+  }
 
   user.isProfileComplete = true;
 
@@ -254,6 +259,13 @@ export const updateUserProfile = async (
     haircolor: user.hairColor,
     living: user.living,
     relationship: user.relationship,
+    coverPicture: user.coverPicture ? formatMediaUrl(user.coverPicture) : null,
+    coverPhoto: user.coverPicture
+      ? {
+          url: formatMediaUrl(user.coverPicture),
+          thumbnailUrl: formatThumbnailUrl(user.coverPicture),
+        }
+      : null,
     moreAboutMe,
     isProfileComplete: user.isProfileComplete,
     role: user.role,

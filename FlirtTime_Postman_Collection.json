@@ -4959,6 +4959,90 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Subscriptions",
+      "item": [
+        {
+          "name": "Get Subscriptions (Default - /api/v1/subscriptions)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions"
+              ]
+            },
+            "description": "Fetches all active subscription plans ordered by sort_order ASC, id ASC with full feature arrays and S3 media URLs. Matches exact Laravel response contract ({ status: true, img_base_url, message, data: [...] }). Public access allowed, optional Bearer token."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Subscriptions (Dual Route - /api/subscriptions)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "subscriptions"
+              ]
+            },
+            "description": "Alias route for clients requesting /api/subscriptions without the /v1 prefix."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Subscriptions (Authenticated with Bearer Token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions"
+              ]
+            },
+            "description": "Fetches subscription plans with authenticated user context attached."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

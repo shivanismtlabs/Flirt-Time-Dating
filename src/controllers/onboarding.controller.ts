@@ -100,7 +100,10 @@ export const updateUserInterests = async (req: AuthenticatedRequest, res: Respon
   try {
     const userId = getUserIdOrThrow(req, res);
     if (!userId) return;
-    const { interestIds } = req.body;
+    const rawList = req.body.interestIds || req.body.interests || [];
+    const interestIds: string[] = rawList.map((item: any) =>
+      typeof item === 'object' && item?.id ? String(item.id) : String(item)
+    );
     const result = await onboardingService.updateUserInterests(userId, interestIds);
     return sendSuccess(res, 'User interests saved successfully', result);
   } catch (err: any) {

@@ -1,4 +1,5 @@
 import { Request, Response } from 'express';
+import { Op } from 'sequelize';
 import { User } from '../models/user.model';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
@@ -14,8 +15,11 @@ import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
-import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from '../services/s3.service';
 import { calculateAge } from '../services/discovery.service';
+import { otpService } from '../services/otp.service';
+import { normalizeEmail } from '../utils/normalization';
+import { combineAndNormalizePhone, normalizePhone } from '../utils/phone';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -107,16 +111,18 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
         }
       : null;
 
-    const coverPhotoObj =
+    const coverPhotoKey =
+      user.coverPicture ||
       (rawUser.photos || []).find(
         (p: any) => !p.isPrimary && p.imageUrl !== primaryPhotoKey
-      ) ||
-      (rawUser.photos && rawUser.photos.length > 1 ? rawUser.photos[1] : null);
+      )?.imageUrl ||
+      (rawUser.photos && rawUser.photos.length > 1 ? rawUser.photos[1]?.imageUrl : null) ||
+      null;
 
-    const coverPhoto = coverPhotoObj
+    const coverPhoto = coverPhotoKey
       ? {
-          url: formatMediaUrl(coverPhotoObj.imageUrl),
-          thumbnailUrl: formatThumbnailUrl(coverPhotoObj.imageUrl),
+          url: formatMediaUrl(coverPhotoKey),
+          thumbnailUrl: formatThumbnailUrl(coverPhotoKey),
         }
       : null;
 
@@ -230,9 +236,14 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
 
     const profileData = {
       id: user.id,
+      username: user.username,
       displayName,
       firstName: user.firstName || null,
       lastName: user.lastName || null,
+      nickName: user.nickName || null,
+      email: user.email || null,
+      phone: user.phone || null,
+      isPhoneVerified: !!user.isPhoneVerified,
       dateOfBirth: user.dateOfBirth || null,
       age,
       gender: user.gender || null,
@@ -240,6 +251,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       location,
       profilePhoto: primaryProfilePhoto,
       coverPhoto,
+      coverPicture: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
+      coverPictureKey: user.coverPicture || null,
       photos: formattedPhotos,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
@@ -466,5 +479,407 @@ export const updateMoreAboutMeHandler = async (req: AuthenticatedRequest, res: R
       return sendError(res, error.message, error.statusCode);
     }
     return sendError(res, error.message || 'Error updating more about me', 500);
+  }
+};
+
+/**
+ * Dedicated cover photo upload handler
+ * POST /api/v1/users/cover-photo (and aliases)
+ */
+export const uploadCoverPhotoHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
+    const photoFile =
+      files?.['coverPhoto']?.[0] ||
+      files?.['coverPicture']?.[0] ||
+      files?.['cover_photo']?.[0] ||
+      files?.['cover_picture']?.[0] ||
+      files?.['cover']?.[0] ||
+      files?.['photo']?.[0] ||
+      files?.['image']?.[0] ||
+      files?.['file']?.[0] ||
+      req.file;
+
+    const { imageKey, imageUrl } = req.body || {};
+    const preUploadedKey = imageKey || imageUrl;
+
+    if ((!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) && !preUploadedKey) {
+      return sendError(
+        res,
+        'Cover image is required. Attach image in "coverPhoto" field or pass "imageKey"',
+        400,
+        'MISSING_FILE'
+      );
+    }
+
+    let s3Key: string;
+    if (photoFile && photoFile.buffer && photoFile.buffer.length > 0) {
+      s3Key = await s3Service.uploadMedia(
+        photoFile.buffer,
+        userId,
+        photoFile.mimetype || 'image/jpeg',
+        'covers'
+      );
+      await s3Service.generateAndUploadThumbnail(s3Key, photoFile.buffer);
+    } else {
+      const cleanKey = extractS3Key(preUploadedKey);
+      if (!cleanKey.startsWith(`${userId}/`) && !cleanKey.includes(`/${userId}/`)) {
+        return sendError(res, 'You are not authorized to use this image key', 403, 'UNAUTHORIZED_IMAGE_KEY');
+      }
+      const existsMeta = await s3Service.checkObjectExists(cleanKey);
+      if (!existsMeta.exists) {
+        return sendError(res, 'Uploaded cover image not found in storage', 400, 'S3_OBJECT_NOT_FOUND');
+      }
+      s3Key = cleanKey;
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return sendError(res, 'User not found', 404);
+    }
+
+    const oldCover = user.coverPicture;
+    user.coverPicture = s3Key;
+    await user.save();
+
+    if (oldCover && oldCover !== s3Key) {
+      s3Service.deleteObject(oldCover).catch(() => {});
+    }
+
+    const coverUrl = formatMediaUrl(s3Key);
+    const thumbnailUrl = formatThumbnailUrl(s3Key);
+
+    return sendSuccess(
+      res,
+      'Cover picture uploaded successfully',
+      {
+        coverPicture: coverUrl,
+        coverPictureUrl: coverUrl,
+        thumbnailUrl,
+        key: s3Key,
+        coverPhoto: {
+          url: coverUrl,
+          thumbnailUrl,
+        },
+      },
+      201
+    );
+  } catch (err: any) {
+    return sendError(res, err.message || 'Error uploading cover picture', 500);
+  }
+};
+
+/**
+ * Request an Email OTP to add or update email from Profile Edit
+ * POST /api/v1/users/profile/email/request-otp
+ */
+export const requestProfileEmailOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { email } = req.body || {};
+    if (!email || typeof email !== 'string' || !email.trim()) {
+      return sendError(res, 'Email is required', 400);
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+
+    // Check if this email is already registered to another account
+    const conflictUser = await User.findOne({
+      where: {
+        email: normalizedEmail,
+        id: { [Op.ne]: userId },
+      },
+    });
+
+    if (conflictUser) {
+      return sendError(
+        res,
+        'This email address is already associated with another account',
+        409,
+        'EMAIL_ALREADY_IN_USE'
+      );
+    }
+
+    const result = await otpService.requestEmailOtp(normalizedEmail);
+
+    if (result.error) {
+      return sendError(res, result.error, result.statusCode);
+    }
+
+    return sendSuccess(
+      res,
+      'Verification code sent to your email',
+      { ...result.data, email: normalizedEmail },
+      result.statusCode
+    );
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error requesting email OTP', 500);
+  }
+};
+
+/**
+ * Verify Email OTP from Profile Edit and update user's email
+ * POST /api/v1/users/profile/email/verify-otp
+ */
+export const verifyProfileEmailOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { otp, verificationId, email } = req.body || {};
+
+    const result = await otpService.verifyProfileEmailOtp(
+      userId,
+      otp,
+      verificationId,
+      email
+    );
+
+    if (result.error) {
+      return sendError(res, result.error, result.statusCode);
+    }
+
+    return sendSuccess(
+      res,
+      result.message || 'Email verified and updated successfully',
+      result.data,
+      result.statusCode
+    );
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error verifying email OTP', 500);
+  }
+};
+
+/**
+ * Resend Email OTP for profile email verification
+ * POST /api/v1/users/profile/email/resend-otp
+ */
+export const resendProfileEmailOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { verificationId, email } = req.body || {};
+
+    if (verificationId) {
+      const result = await otpService.resendEmailOtp(verificationId);
+      if (result.error) {
+        return sendError(res, result.error, result.statusCode);
+      }
+      return sendSuccess(res, 'Verification code resent successfully', result.data, result.statusCode);
+    }
+
+    if (email) {
+      const normalizedEmail = normalizeEmail(email);
+      const conflictUser = await User.findOne({
+        where: {
+          email: normalizedEmail,
+          id: { [Op.ne]: userId },
+        },
+      });
+
+      if (conflictUser) {
+        return sendError(
+          res,
+          'This email address is already associated with another account',
+          409,
+          'EMAIL_ALREADY_IN_USE'
+        );
+      }
+
+      const result = await otpService.requestEmailOtp(normalizedEmail);
+      if (result.error) {
+        return sendError(res, result.error, result.statusCode);
+      }
+      return sendSuccess(
+        res,
+        'Verification code resent successfully',
+        { ...result.data, email: normalizedEmail },
+        result.statusCode
+      );
+    }
+
+    return sendError(res, 'Either verificationId or email must be provided', 400);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error resending email OTP', 500);
+  }
+};
+
+/**
+ * Request a Phone OTP to add or update phone from Profile Edit
+ * POST /api/v1/users/profile/phone/request-otp
+ */
+export const requestProfilePhoneOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { phone, countryCode } = req.body || {};
+    if (!phone || typeof phone !== 'string' || !phone.trim()) {
+      return sendError(res, 'Phone number is required', 400);
+    }
+
+    const normalizedPhone = phone.trim().startsWith('+')
+      ? normalizePhone(phone)
+      : combineAndNormalizePhone(countryCode || '+91', phone);
+
+    if (!normalizedPhone || normalizedPhone.length < 5) {
+      return sendError(res, 'Invalid phone number format', 400);
+    }
+
+    // Check if this phone is already registered to another account
+    const conflictUser = await User.findOne({
+      where: {
+        phone: normalizedPhone,
+        id: { [Op.ne]: userId },
+      },
+    });
+
+    if (conflictUser) {
+      return sendError(
+        res,
+        'This phone number is already associated with another account',
+        409,
+        'PHONE_ALREADY_IN_USE'
+      );
+    }
+
+    const cc = countryCode ? (countryCode.startsWith('+') ? countryCode : `+${countryCode}`) : '+91';
+    const cleanCountry = cc.replace(/\D/g, '');
+    let cleanPhone = phone.trim().replace(/\D/g, '');
+    if (cleanCountry && cleanPhone.startsWith(cleanCountry) && cleanPhone.length > cleanCountry.length) {
+      cleanPhone = cleanPhone.slice(cleanCountry.length);
+    }
+    const result = await otpService.requestPhoneOtp(cc, cleanPhone);
+
+    if (result.error) {
+      return sendError(res, result.error, result.statusCode);
+    }
+
+    return sendSuccess(
+      res,
+      'Verification code sent to your phone number',
+      { ...result.data, phone: normalizedPhone },
+      result.statusCode
+    );
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error requesting phone OTP', 500);
+  }
+};
+
+/**
+ * Verify Phone OTP from Profile Edit and update user's phone
+ * POST /api/v1/users/profile/phone/verify-otp
+ */
+export const verifyProfilePhoneOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { otp, verificationId, phone, countryCode } = req.body || {};
+
+    const result = await otpService.verifyProfilePhoneOtp(
+      userId,
+      otp,
+      verificationId,
+      phone,
+      countryCode
+    );
+
+    if (result.error) {
+      return sendError(res, result.error, result.statusCode);
+    }
+
+    return sendSuccess(
+      res,
+      result.message || 'Phone number verified and updated successfully',
+      result.data,
+      result.statusCode
+    );
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error verifying phone OTP', 500);
+  }
+};
+
+/**
+ * Resend Phone OTP for profile phone verification
+ * POST /api/v1/users/profile/phone/resend-otp
+ */
+export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const { verificationId, phone, countryCode } = req.body || {};
+
+    if (verificationId) {
+      const result = await otpService.resendPhoneOtp(verificationId);
+      if (result.error) {
+        return sendError(res, result.error, result.statusCode);
+      }
+      return sendSuccess(res, 'Verification code resent successfully', result.data, result.statusCode);
+    }
+
+    if (phone) {
+      const normalizedPhone = phone.trim().startsWith('+')
+        ? normalizePhone(phone)
+        : combineAndNormalizePhone(countryCode || '+91', phone);
+
+      const conflictUser = await User.findOne({
+        where: {
+          phone: normalizedPhone,
+          id: { [Op.ne]: userId },
+        },
+      });
+
+      if (conflictUser) {
+        return sendError(
+          res,
+          'This phone number is already associated with another account',
+          409,
+          'PHONE_ALREADY_IN_USE'
+        );
+      }
+
+      const cc = countryCode ? (countryCode.startsWith('+') ? countryCode : `+${countryCode}`) : '+91';
+      const cleanCountry = cc.replace(/\D/g, '');
+      let cleanPhone = phone.trim().replace(/\D/g, '');
+      if (cleanCountry && cleanPhone.startsWith(cleanCountry)) {
+        cleanPhone = cleanPhone.slice(cleanCountry.length);
+      }
+      const result = await otpService.requestPhoneOtp(cc, cleanPhone);
+      if (result.error) {
+        return sendError(res, result.error, result.statusCode);
+      }
+      return sendSuccess(
+        res,
+        'Verification code resent successfully',
+        { ...result.data, phone: normalizedPhone },
+        result.statusCode
+      );
+    }
+
+    return sendError(res, 'Either verificationId or phone must be provided', 400);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error resending phone OTP', 500);
   }
 };

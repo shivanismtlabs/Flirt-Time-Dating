@@ -7,7 +7,7 @@ import { EmailVerification } from '../models/emailVerification.model';
 import { User } from '../models/user.model';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
-import { combineAndNormalizePhone, isValidCountryCode, isValidPhone } from '../utils/phone';
+import { combineAndNormalizePhone, isValidCountryCode, isValidPhone, normalizePhone } from '../utils/phone';
 import { normalizeEmail } from '../utils/normalization';
 import { smsProvider } from './sms.service';
 import { emailProvider } from './email.service';
@@ -644,6 +644,301 @@ export class OtpService {
           verificationId: verificationRecord.id,
           expiresIn,
           resendAfter: cooldownSeconds,
+        },
+      };
+    });
+
+    return result;
+  }
+
+  /**
+   * Verify an Email OTP specifically for an authenticated user updating their profile.
+   * Updates user's email directly without logging in as another account or creating a new user.
+   */
+  public async verifyProfileEmailOtp(
+    userId: string,
+    otp: string,
+    verificationId?: string,
+    email?: string
+  ): Promise<{
+    statusCode: number;
+    error?: string;
+    message?: string;
+    data?: { email: string; user: any };
+  }> {
+    if (!userId) {
+      return { statusCode: 401, error: 'Unauthorized user' };
+    }
+
+    if (!otp || typeof otp !== 'string' || !OTP_REGEX.test(otp.trim())) {
+      return { statusCode: 400, error: 'OTP must be exactly 6 numeric digits' };
+    }
+
+    const trimmedOtp = otp.trim();
+    const normalizedEmail = email ? normalizeEmail(email) : null;
+    const isPostgres = sequelize.getDialect() === 'postgres';
+
+    const result = await sequelize.transaction(async (t) => {
+      let verificationRecord: EmailVerification | null = null;
+
+      if (verificationId && UUID_REGEX.test(verificationId.trim())) {
+        verificationRecord = await EmailVerification.findByPk(verificationId.trim(), {
+          transaction: t,
+          ...(isPostgres && { lock: t.LOCK.UPDATE }),
+        });
+      } else if (normalizedEmail) {
+        verificationRecord = await EmailVerification.findOne({
+          where: {
+            email: normalizedEmail,
+            isConsumed: false,
+            isVerified: false,
+          },
+          order: [['createdAt', 'DESC']],
+          transaction: t,
+          ...(isPostgres && { lock: t.LOCK.UPDATE }),
+        });
+      }
+
+      if (!verificationRecord) {
+        return {
+          statusCode: 404,
+          error: 'Verification session not found or invalid. Please request a new OTP.',
+        };
+      }
+
+      if (verificationRecord.isConsumed || verificationRecord.isVerified) {
+        return {
+          statusCode: 400,
+          error: 'OTP has already been used. Please request a new OTP.',
+        };
+      }
+
+      const now = new Date();
+      if (new Date(verificationRecord.expiresAt) < now) {
+        verificationRecord.isConsumed = true;
+        await verificationRecord.save({ transaction: t });
+        return {
+          statusCode: 400,
+          error: 'OTP has expired. Please request a new OTP.',
+        };
+      }
+
+      if (verificationRecord.attempts >= verificationRecord.maxAttempts) {
+        verificationRecord.isConsumed = true;
+        await verificationRecord.save({ transaction: t });
+        return {
+          statusCode: 400,
+          error: 'Maximum verification attempts exceeded. Please request a new OTP.',
+        };
+      }
+
+      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
+      if (!isMatch) {
+        verificationRecord.attempts += 1;
+        const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
+        if (reachedMax) {
+          verificationRecord.isConsumed = true;
+        }
+        await verificationRecord.save({ transaction: t });
+
+        return {
+          statusCode: 401,
+          error: reachedMax
+            ? 'Maximum verification attempts exceeded. Please request a new OTP.'
+            : 'Invalid verification code',
+        };
+      }
+
+      // Atomically consume verification record
+      verificationRecord.isConsumed = true;
+      verificationRecord.isVerified = true;
+      verificationRecord.consumedAt = now;
+      await verificationRecord.save({ transaction: t });
+
+      const targetEmail = normalizeEmail(verificationRecord.email);
+
+      // Check if another user is already using this email
+      const conflictUser = await User.findOne({
+        where: {
+          email: targetEmail,
+          id: { [Op.ne]: userId },
+        },
+        transaction: t,
+      });
+
+      if (conflictUser) {
+        return {
+          statusCode: 409,
+          error: 'This email address is already associated with another account',
+        };
+      }
+
+      const user = await User.findByPk(userId, { transaction: t });
+      if (!user) {
+        return { statusCode: 404, error: 'User not found' };
+      }
+
+      user.email = targetEmail;
+      await user.save({ transaction: t });
+
+      return {
+        statusCode: 200,
+        message: 'Email address updated and verified successfully',
+        data: {
+          email: user.email,
+          user: user.toJSON(),
+        },
+      };
+    });
+
+    return result;
+  }
+
+  /**
+   * Verify a Phone OTP specifically for an authenticated user updating their profile.
+   * Updates user's phone directly without creating a new user or logging in as another account.
+   */
+  public async verifyProfilePhoneOtp(
+    userId: string,
+    otp: string,
+    verificationId?: string,
+    phone?: string,
+    countryCode?: string
+  ): Promise<{
+    statusCode: number;
+    error?: string;
+    message?: string;
+    data?: { phone: string; isPhoneVerified: boolean; user: any };
+  }> {
+    if (!userId) {
+      return { statusCode: 401, error: 'Unauthorized user' };
+    }
+
+    if (!otp || typeof otp !== 'string' || !OTP_REGEX.test(otp.trim())) {
+      return { statusCode: 400, error: 'OTP must be exactly 6 numeric digits' };
+    }
+
+    const trimmedOtp = otp.trim();
+    let normalizedPhone: string | null = null;
+    if (phone) {
+      normalizedPhone = phone.trim().startsWith('+')
+        ? normalizePhone(phone)
+        : combineAndNormalizePhone(countryCode || '+91', phone);
+    }
+
+    const isPostgres = sequelize.getDialect() === 'postgres';
+
+    const result = await sequelize.transaction(async (t) => {
+      let verificationRecord: PhoneVerification | null = null;
+
+      if (verificationId && UUID_REGEX.test(verificationId.trim())) {
+        verificationRecord = await PhoneVerification.findByPk(verificationId.trim(), {
+          transaction: t,
+          ...(isPostgres && { lock: t.LOCK.UPDATE }),
+        });
+      } else if (normalizedPhone) {
+        verificationRecord = await PhoneVerification.findOne({
+          where: {
+            phone: normalizedPhone,
+            isConsumed: false,
+            isVerified: false,
+          },
+          order: [['createdAt', 'DESC']],
+          transaction: t,
+          ...(isPostgres && { lock: t.LOCK.UPDATE }),
+        });
+      }
+
+      if (!verificationRecord) {
+        return {
+          statusCode: 404,
+          error: 'Verification session not found or invalid. Please request a new OTP.',
+        };
+      }
+
+      if (verificationRecord.isConsumed || verificationRecord.isVerified) {
+        return {
+          statusCode: 400,
+          error: 'OTP has already been used. Please request a new OTP.',
+        };
+      }
+
+      const now = new Date();
+      if (new Date(verificationRecord.expiresAt) < now) {
+        verificationRecord.isConsumed = true;
+        await verificationRecord.save({ transaction: t });
+        return {
+          statusCode: 400,
+          error: 'OTP has expired. Please request a new OTP.',
+        };
+      }
+
+      if (verificationRecord.attempts >= verificationRecord.maxAttempts) {
+        verificationRecord.isConsumed = true;
+        await verificationRecord.save({ transaction: t });
+        return {
+          statusCode: 400,
+          error: 'Maximum verification attempts exceeded. Please request a new OTP.',
+        };
+      }
+
+      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
+      if (!isMatch) {
+        verificationRecord.attempts += 1;
+        const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
+        if (reachedMax) {
+          verificationRecord.isConsumed = true;
+        }
+        await verificationRecord.save({ transaction: t });
+
+        return {
+          statusCode: 401,
+          error: reachedMax
+            ? 'Maximum verification attempts exceeded. Please request a new OTP.'
+            : 'Invalid verification code',
+        };
+      }
+
+      // Atomically consume verification record
+      verificationRecord.isConsumed = true;
+      verificationRecord.isVerified = true;
+      verificationRecord.consumedAt = now;
+      await verificationRecord.save({ transaction: t });
+
+      const targetPhone = verificationRecord.phone;
+
+      // Check if another user is already using this phone
+      const conflictUser = await User.findOne({
+        where: {
+          phone: targetPhone,
+          id: { [Op.ne]: userId },
+        },
+        transaction: t,
+      });
+
+      if (conflictUser) {
+        return {
+          statusCode: 409,
+          error: 'This phone number is already associated with another account',
+        };
+      }
+
+      const user = await User.findByPk(userId, { transaction: t });
+      if (!user) {
+        return { statusCode: 404, error: 'User not found' };
+      }
+
+      user.phone = targetPhone;
+      user.isPhoneVerified = true;
+      await user.save({ transaction: t });
+
+      return {
+        statusCode: 200,
+        message: 'Phone number updated and verified successfully',
+        data: {
+          phone: user.phone,
+          isPhoneVerified: true,
+          user: user.toJSON(),
         },
       };
     });

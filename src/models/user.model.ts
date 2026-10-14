@@ -21,6 +21,7 @@ export interface UserAttributes {
   isFaceVerified?: boolean;
   faceVerifiedAt?: Date | null;
   profilePicture?: string | null;
+  coverPicture?: string | null;
   lookingFor?: string | null;
   genderPreference?: string | null;
   religion?: string | null;
@@ -66,6 +67,7 @@ export interface UserCreationAttributes
     | 'isFaceVerified'
     | 'faceVerifiedAt'
     | 'profilePicture'
+    | 'coverPicture'
     | 'lookingFor'
     | 'genderPreference'
     | 'religion'
@@ -108,6 +110,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public isFaceVerified: boolean;
   declare public faceVerifiedAt: Date | null;
   declare public profilePicture: string | null;
+  declare public coverPicture: string | null;
   declare public lookingFor: string | null;
   declare public genderPreference: string | null;
   declare public religion: string | null;
@@ -235,6 +238,10 @@ User.init(
       allowNull: true,
     },
     profilePicture: {
+      type: DataTypes.STRING(500),
+      allowNull: true,
+    },
+    coverPicture: {
       type: DataTypes.STRING(500),
       allowNull: true,
     },

@@ -9,6 +9,8 @@ import {
   getOtherUserProfileHandler,
   blockUserHandler,
   reportUserHandler,
+  getMoreAboutMeHandler,
+  updateMoreAboutMeHandler,
 } from '../controllers/user.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
@@ -16,6 +18,7 @@ import {
   getUserByIdSchema,
   updateUserSchema,
   updateProfileSchema,
+  updateMoreAboutMeSchema,
   getOtherUserProfileSchema,
   blockUserSchema,
   reportUserSchema,
@@ -41,6 +44,11 @@ router.post('/token', validate(registerDeviceTokenSchema), registerDeviceTokenHa
 router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
+
+// More About Me Screen Endpoints
+router.get('/more-about-me', getMoreAboutMeHandler);
+router.patch('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
+router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));

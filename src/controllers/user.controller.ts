@@ -8,6 +8,7 @@ import {
   getOtherUserProfile,
   calculateProfileCompletion,
   parseLocation,
+  formatMoreAboutMe,
 } from '../services/user.service';
 import {
   moderationService,
@@ -224,6 +225,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     } catch {}
 
     // 7. Structured Profile Object (only requested fields, no redundant data)
+    const moreAboutMe = formatMoreAboutMe(user);
+
     const profileData = {
       id: user.id,
       displayName,
@@ -239,12 +242,28 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       photos: formattedPhotos,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
+      // More about me direct fields
+      drinking: user.drinking || null,
+      education: user.education || null,
+      height: user.height || null,
+      religion: user.religion || null,
+      sexuality: user.sexuality || null,
+      smoking: user.smoking || null,
+      weight: user.weight || null,
+      eyeColor: user.eyeColor || null,
+      eyecolor: user.eyeColor || null,
+      hairColor: user.hairColor || null,
+      haircolor: user.hairColor || null,
+      living: user.living || null,
+      relationship: user.relationship || null,
+      moreAboutMe,
     };
 
     // 8. Clean response payload with no internal or redundant data
     const profileResponse = {
       id: user.id,
       profile: profileData,
+      moreAboutMe,
       interests: formattedInterests,
       moments: permanentMoments,
       voiceIntro,
@@ -405,5 +424,46 @@ export const deleteUser = async (req: Request, res: Response) => {
     return sendSuccess(res, 'User deleted successfully');
   } catch (error: any) {
     return sendError(res, error.message || 'Error deleting user', 500);
+  }
+};
+
+/**
+ * Controller to get authenticated user's More About Me details
+ * GET /api/v1/users/more-about-me
+ */
+export const getMoreAboutMeHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return sendError(res, 'User not found', 404);
+    }
+    const moreAboutMe = formatMoreAboutMe(user);
+    return sendSuccess(res, 'More about me retrieved successfully', moreAboutMe);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error fetching more about me', 500);
+  }
+};
+
+/**
+ * Controller to update authenticated user's More About Me details
+ * PATCH /api/v1/users/more-about-me (and PUT /api/v1/users/more-about-me)
+ */
+export const updateMoreAboutMeHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+    const updatedUser = await updateUserProfile(userId, req.body);
+    return sendSuccess(res, 'More about me updated successfully', updatedUser.moreAboutMe);
+  } catch (error: any) {
+    if (error instanceof ServiceError) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return sendError(res, error.message || 'Error updating more about me', 500);
   }
 };

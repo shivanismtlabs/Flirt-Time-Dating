@@ -78,6 +78,40 @@ export const updateProfileSchema = z.object({
       .max(500, 'About text must not exceed 500 characters')
       .optional()
       .nullable(),
+    // More About Me fields
+    drinking: z.string().trim().max(100).optional().nullable(),
+    education: z.string().trim().max(100).optional().nullable(),
+    height: z.string().trim().max(50).optional().nullable(),
+    religion: z.string().trim().max(50).optional().nullable(),
+    sexuality: z.string().trim().max(50).optional().nullable(),
+    smoking: z.string().trim().max(50).optional().nullable(),
+    weight: z.string().trim().max(50).optional().nullable(),
+    eyeColor: z.string().trim().max(50).optional().nullable(),
+    eyecolor: z.string().trim().max(50).optional().nullable(),
+    hairColor: z.string().trim().max(50).optional().nullable(),
+    haircolor: z.string().trim().max(50).optional().nullable(),
+    living: z.string().trim().max(100).optional().nullable(),
+    relationship: z.string().trim().max(50).optional().nullable(),
+    moreAboutMe: z.record(z.any()).optional().nullable(),
+  }),
+});
+
+export const updateMoreAboutMeSchema = z.object({
+  body: z.object({
+    drinking: z.string().trim().max(100).optional().nullable(),
+    education: z.string().trim().max(100).optional().nullable(),
+    height: z.string().trim().max(50).optional().nullable(),
+    religion: z.string().trim().max(50).optional().nullable(),
+    sexuality: z.string().trim().max(50).optional().nullable(),
+    smoking: z.string().trim().max(50).optional().nullable(),
+    weight: z.string().trim().max(50).optional().nullable(),
+    eyeColor: z.string().trim().max(50).optional().nullable(),
+    eyecolor: z.string().trim().max(50).optional().nullable(),
+    hairColor: z.string().trim().max(50).optional().nullable(),
+    haircolor: z.string().trim().max(50).optional().nullable(),
+    living: z.string().trim().max(100).optional().nullable(),
+    relationship: z.string().trim().max(50).optional().nullable(),
+    moreAboutMe: z.record(z.any()).optional().nullable(),
   }),
 });
 

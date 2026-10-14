@@ -24,6 +24,16 @@ export interface UserAttributes {
   lookingFor?: string | null;
   genderPreference?: string | null;
   religion?: string | null;
+  drinking?: string | null;
+  education?: string | null;
+  height?: string | null;
+  sexuality?: string | null;
+  smoking?: string | null;
+  weight?: string | null;
+  eyeColor?: string | null;
+  hairColor?: string | null;
+  living?: string | null;
+  relationship?: string | null;
   city?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -59,6 +69,16 @@ export interface UserCreationAttributes
     | 'lookingFor'
     | 'genderPreference'
     | 'religion'
+    | 'drinking'
+    | 'education'
+    | 'height'
+    | 'sexuality'
+    | 'smoking'
+    | 'weight'
+    | 'eyeColor'
+    | 'hairColor'
+    | 'living'
+    | 'relationship'
     | 'city'
     | 'latitude'
     | 'longitude'
@@ -91,6 +111,16 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public lookingFor: string | null;
   declare public genderPreference: string | null;
   declare public religion: string | null;
+  declare public drinking: string | null;
+  declare public education: string | null;
+  declare public height: string | null;
+  declare public sexuality: string | null;
+  declare public smoking: string | null;
+  declare public weight: string | null;
+  declare public eyeColor: string | null;
+  declare public hairColor: string | null;
+  declare public living: string | null;
+  declare public relationship: string | null;
   declare public city: string | null;
   declare public latitude: number | null;
   declare public longitude: number | null;
@@ -217,6 +247,46 @@ User.init(
       allowNull: true,
     },
     religion: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    drinking: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    education: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    height: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    sexuality: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    smoking: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    weight: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    eyeColor: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    hairColor: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    living: {
+      type: DataTypes.STRING(100),
+      allowNull: true,
+    },
+    relationship: {
       type: DataTypes.STRING(50),
       allowNull: true,
     },

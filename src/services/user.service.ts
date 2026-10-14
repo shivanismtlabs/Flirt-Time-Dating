@@ -1,12 +1,64 @@
 import { User } from '../models/user.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 
+export interface MoreAboutMeItem {
+  key: string;
+  label: string;
+  icon: string;
+  value: string | null;
+}
+
+export interface MoreAboutMeDTO {
+  drinking: string | null;
+  education: string | null;
+  height: string | null;
+  religion: string | null;
+  sexuality: string | null;
+  smoking: string | null;
+  weight: string | null;
+  eyeColor: string | null;
+  eyecolor?: string | null;
+  hairColor: string | null;
+  haircolor?: string | null;
+  living: string | null;
+  relationship: string | null;
+  items: MoreAboutMeItem[];
+}
+
 export interface UpdateProfileInput {
-  fullName: string;
-  nickName: string;
-  dateOfBirth: string;
-  gender: string;
+  fullName?: string;
+  nickName?: string;
+  dateOfBirth?: string;
+  gender?: string;
   about?: string | null;
+  drinking?: string | null;
+  education?: string | null;
+  height?: string | null;
+  religion?: string | null;
+  sexuality?: string | null;
+  smoking?: string | null;
+  weight?: string | null;
+  eyeColor?: string | null;
+  eyecolor?: string | null;
+  hairColor?: string | null;
+  haircolor?: string | null;
+  living?: string | null;
+  relationship?: string | null;
+  moreAboutMe?: {
+    drinking?: string | null;
+    education?: string | null;
+    height?: string | null;
+    religion?: string | null;
+    sexuality?: string | null;
+    smoking?: string | null;
+    weight?: string | null;
+    eyeColor?: string | null;
+    eyecolor?: string | null;
+    hairColor?: string | null;
+    haircolor?: string | null;
+    living?: string | null;
+    relationship?: string | null;
+  };
 }
 
 export class ServiceError extends Error {
@@ -18,6 +70,63 @@ export class ServiceError extends Error {
     Object.setPrototypeOf(this, ServiceError.prototype);
   }
 }
+
+export const formatMoreAboutMe = (user: {
+  drinking?: string | null;
+  education?: string | null;
+  height?: string | null;
+  religion?: string | null;
+  sexuality?: string | null;
+  smoking?: string | null;
+  weight?: string | null;
+  eyeColor?: string | null;
+  hairColor?: string | null;
+  living?: string | null;
+  relationship?: string | null;
+}): MoreAboutMeDTO => {
+  const drinking = user.drinking || null;
+  const education = user.education || null;
+  const height = user.height || null;
+  const religion = user.religion || null;
+  const sexuality = user.sexuality || null;
+  const smoking = user.smoking || null;
+  const weight = user.weight || null;
+  const eyeColor = user.eyeColor || null;
+  const hairColor = user.hairColor || null;
+  const living = user.living || null;
+  const relationship = user.relationship || null;
+
+  const items: MoreAboutMeItem[] = [
+    { key: 'drinking', label: 'Drinking', icon: '🍷', value: drinking },
+    { key: 'education', label: 'Education', icon: '📖', value: education },
+    { key: 'height', label: 'Height', icon: '📏', value: height },
+    { key: 'religion', label: 'Religion', icon: '🛕', value: religion },
+    { key: 'sexuality', label: 'Sexuality', icon: '⚧', value: sexuality },
+    { key: 'smoking', label: 'Smoking', icon: '🚬', value: smoking },
+    { key: 'weight', label: 'Weight', icon: '⚖️', value: weight },
+    { key: 'eyeColor', label: 'Eyecolor', icon: '👁', value: eyeColor },
+    { key: 'hairColor', label: 'Haircolor', icon: '💇', value: hairColor },
+    { key: 'living', label: 'Living', icon: '🏠', value: living },
+    { key: 'relationship', label: 'Relationship', icon: '👩‍❤️‍👨', value: relationship },
+  ];
+
+  return {
+    drinking,
+    education,
+    height,
+    religion,
+    sexuality,
+    smoking,
+    weight,
+    eyeColor,
+    eyecolor: eyeColor,
+    hairColor,
+    haircolor: hairColor,
+    living,
+    relationship,
+    items,
+  };
+};
 
 /**
  * Updates user profile details for the onboarding process.
@@ -38,32 +147,89 @@ export const updateUserProfile = async (
   }
 
   // 1. Enforce Date of Birth Immutability
-  if (user.dateOfBirth && user.dateOfBirth !== data.dateOfBirth) {
+  if (data.dateOfBirth && user.dateOfBirth && user.dateOfBirth !== data.dateOfBirth) {
     throw new ServiceError('Date of birth cannot be changed once set', 400);
   }
 
   // 2. Enforce Gender Immutability
-  const normalizedIncomingGender = data.gender.toLowerCase();
-  if (user.gender && user.gender.toLowerCase() !== normalizedIncomingGender) {
+  const normalizedIncomingGender = data.gender ? data.gender.toLowerCase() : null;
+  if (normalizedIncomingGender && user.gender && user.gender.toLowerCase() !== normalizedIncomingGender) {
     throw new ServiceError('Gender cannot be changed once set', 400);
   }
 
   // 3. Update profile fields
-  user.fullName = data.fullName.trim();
-  user.nickName = data.nickName.trim();
+  if (data.fullName !== undefined) {
+    user.fullName = data.fullName.trim();
+  }
+  if (data.nickName !== undefined) {
+    user.nickName = data.nickName.trim();
+  }
 
-  if (!user.dateOfBirth) {
+  if (data.dateOfBirth && !user.dateOfBirth) {
     user.dateOfBirth = data.dateOfBirth;
   }
 
-  if (!user.gender) {
+  if (normalizedIncomingGender && !user.gender) {
     user.gender = normalizedIncomingGender;
   }
 
-  user.about = data.about ? data.about.trim() : null;
+  if (data.about !== undefined) {
+    user.about = data.about ? data.about.trim() : null;
+  }
+
+  // 4. Update More About Me fields (direct or from data.moreAboutMe)
+  const moreSource = data.moreAboutMe || {};
+  if (data.drinking !== undefined || moreSource.drinking !== undefined) {
+    user.drinking = data.drinking !== undefined ? data.drinking : moreSource.drinking || null;
+  }
+  if (data.education !== undefined || moreSource.education !== undefined) {
+    user.education = data.education !== undefined ? data.education : moreSource.education || null;
+  }
+  if (data.height !== undefined || moreSource.height !== undefined) {
+    user.height = data.height !== undefined ? data.height : moreSource.height || null;
+  }
+  if (data.religion !== undefined || moreSource.religion !== undefined) {
+    user.religion = data.religion !== undefined ? data.religion : moreSource.religion || null;
+  }
+  if (data.sexuality !== undefined || moreSource.sexuality !== undefined) {
+    user.sexuality = data.sexuality !== undefined ? data.sexuality : moreSource.sexuality || null;
+  }
+  if (data.smoking !== undefined || moreSource.smoking !== undefined) {
+    user.smoking = data.smoking !== undefined ? data.smoking : moreSource.smoking || null;
+  }
+  if (data.weight !== undefined || moreSource.weight !== undefined) {
+    user.weight = data.weight !== undefined ? data.weight : moreSource.weight || null;
+  }
+  if (
+    data.eyeColor !== undefined ||
+    data.eyecolor !== undefined ||
+    moreSource.eyeColor !== undefined ||
+    moreSource.eyecolor !== undefined
+  ) {
+    user.eyeColor =
+      data.eyeColor ?? data.eyecolor ?? moreSource.eyeColor ?? moreSource.eyecolor ?? null;
+  }
+  if (
+    data.hairColor !== undefined ||
+    data.haircolor !== undefined ||
+    moreSource.hairColor !== undefined ||
+    moreSource.haircolor !== undefined
+  ) {
+    user.hairColor =
+      data.hairColor ?? data.haircolor ?? moreSource.hairColor ?? moreSource.haircolor ?? null;
+  }
+  if (data.living !== undefined || moreSource.living !== undefined) {
+    user.living = data.living !== undefined ? data.living : moreSource.living || null;
+  }
+  if (data.relationship !== undefined || moreSource.relationship !== undefined) {
+    user.relationship = data.relationship !== undefined ? data.relationship : moreSource.relationship || null;
+  }
+
   user.isProfileComplete = true;
 
   await user.save();
+
+  const moreAboutMe = formatMoreAboutMe(user);
 
   return {
     id: user.id,
@@ -75,6 +241,20 @@ export const updateUserProfile = async (
     dateOfBirth: user.dateOfBirth,
     gender: user.gender,
     about: user.about,
+    drinking: user.drinking,
+    education: user.education,
+    height: user.height,
+    religion: user.religion,
+    sexuality: user.sexuality,
+    smoking: user.smoking,
+    weight: user.weight,
+    eyeColor: user.eyeColor,
+    eyecolor: user.eyeColor,
+    hairColor: user.hairColor,
+    haircolor: user.hairColor,
+    living: user.living,
+    relationship: user.relationship,
+    moreAboutMe,
     isProfileComplete: user.isProfileComplete,
     role: user.role,
     isActive: user.isActive,
@@ -93,6 +273,20 @@ export interface OtherUserProfileResponse {
   city: string;
   distanceKm: number | null;
   bio: string | null;
+  drinking?: string | null;
+  education?: string | null;
+  height?: string | null;
+  religion?: string | null;
+  sexuality?: string | null;
+  smoking?: string | null;
+  weight?: string | null;
+  eyeColor?: string | null;
+  eyecolor?: string | null;
+  hairColor?: string | null;
+  haircolor?: string | null;
+  living?: string | null;
+  relationship?: string | null;
+  moreAboutMe?: MoreAboutMeDTO;
   vibeScore: number | null;
   vibeExplanation: {
     text: string;
@@ -379,6 +573,20 @@ export const getOtherUserProfile = async (
     city: targetUser.city || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
+    drinking: targetUser.drinking || null,
+    education: targetUser.education || null,
+    height: targetUser.height || null,
+    religion: targetUser.religion || null,
+    sexuality: targetUser.sexuality || null,
+    smoking: targetUser.smoking || null,
+    weight: targetUser.weight || null,
+    eyeColor: targetUser.eyeColor || null,
+    eyecolor: targetUser.eyeColor || null,
+    hairColor: targetUser.hairColor || null,
+    haircolor: targetUser.hairColor || null,
+    living: targetUser.living || null,
+    relationship: targetUser.relationship || null,
+    moreAboutMe: formatMoreAboutMe(targetUser),
     vibeScore,
     vibeExplanation,
     voiceIntro,

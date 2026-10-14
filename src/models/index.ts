@@ -587,6 +587,46 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "users" ADD COLUMN "religion" VARCHAR(50);
               END IF;
 
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'drinking') THEN
+                ALTER TABLE "users" ADD COLUMN "drinking" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'education') THEN
+                ALTER TABLE "users" ADD COLUMN "education" VARCHAR(100);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'height') THEN
+                ALTER TABLE "users" ADD COLUMN "height" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'sexuality') THEN
+                ALTER TABLE "users" ADD COLUMN "sexuality" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'smoking') THEN
+                ALTER TABLE "users" ADD COLUMN "smoking" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'weight') THEN
+                ALTER TABLE "users" ADD COLUMN "weight" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'eyeColor') THEN
+                ALTER TABLE "users" ADD COLUMN "eyeColor" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hairColor') THEN
+                ALTER TABLE "users" ADD COLUMN "hairColor" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'living') THEN
+                ALTER TABLE "users" ADD COLUMN "living" VARCHAR(100);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'relationship') THEN
+                ALTER TABLE "users" ADD COLUMN "relationship" VARCHAR(50);
+              END IF;
+
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'city') THEN
                 ALTER TABLE "users" ADD COLUMN "city" VARCHAR(100) DEFAULT 'Mumbai';
               END IF;

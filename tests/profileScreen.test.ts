@@ -248,6 +248,16 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.quickMoments).toBeDefined();
       expect(Array.isArray(data.quickMoments.items)).toBe(true);
       expect(data.quickMoments.canAdd).toBe(true);
+
+      // More About Me
+      expect(data.moreAboutMe).toBeDefined();
+      expect(data.profile.moreAboutMe).toBeDefined();
+      expect(Array.isArray(data.moreAboutMe.items)).toBe(true);
+      expect(data.moreAboutMe.items.length).toBe(11);
+      const drinkingItem = data.moreAboutMe.items.find((i: any) => i.key === 'drinking');
+      expect(drinkingItem).toBeDefined();
+      expect(drinkingItem.label).toBe('Drinking');
+      expect(drinkingItem.icon).toBe('🍷');
     });
   });
 
@@ -683,6 +693,60 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(res.status).toBe(403);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toMatch(/not authorized to use this image key/i);
+    });
+
+    it('should support updating More About Me details via PATCH /api/v1/users/profile', async () => {
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${primaryToken}`)
+        .send({
+          fullName: 'Alex Turner',
+          nickName: 'AlexT',
+          dateOfBirth: '1998-05-15',
+          gender: 'male',
+          drinking: 'Social Drinker',
+          education: "Bachelor's",
+          height: '5.9 Feet',
+          religion: 'Hindu',
+          sexuality: 'Straight',
+          smoking: 'No',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.drinking).toBe('Social Drinker');
+      expect(res.body.data.education).toBe("Bachelor's");
+      expect(res.body.data.height).toBe('5.9 Feet');
+      expect(res.body.data.religion).toBe('Hindu');
+      expect(res.body.data.moreAboutMe.drinking).toBe('Social Drinker');
+    });
+
+    it('should support getting and updating More About Me via dedicated /api/v1/users/more-about-me endpoint', async () => {
+      const patchRes = await request(app)
+        .patch('/api/v1/users/more-about-me')
+        .set('Authorization', `Bearer ${primaryToken}`)
+        .send({
+          drinking: 'Social Drinker',
+          education: 'Master Degree',
+          weight: '70 kg',
+          eyeColor: 'Brown',
+        });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.success).toBe(true);
+      expect(patchRes.body.data.drinking).toBe('Social Drinker');
+      expect(patchRes.body.data.education).toBe('Master Degree');
+      expect(patchRes.body.data.weight).toBe('70 kg');
+      expect(patchRes.body.data.eyeColor).toBe('Brown');
+
+      const getRes = await request(app)
+        .get('/api/v1/users/more-about-me')
+        .set('Authorization', `Bearer ${primaryToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.data.drinking).toBe('Social Drinker');
+      expect(getRes.body.data.education).toBe('Master Degree');
+      expect(getRes.body.data.items.find((i: any) => i.key === 'drinking').value).toBe('Social Drinker');
     });
   });
 });

@@ -4101,6 +4101,478 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "Interactions (Likes, You Liked, Matches, Compliments)",
+      "item": [
+        {
+          "name": "Get Interactions - Likes Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=likes&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "likes",
+                  "description": "Tab type: likes, you_liked, matches, or compliments"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch incoming likes who swiped right on current user. Excludes blocked users, inactive accounts, mutual matches, and users current user already acted upon. Returns standardized user cards."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - You Liked Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=you_liked&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "you_liked",
+                  "description": "Tab type: you_liked"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch outgoing likes sent by current user, indicating whether they have converted into mutual matches."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - Matches Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=matches&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "matches",
+                  "description": "Tab type: matches"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch mutual active matches with counterpart profile data, distance, age, and match timestamp."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - Compliments Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=compliments&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "compliments",
+                  "description": "Tab type: compliments"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch received connection requests / compliments with category badge (Love their vibe, Liked their Moment, etc.), message text, moment preview, and read state."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions Badge Counts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions",
+                "counts"
+              ]
+            },
+            "description": "Real-time badge counts for all 4 tabs: likes, youLiked, matches, compliments, and total unread/actionable items."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Interaction Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions/:interactionId/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions",
+                ":interactionId",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "interactionId",
+                  "value": "<INTERACTION_UUID>",
+                  "description": "UUID of the interaction / compliment to mark as read"
+                }
+              ]
+            },
+            "description": "Marks a received interaction/compliment as read. Recipient authorization is strictly enforced."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications & Device Registration",
+      "item": [
+        {
+          "name": "Register Device Token (FCM)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\",\n  \"platform\": \"android\",\n  \"appVersion\": \"1.0.0\",\n  \"deviceModel\": \"Pixel 7\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "devices",
+                "register"
+              ]
+            },
+            "description": "Registers an FCM device token for push notifications. Handles token rotation/reassignment gracefully."
+          },
+          "response": []
+        },
+        {
+          "name": "Unregister Device Token",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/unregister",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "devices",
+                "unregister"
+              ]
+            },
+            "description": "Deactivates an FCM device token upon user logout."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Notifications (Date Grouped)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?limit=20&tz=Asia/Kolkata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Number of notifications to fetch (1-50, default 20)"
+                },
+                {
+                  "key": "tz",
+                  "value": "Asia/Kolkata",
+                  "description": "IANA timezone for calendar-accurate Today, Yesterday, Earlier grouping"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Base64url cursor for keyset pagination"
+                }
+              ]
+            },
+            "description": "Returns notifications grouped into Today, Yesterday, and Earlier sections, with unread badge count and pagination metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Notifications Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "counts"
+              ]
+            },
+            "description": "Returns unread count for top app bar / tab bar badge."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_UUID>",
+                  "description": "UUID of notification"
+                }
+              ]
+            },
+            "description": "Marks a single notification as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Marks all unread notifications of the user as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Notification",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_UUID>",
+                  "description": "UUID of notification to delete"
+                }
+              ]
+            },
+            "description": "Permanently deletes a notification belonging to the authenticated user."
+          },
+          "response": []
+        }
+      ]
     }
   ]
 }

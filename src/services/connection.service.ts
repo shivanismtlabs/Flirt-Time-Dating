@@ -202,6 +202,37 @@ export class ConnectionService {
           }
         );
 
+        // Also notify both users of the mutual match
+        try {
+          const targetUserDisplayName =
+            targetUser.nickName ||
+            targetUser.firstName ||
+            targetUser.fullName ||
+            'Someone';
+
+          await notificationService.dispatchNotification(targetUserId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${requesterName} connected! Say hi!`,
+            senderId: requesterId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: requesterName },
+          });
+
+          await notificationService.dispatchNotification(requesterId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${targetUserDisplayName} connected! Say hi!`,
+            senderId: targetUserId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: targetUserDisplayName },
+          });
+        } catch (_mErr) {
+          // Safe to ignore
+        }
+
         return {
           requestId: reversePendingRequest.id,
           targetUserId,

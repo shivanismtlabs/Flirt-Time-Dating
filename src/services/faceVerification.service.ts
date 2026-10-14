@@ -404,6 +404,32 @@ export class FaceVerificationService {
         return createdRecord;
       });
 
+      // Dispatch verification notification post-commit
+      try {
+        const { notificationService } = await import('./notification.service');
+        if (finalStatus === 'approved') {
+          await notificationService.dispatchNotification(user.id, {
+            type: 'profile_verified',
+            title: 'Profile Verified! ✅',
+            body: 'Congratulations, your selfie verification was approved! You now have a verified badge.',
+            entityId: record.id,
+            navigation: { type: 'profile_verified', targetId: record.id },
+            data: { status: 'approved', verificationId: record.id },
+          });
+        } else if (finalStatus === 'rejected') {
+          await notificationService.dispatchNotification(user.id, {
+            type: 'profile_verified',
+            title: 'Verification Failed',
+            body: `Your face verification was not approved: ${finalReasonMessage}`,
+            entityId: record.id,
+            navigation: { type: 'profile_verified', targetId: record.id },
+            data: { status: 'rejected', verificationId: record.id, reason: finalReasonMessage },
+          });
+        }
+      } catch (_vNotifErr) {
+        // Safe to ignore
+      }
+
       return {
         verificationId: record.id,
         status: finalStatus,

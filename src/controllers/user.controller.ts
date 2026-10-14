@@ -173,7 +173,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       voiceIntro = {
         id: `voice-${user.id}`,
         playbackUrl: formatMediaUrl(user.voicePromptUrl),
-        duration: user.voicePromptDuration || 30,
+        duration: user.voicePromptDuration ?? 30,
+        durationSeconds: user.voicePromptDuration ?? 30,
         status: 'ready',
       };
     }

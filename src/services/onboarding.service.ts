@@ -6,6 +6,7 @@ import {
   formatThumbnailUrl,
   extractS3Key,
 } from './s3.service';
+import { extractAudioDuration } from '../utils/audioDuration';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -496,6 +497,14 @@ export class OnboardingService {
   ) {
     const user = await this.getUserOrThrow(userId);
 
+    // If duration was not provided in request or is non-positive, extract from audio buffer
+    if (durationSeconds === undefined || durationSeconds <= 0) {
+      const extracted = extractAudioDuration(buffer, mimeType);
+      if (extracted !== null && extracted > 0) {
+        durationSeconds = extracted;
+      }
+    }
+
     if (durationSeconds !== undefined && durationSeconds > OnboardingService.MAX_AUDIO_DURATION_SECONDS) {
       throw new OnboardingServiceError(
         `Voice recording duration cannot exceed ${OnboardingService.MAX_AUDIO_DURATION_SECONDS} seconds`,
@@ -512,12 +521,13 @@ export class OnboardingService {
     const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'voice_prompts');
 
     user.voicePromptUrl = s3Key;
-    user.voicePromptDuration = durationSeconds || 30; // default 30s if not specified
+    user.voicePromptDuration = (durationSeconds && durationSeconds > 0) ? durationSeconds : 30;
     await user.save();
 
     return {
       voicePromptUrl: user.voicePromptUrl,
       durationSeconds: user.voicePromptDuration,
+      duration: user.voicePromptDuration,
     };
   }
 
@@ -526,6 +536,7 @@ export class OnboardingService {
     return {
       voicePromptUrl: user.voicePromptUrl || null,
       durationSeconds: user.voicePromptDuration || null,
+      duration: user.voicePromptDuration || null,
     };
   }
 

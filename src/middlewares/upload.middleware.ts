@@ -122,6 +122,7 @@ export const handleUploadPhoto = (req: Request, res: Response, next: NextFunctio
 const allowedAudioMimeTypes = [
   'audio/mpeg',
   'audio/mp3',
+  'audio/mp4',
   'audio/m4a',
   'audio/x-m4a',
   'audio/wav',
@@ -130,6 +131,7 @@ const allowedAudioMimeTypes = [
   'audio/ogg',
   'audio/webm',
   'video/webm',
+  'video/mp4',
 ];
 
 export const uploadAudio = multer({
@@ -139,7 +141,11 @@ export const uploadAudio = multer({
     files: 1,
   },
   fileFilter: (_req, file, cb) => {
-    if (allowedAudioMimeTypes.includes(file.mimetype.toLowerCase())) {
+    const mime = file.mimetype.toLowerCase();
+    const isAllowedMime = allowedAudioMimeTypes.includes(mime);
+    const hasAudioExt = /\.(mp3|m4a|wav|aac|ogg|webm|mp4)$/i.test(file.originalname);
+
+    if (isAllowedMime || hasAudioExt) {
       cb(null, true);
     } else {
       cb(new Error(`Unsupported audio format (${file.mimetype}). Please upload an MP3, M4A, WAV, AAC, or OGG recording.`));

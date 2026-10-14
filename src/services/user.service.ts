@@ -295,6 +295,7 @@ export interface OtherUserProfileResponse {
   voiceIntro: {
     url: string;
     durationSeconds: number | null;
+    duration?: number | null;
   } | null;
   moments: Array<{
     id?: string;
@@ -465,11 +466,12 @@ export const getOtherUserProfile = async (
   }
 
   // 6. Voice intro
-  let voiceIntro: { url: string; durationSeconds: number | null } | null = null;
+  let voiceIntro: { url: string; durationSeconds: number | null; duration: number | null } | null = null;
   if (targetUser.voicePromptUrl) {
     voiceIntro = {
       url: targetUser.voicePromptUrl,
       durationSeconds: targetUser.voicePromptDuration ?? null,
+      duration: targetUser.voicePromptDuration ?? null,
     };
   }
 

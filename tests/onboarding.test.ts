@@ -210,6 +210,31 @@ describe('Onboarding Preference & Media APIs', () => {
   });
 
   describe('6. Voice Prompt Audio & Onboarding Progress', () => {
+    it('should save duration: 5 when client sends duration: "5"', async () => {
+      const audioBuffer = Buffer.from('fake-audio-recording-bytes');
+
+      const res = await request(app)
+        .post('/api/v1/onboarding/audio')
+        .set('Authorization', `Bearer ${authToken}`)
+        .field('duration', '5')
+        .attach('audio', audioBuffer, 'voice_intro.m4a');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.voicePromptUrl).toBeDefined();
+      expect(res.body.data.durationSeconds).toBe(5);
+      expect(res.body.data.duration).toBe(5);
+
+      // Verify GET /api/v1/onboarding/audio also returns 5
+      const getRes = await request(app)
+        .get('/api/v1/onboarding/audio')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.data.durationSeconds).toBe(5);
+      expect(getRes.body.data.duration).toBe(5);
+    });
+
     it('should upload voice prompt recording and enforce duration limits', async () => {
       const audioBuffer = Buffer.from('fake-audio-recording-bytes');
 
@@ -222,6 +247,28 @@ describe('Onboarding Preference & Media APIs', () => {
       expect(res.status).toBe(201);
       expect(res.body.data.voicePromptUrl).toBeDefined();
       expect(res.body.data.durationSeconds).toBe(30);
+      expect(res.body.data.duration).toBe(30);
+    });
+
+    it('should calculate duration directly from M4A audio file when duration parameter is not sent', async () => {
+      // Construct a valid minimal ISO Media (M4A) buffer with mvhd atom indicating 8 seconds
+      const m4aBuf = Buffer.alloc(120);
+      m4aBuf.writeUInt32BE(120, 0); // boxSize
+      m4aBuf.write('moov', 4);
+      m4aBuf.writeUInt32BE(60, 8); // mvhd size
+      m4aBuf.write('mvhd', 12);
+      m4aBuf.writeUInt8(0, 16); // version 0
+      m4aBuf.writeUInt32BE(1000, 28); // timescale = 1000 Hz
+      m4aBuf.writeUInt32BE(8000, 32); // duration = 8000 -> 8 seconds
+
+      const res = await request(app)
+        .post('/api/v1/onboarding/audio')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('audio', m4aBuf, 'voice_intro.m4a');
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.durationSeconds).toBe(8);
+      expect(res.body.data.duration).toBe(8);
     });
 
     it('should compute onboarding progress accurately', async () => {

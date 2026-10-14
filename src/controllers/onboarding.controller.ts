@@ -233,7 +233,22 @@ export const uploadAudio = async (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 'No audio file provided. Attach recording in "audio" or "voicePrompt" field', 400, 'MISSING_FILE');
     }
 
-    const durationSeconds = req.body?.durationSeconds ? parseInt(req.body.durationSeconds, 10) : undefined;
+    // Support 'duration', 'durationSeconds', 'duration_seconds', 'audioDuration'
+    const rawDuration =
+      req.body?.duration ??
+      req.body?.durationSeconds ??
+      req.body?.duration_seconds ??
+      req.body?.audioDuration ??
+      req.body?.voiceDuration;
+
+    let durationSeconds: number | undefined = undefined;
+    if (rawDuration !== undefined && rawDuration !== null && String(rawDuration).trim() !== '') {
+      const num = parseFloat(String(rawDuration));
+      if (!isNaN(num) && num > 0) {
+        durationSeconds = Math.round(num);
+      }
+    }
+
     const result = await onboardingService.uploadAudio(userId, audioFile.buffer, audioFile.mimetype, durationSeconds);
     return sendSuccess(res, 'Voice prompt uploaded successfully', result, 201);
   } catch (err: any) {

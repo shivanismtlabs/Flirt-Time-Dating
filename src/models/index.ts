@@ -784,6 +784,14 @@ export const initDb = async (force = false): Promise<void> => {
       console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
     }
 
+    // Seed 10 production coin packages idempotently
+    try {
+      const { seedCoinPackages } = await import('../services/seedCoinPackage.service');
+      await seedCoinPackages(false);
+    } catch (coinSeedErr: any) {
+      console.warn('⚠️ Could not seed coin packages:', coinSeedErr.message);
+    }
+
     console.log('✅ Database models synchronized successfully.');
   } catch (error) {
     console.error('❌ Error synchronizing database models:', error);

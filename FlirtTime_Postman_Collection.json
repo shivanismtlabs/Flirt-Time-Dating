@@ -426,6 +426,123 @@
             },
             "description": "Retrieves the authenticated user's profile details including profile image."
           },
+          "response": [
+            {
+              "name": "200 OK - Profile Screen Fetched Successfully (Clean)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/profile",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    "profile"
+                  ]
+                },
+                "description": "Retrieves the authenticated user's profile details including profile image."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Profile fetched successfully\",\n  \"data\": {\n    \"id\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"profile\": {\n      \"id\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n      \"displayName\": \"Alex\",\n      \"firstName\": \"Alex\",\n      \"lastName\": \"Turner\",\n      \"dateOfBirth\": \"1998-05-15\",\n      \"age\": 28,\n      \"gender\": \"male\",\n      \"bio\": \"Lead vocalist, music producer, and weekend explorer.\",\n      \"location\": {\n        \"city\": \"Indore\",\n        \"state\": \"Madhya Pradesh\"\n      },\n      \"profilePhoto\": {\n        \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_primary.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_primary.jpg\"\n      },\n      \"coverPhoto\": {\n        \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_cover.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_cover.jpg\"\n      },\n      \"photos\": [\n        {\n          \"id\": \"c138fd90-1c52-4753-b09e-7164ec397451\",\n          \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_primary.jpg\",\n          \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_primary.jpg\",\n          \"isPrimary\": true,\n          \"displayOrder\": 1\n        }\n      ],\n      \"isVerified\": true,\n      \"completionPercentage\": 100\n    },\n    \"interests\": [\n      {\n        \"id\": \"a12bc34d-e56f-789a-bcde-f0123456789a\",\n        \"name\": \"Art & Design\",\n        \"icon\": \"🎨\",\n        \"displayOrder\": 1\n      },\n      {\n        \"id\": \"b23cd45e-f67a-890b-cdef-0123456789ab\",\n        \"name\": \"Indie Rock\",\n        \"icon\": \"🎸\",\n        \"displayOrder\": 2\n      }\n    ],\n    \"moments\": [\n      {\n        \"id\": \"d45ef67a-890b-cdef-0123-456789abcdef\",\n        \"caption\": \"Live performance in Mumbai!\",\n        \"createdAt\": \"2026-10-14T08:30:00.000Z\",\n        \"firstImageUrl\": \"https://flirttime-media.s3.amazonaws.com/moments/live1.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/moments/live1.jpg\",\n        \"imageCount\": 1,\n        \"likeCount\": 142,\n        \"commentCount\": 18,\n        \"isLiked\": false,\n        \"hasMultipleImages\": false\n      }\n    ],\n    \"voiceIntro\": {\n      \"id\": \"voice-e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n      \"playbackUrl\": \"https://flirttime-media.s3.amazonaws.com/voice_prompts/alex_intro.mp3\",\n      \"duration\": 24,\n      \"status\": \"ready\"\n    },\n    \"quickMoments\": {\n      \"items\": [],\n      \"canAdd\": true\n    }\n  }\n}"
+            }
+          ],
+          "description": "Retrieves the currently authenticated user complete Profile screen details including: profile (name, calculated age, bio, city/state, completion %, verified badge, primary and cover photos), selected interests, max 4 permanent moments, voice intro, and 24h quick moments tray summary."
+        },
+        {
+          "name": "Upload Profile Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageKey\": \"photos/{{userId}}/new_primary_photo.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile-photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile-photo"
+              ]
+            },
+            "description": "Uploads or attaches a primary profile photo for authenticated user. Supports both JSON body with presigned S3 imageKey/imageUrl, and multipart/form-data image binary."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Moments (See All / Paginated)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/moments?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "moments"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "me",
+                  "description": "Target user ID or me for self"
+                }
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Max items per page (default: 20, max: 50)"
+                }
+              ]
+            },
+            "description": "Retrieves paginated permanent moments for any visible user or authenticated user (\"me\"). Enforces audience visibility, exclusions of deleted moments, and block rules."
+          },
           "response": []
         },
         {

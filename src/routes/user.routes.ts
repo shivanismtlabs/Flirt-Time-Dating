@@ -24,6 +24,8 @@ import { getUserMomentsHandler } from '../controllers/moment.controller';
 import { getUserMomentsSchema } from '../schemas/moment.schema';
 import { registerDeviceTokenHandler } from '../controllers/connection.controller';
 import { registerDeviceTokenSchema } from '../schemas/connection.schema';
+import { handleUploadProfilePhoto } from '../middlewares/upload.middleware';
+import { uploadProfilePhoto } from '../controllers/onboarding.controller';
 
 const router = Router();
 
@@ -38,6 +40,7 @@ router.post('/token', validate(registerDeviceTokenSchema), registerDeviceTokenHa
 // Profile Onboarding Endpoints
 router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
+router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));

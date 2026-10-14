@@ -2,12 +2,19 @@ import { Request, Response } from 'express';
 import { User } from '../models/user.model';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
-import { updateUserProfile, ServiceError, getOtherUserProfile } from '../services/user.service';
+import {
+  updateUserProfile,
+  ServiceError,
+  getOtherUserProfile,
+  calculateProfileCompletion,
+  parseLocation,
+} from '../services/user.service';
 import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
 import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
+import { calculateAge } from '../services/discovery.service';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -33,7 +40,7 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response) =>
 };
 
 /**
- * Controller to retrieve authenticated user's profile
+ * Controller to retrieve authenticated user's complete profile for Profile Screen
  * GET /api/v1/users/profile (and /api/users/profile)
  */
 export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
@@ -74,28 +81,177 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 'User not found', 404);
     }
 
-    let moments: any[] = [];
+    const rawUser = user.toJSON() as any;
+
+    // 1. Photos formatting
+    const formattedPhotos = (rawUser.photos || []).map((p: any) => ({
+      id: p.id,
+      url: formatMediaUrl(p.imageUrl),
+      thumbnailUrl: formatThumbnailUrl(p.imageUrl),
+      isPrimary: !!p.isPrimary,
+      displayOrder: p.displayOrder,
+    }));
+
+    const primaryPhotoObj =
+      (rawUser.photos || []).find((p: any) => p.isPrimary) ||
+      (rawUser.photos || [])[0];
+
+    const primaryPhotoKey =
+      rawUser.profilePicture || primaryPhotoObj?.imageUrl || null;
+
+    const primaryProfilePhoto = primaryPhotoKey
+      ? {
+          url: formatMediaUrl(primaryPhotoKey),
+          thumbnailUrl: formatThumbnailUrl(primaryPhotoKey),
+        }
+      : null;
+
+    const coverPhotoObj =
+      (rawUser.photos || []).find(
+        (p: any) => !p.isPrimary && p.imageUrl !== primaryPhotoKey
+      ) ||
+      (rawUser.photos && rawUser.photos.length > 1 ? rawUser.photos[1] : null);
+
+    const coverPhoto = coverPhotoObj
+      ? {
+          url: formatMediaUrl(coverPhotoObj.imageUrl),
+          thumbnailUrl: formatThumbnailUrl(coverPhotoObj.imageUrl),
+        }
+      : null;
+
+    // 2. Display Name, Age, Location and Profile Completion Calculation
+    const displayName =
+      user.nickName ||
+      user.firstName ||
+      (user.fullName ? user.fullName.split(' ')[0] : null) ||
+      user.username;
+
+    const age = calculateAge(user.dateOfBirth);
+    const location = parseLocation(user.city);
+    const completionPercentage = calculateProfileCompletion(
+      user,
+      (rawUser.interests || []).length,
+      (rawUser.photos || []).length
+    );
+
+    // 3. User Selected Interests
+    const formattedInterests = (rawUser.interests || []).map(
+      (interest: any, index: number) => ({
+        id: interest.id,
+        name: interest.name,
+        icon: interest.icon || null,
+        displayOrder: index + 1,
+      })
+    );
+
+    // 4. Permanent Moments: Maximum 4 permanent moments ordered by newest first
+    let permanentMoments: any[] = [];
     try {
       const myMomentsResult = await momentService.getUserMoments(userId, userId, {
-        limit: 20,
+        page: 1,
+        limit: 4,
       });
-      moments = myMomentsResult.moments || [];
+      const rawMoments = (myMomentsResult?.moments || []).slice(0, 4);
+      permanentMoments = rawMoments.map((m: any) => ({
+        id: m.id,
+        caption: m.caption || '',
+        createdAt: m.createdAt || m.publishedAt,
+        firstImageUrl: m.firstImageUrl || m.imageUrl || null,
+        thumbnailUrl: m.thumbnailUrl || null,
+        imageCount: m.imageCount || m.mediaCount || 1,
+        likeCount: m.likeCount ?? m.likesCount ?? 0,
+        commentCount: m.commentCount ?? m.commentsCount ?? 0,
+        isLiked: !!m.isLiked,
+        hasMultipleImages: (m.imageCount || m.mediaCount || 1) > 1,
+      }));
     } catch {}
 
-    const rawUser = user.toJSON() as any;
-    const profileResponse = {
-      ...rawUser,
-      profilePicture: formatMediaUrl(rawUser.profilePicture),
-      profileThumbnail: formatThumbnailUrl(rawUser.profilePicture),
-      photos: (rawUser.photos || []).map((p: any) => ({
-        ...p,
-        imageUrl: formatMediaUrl(p.imageUrl),
-        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
-      })),
-      moments,
+    // 5. Voice Intro
+    let voiceIntro: any = null;
+    if (user.voicePromptUrl) {
+      voiceIntro = {
+        id: `voice-${user.id}`,
+        playbackUrl: formatMediaUrl(user.voicePromptUrl),
+        duration: user.voicePromptDuration || 30,
+        status: 'ready',
+      };
+    }
+
+    // 6. Quick Moments: 24-hr tray summary
+    let quickMomentsSummary: any = {
+      items: [],
+      canAdd: true,
     };
 
-    return sendSuccess(res, 'Profile retrieved successfully', profileResponse);
+    try {
+      const { quickMomentService } = await import('../services/quickMoment.service');
+      const trayResult = await quickMomentService.getTray(userId);
+
+      const myStories = (trayResult.myStatus?.stories || []).map((s: any) => ({
+        id: s.id,
+        author: {
+          id: user.id,
+          name: displayName,
+          avatar: primaryProfilePhoto?.thumbnailUrl || null,
+          isVerified: !!user.isFaceVerified,
+        },
+        mediaThumbnail: s.thumbnailUrl || s.imageUrl,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt || null,
+        isViewed: true,
+        isSelf: true,
+      }));
+
+      const otherMomentsList = trayResult.otherUsers || (trayResult as any).tray || [];
+      const otherItems = otherMomentsList.map((t: any) => ({
+        id: t.firstMomentId || t.userId,
+        author: {
+          id: t.userId,
+          name: t.name,
+          avatar: t.avatar,
+          isVerified: !!t.isVerified,
+        },
+        mediaThumbnail: t.preview?.thumbnailUrl || t.preview?.imageUrl || null,
+        createdAt: t.preview?.createdAt || null,
+        isViewed: !t.hasUnread,
+        isSelf: false,
+      }));
+
+      quickMomentsSummary = {
+        items: [...myStories, ...otherItems],
+        canAdd: true,
+      };
+    } catch {}
+
+    // 7. Structured Profile Object (only requested fields, no redundant data)
+    const profileData = {
+      id: user.id,
+      displayName,
+      firstName: user.firstName || null,
+      lastName: user.lastName || null,
+      dateOfBirth: user.dateOfBirth || null,
+      age,
+      gender: user.gender || null,
+      bio: user.about || null,
+      location,
+      profilePhoto: primaryProfilePhoto,
+      coverPhoto,
+      photos: formattedPhotos,
+      isVerified: !!user.isFaceVerified,
+      completionPercentage,
+    };
+
+    // 8. Clean response payload with no internal or redundant data
+    const profileResponse = {
+      id: user.id,
+      profile: profileData,
+      interests: formattedInterests,
+      moments: permanentMoments,
+      voiceIntro,
+      quickMoments: quickMomentsSummary,
+    };
+
+    return sendSuccess(res, 'Profile fetched successfully', profileResponse);
   } catch (error: any) {
     return sendError(res, error.message || 'Error fetching profile', 500);
   }

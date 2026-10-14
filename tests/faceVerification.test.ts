@@ -233,20 +233,13 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
     });
   });
 
-  describe('8. Successful Face Match (Similarity >= 85%)', () => {
-    it('should approve verification and update user isFaceVerified = true on match', async () => {
+  describe('8. Successful Camera Selfie Verification (Valid Face & Quality)', () => {
+    it('should approve verification and update user isFaceVerified = true without comparing to profile photo', async () => {
       const validImage = await createSingleFaceImage(400, 400);
 
       jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
         faceCount: 1,
         faces: [{ confidence: 99.5, brightness: 82, sharpness: 90 }],
-      });
-
-      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
-        isMatch: true,
-        similarity: 91.5,
-        confidence: 99.5,
-        threshold: 85,
       });
 
       const res = await request(app)
@@ -258,7 +251,7 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.body.success).toBe(true);
       expect(res.body.message).toMatch(/completed successfully/i);
       expect(res.body.data.status).toBe('approved');
-      expect(res.body.data.similarity).toBe(91.5);
+      expect(res.body.data.similarity).toBe(100);
       expect(res.body.data.attemptNo).toBe(1);
       expect(res.body.data.isLatest).toBe(true);
       expect(res.body.data.liveness.status).toBe('unavailable_single_frame');
@@ -284,13 +277,6 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
         faces: [{ confidence: 99.0, brightness: 80, sharpness: 88 }],
       });
 
-      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
-        isMatch: true,
-        similarity: 88.0,
-        confidence: 99.0,
-        threshold: 85,
-      });
-
       const res = await request(app)
         .post('/api/v1/face-verification/upload')
         .set('Authorization', `Bearer ${authToken}`)
@@ -299,24 +285,17 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data.status).toBe('approved');
-      expect(res.body.data.similarity).toBe(88.0);
+      expect(res.body.data.similarity).toBe(100);
     });
   });
 
-  describe('9. Completed Face Mismatch (Similarity < 85%)', () => {
-    it('should reject verification with IDENTITY_MISMATCH when faces do not match', async () => {
+  describe('9. Facial Quality Validation in Camera Selfie', () => {
+    it('should return action_required with IMAGE_TOO_BLURRY when selfie is blurry (sharpness < 15)', async () => {
       const validImage = await createSingleFaceImage(400, 400);
 
       jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
         faceCount: 1,
-        faces: [{ confidence: 99.1, brightness: 81, sharpness: 89 }],
-      });
-
-      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
-        isMatch: false,
-        similarity: 42.0,
-        confidence: 99.1,
-        threshold: 85,
+        faces: [{ confidence: 99.1, brightness: 81, sharpness: 10 }],
       });
 
       const res = await request(app)
@@ -326,9 +305,31 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.status).toBe('rejected');
-      expect(res.body.data.rejectionReason).toBe('IDENTITY_MISMATCH');
-      expect(res.body.data.similarity).toBe(42.0);
+      expect(res.body.data.status).toBe('action_required');
+      expect(res.body.data.reasonCode).toBe('IMAGE_TOO_BLURRY');
+
+      // User must NOT be marked verified
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.isFaceVerified).toBe(false);
+    });
+
+    it('should return action_required with POOR_LIGHTING when selfie is too dark', async () => {
+      const validImage = await createSingleFaceImage(400, 400);
+
+      jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
+        faceCount: 1,
+        faces: [{ confidence: 99.1, brightness: 8, sharpness: 80 }],
+      });
+
+      const res = await request(app)
+        .post('/api/v1/gesture-upload')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('selfie_image', validImage, 'selfie.jpg');
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.status).toBe('action_required');
+      expect(res.body.data.reasonCode).toBe('POOR_LIGHTING');
 
       // User must NOT be marked verified
       const updatedUser = await User.findByPk(testUser.id);
@@ -414,29 +415,25 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
     });
   });
 
-  describe('13. Profile Image Authorization Isolation', () => {
-    it('should only compare against authenticated user profile photo, never an arbitrary input key', async () => {
+  describe('13. Profile Image Decoupled from Camera Gesture Verification', () => {
+    it('should NOT fetch or compare against user profile photo, allowing users to upload any primary profile photo', async () => {
       const validImage = await createBlankImage(300, 300);
 
       const getBufferSpy = jest.spyOn(s3Service, 'getObjectBuffer');
 
       jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
         faceCount: 1,
-        faces: [{ confidence: 99 }],
-      });
-      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
-        isMatch: true,
-        similarity: 90,
-        confidence: 99,
-        threshold: 85,
+        faces: [{ confidence: 99, brightness: 80, sharpness: 85 }],
       });
 
-      await request(app)
+      const res = await request(app)
         .post('/api/v1/gesture-upload')
         .set('Authorization', `Bearer ${authToken}`)
         .attach('selfie_image', validImage, 'selfie.jpg');
 
-      expect(getBufferSpy).toHaveBeenCalledWith(testUser.profilePicture);
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('approved');
+      expect(getBufferSpy).not.toHaveBeenCalledWith(testUser.profilePicture);
     });
   });
 
@@ -627,8 +624,8 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
     });
   });
 
-  describe('19. Fallback to UserPhoto Model', () => {
-    it('should use UserPhoto primary photo if user.profilePicture is null', async () => {
+  describe('19. Decoupling from UserPhoto Model', () => {
+    it('should approve camera selfie without fetching or comparing against UserPhoto primary photo', async () => {
       testUser.profilePicture = null;
       await testUser.save();
 
@@ -644,13 +641,7 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       const getBufferSpy = jest.spyOn(s3Service, 'getObjectBuffer');
       jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
         faceCount: 1,
-        faces: [{ confidence: 99.0 }],
-      });
-      jest.spyOn(rekognitionService, 'compareFaces').mockResolvedValueOnce({
-        isMatch: true,
-        similarity: 95.0,
-        confidence: 99.0,
-        threshold: 85,
+        faces: [{ confidence: 99.0, brightness: 80, sharpness: 85 }],
       });
 
       const res = await request(app)
@@ -660,7 +651,7 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
 
       expect(res.status).toBe(200);
       expect(res.body.data.status).toBe('approved');
-      expect(getBufferSpy).toHaveBeenCalledWith('photos/user99/primary.jpg');
+      expect(getBufferSpy).not.toHaveBeenCalledWith('photos/user99/primary.jpg');
     });
   });
 

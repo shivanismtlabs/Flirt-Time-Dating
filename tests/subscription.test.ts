@@ -88,6 +88,17 @@ describe('Production-Ready Subscriptions API (GET /api/v1/subscriptions)', () =>
       expect(plan1).toHaveProperty('icon_url', 'https://flirttime.in/assets/src/images/default-icon.png');
       expect(plan1).toHaveProperty('sort_order', 1);
       expect(plan1).toHaveProperty('deleted_at', null);
+      expect(plan1).toHaveProperty('discount', '0%');
+      expect(plan1).toHaveProperty('is_popular', false);
+      expect(plan1).toHaveProperty('popular_plan', false);
+      expect(plan1).toHaveProperty('is_popular_plan', false);
+
+      const plan2 = res.body.data[1];
+      expect(plan2).toHaveProperty('discount', '20%');
+      expect(plan2).toHaveProperty('is_popular', true);
+      expect(plan2).toHaveProperty('popular_plan', true);
+      expect(plan2).toHaveProperty('is_popular_plan', true);
+
       expect(typeof plan1.created_at).toBe('string');
       expect(typeof plan1.updated_at).toBe('string');
       expect(Array.isArray(plan1.features)).toBe(true);

@@ -45,6 +45,7 @@ import {
   uploadProfilePhoto,
   getUserInterests,
   updateUserInterests,
+  setPrimaryPhoto,
 } from '../controllers/onboarding.controller';
 import { updateInterestsSchema } from '../schemas/onboarding.schema';
 
@@ -63,7 +64,7 @@ router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 router.put('/profile', validate(updateProfileSchema), updateProfile);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
-router.post('/profile/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
+router.patch('/photos/:photoId/primary', setPrimaryPhoto);
 
 // User Interests Endpoints (Edit Profile "Interests" section)
 router.get('/interests', getUserInterests);
@@ -71,29 +72,18 @@ router.put('/interests', validate(updateInterestsSchema), updateUserInterests);
 router.patch('/interests', validate(updateInterestsSchema), updateUserInterests);
 router.post('/interests', validate(updateInterestsSchema), updateUserInterests);
 
-// Cover Picture Upload Endpoints (Edit Profile "Cover Picture" section)
+// Cover Picture Upload Endpoint (Edit Profile "Cover Picture" section)
 router.post('/cover-photo', handleUploadCoverPhoto, uploadCoverPhotoHandler);
-router.post('/cover-picture', handleUploadCoverPhoto, uploadCoverPhotoHandler);
-router.post('/profile/cover-photo', handleUploadCoverPhoto, uploadCoverPhotoHandler);
-router.post('/profile/cover-picture', handleUploadCoverPhoto, uploadCoverPhotoHandler);
 
 // Edit Profile Email Add / Verify Endpoints
 router.post('/profile/email/request-otp', validate(requestProfileEmailOtpSchema), requestProfileEmailOtpHandler);
-router.post('/profile/email/send-otp', validate(requestProfileEmailOtpSchema), requestProfileEmailOtpHandler);
-router.post('/profile/email/request', validate(requestProfileEmailOtpSchema), requestProfileEmailOtpHandler);
 router.post('/profile/email/verify-otp', validate(verifyProfileEmailOtpSchema), verifyProfileEmailOtpHandler);
-router.post('/profile/email/verify', validate(verifyProfileEmailOtpSchema), verifyProfileEmailOtpHandler);
 router.post('/profile/email/resend-otp', validate(resendProfileEmailOtpSchema), resendProfileEmailOtpHandler);
-router.post('/profile/email/resend', validate(resendProfileEmailOtpSchema), resendProfileEmailOtpHandler);
 
 // Edit Profile Phone Add / Verify Endpoints
 router.post('/profile/phone/request-otp', validate(requestProfilePhoneOtpSchema), requestProfilePhoneOtpHandler);
-router.post('/profile/phone/send-otp', validate(requestProfilePhoneOtpSchema), requestProfilePhoneOtpHandler);
-router.post('/profile/phone/request', validate(requestProfilePhoneOtpSchema), requestProfilePhoneOtpHandler);
 router.post('/profile/phone/verify-otp', validate(verifyProfilePhoneOtpSchema), verifyProfilePhoneOtpHandler);
-router.post('/profile/phone/verify', validate(verifyProfilePhoneOtpSchema), verifyProfilePhoneOtpHandler);
 router.post('/profile/phone/resend-otp', validate(resendProfilePhoneOtpSchema), resendProfilePhoneOtpHandler);
-router.post('/profile/phone/resend', validate(resendProfilePhoneOtpSchema), resendProfilePhoneOtpHandler);
 
 // More About Me Screen Endpoints
 router.get('/more-about-me', getMoreAboutMeHandler);

@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { onboardingService, OnboardingServiceError } from '../services/onboarding.service';
+import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
 
 const getUserIdOrThrow = (req: AuthenticatedRequest, res: Response): string | null => {
   const userId = req.user?.id;
@@ -217,7 +218,21 @@ export const setPrimaryPhoto = async (req: AuthenticatedRequest, res: Response) 
     if (!userId) return;
     const photoId = req.params.photoId as string;
     const photo = await onboardingService.setPrimaryPhoto(userId, photoId);
-    return sendSuccess(res, 'Primary photo updated successfully', { photo }, 200);
+    const profilePhotoUrl = formatMediaUrl(photo.imageUrl);
+    const profileThumbnail = formatThumbnailUrl(photo.imageUrl);
+    return sendSuccess(
+      res,
+      'Primary photo updated successfully',
+      {
+        photo,
+        profilePhoto: profilePhotoUrl,
+        profilePicture: photo.imageUrl,
+        profileThumbnail,
+        imageUrl: profilePhotoUrl,
+        thumbnailUrl: profileThumbnail,
+      },
+      200
+    );
   } catch (err: any) {
     return handleControllerError(res, err);
   }

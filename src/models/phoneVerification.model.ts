@@ -1,9 +1,18 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export const PHONE_OTP_PURPOSES = {
+  AUTH: 'auth',
+  PROFILE_PHONE_CHANGE: 'profile_phone_change',
+} as const;
+
+export type PhoneOtpPurpose = typeof PHONE_OTP_PURPOSES[keyof typeof PHONE_OTP_PURPOSES] | string;
+
 export interface PhoneVerificationAttributes {
   id: string;
+  userId?: string | null;
   phone: string;
+  purpose?: string;
   otpHash: string;
   expiresAt: Date;
   isConsumed: boolean;
@@ -22,6 +31,8 @@ export interface PhoneVerificationCreationAttributes
   extends Optional<
     PhoneVerificationAttributes,
     | 'id'
+    | 'userId'
+    | 'purpose'
     | 'isConsumed'
     | 'isVerified'
     | 'attempts'
@@ -37,7 +48,9 @@ export class PhoneVerification
   implements PhoneVerificationAttributes
 {
   declare public id: string;
+  declare public userId: string | null;
   declare public phone: string;
+  declare public purpose: string;
   declare public otpHash: string;
   declare public expiresAt: Date;
   declare public isConsumed: boolean;
@@ -67,9 +80,18 @@ PhoneVerification.init(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
     phone: {
       type: DataTypes.STRING(20),
       allowNull: false,
+    },
+    purpose: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'auth',
     },
     otpHash: {
       type: DataTypes.STRING(255),
@@ -125,6 +147,12 @@ PhoneVerification.init(
     indexes: [
       {
         fields: ['phone'],
+      },
+      {
+        fields: ['userId'],
+      },
+      {
+        fields: ['purpose'],
       },
       {
         fields: ['expiresAt'],

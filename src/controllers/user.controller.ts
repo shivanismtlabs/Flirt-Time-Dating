@@ -145,6 +145,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     const formattedInterests = (rawUser.interests || []).map(
       (interest: any, index: number) => ({
         id: interest.id,
+        interestId: interest.id,
         name: interest.name,
         icon: interest.icon || null,
         displayOrder: index + 1,
@@ -250,10 +251,13 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       bio: user.about || null,
       location,
       profilePhoto: primaryProfilePhoto,
+      profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,
       coverPicture: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
+      coverPhotoUrl: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       coverPictureKey: user.coverPicture || null,
       photos: formattedPhotos,
+      interests: formattedInterests,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
       // More about me direct fields
@@ -270,12 +274,19 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       haircolor: user.hairColor || null,
       living: user.living || null,
       relationship: user.relationship || null,
+      children: user.children || null,
       moreAboutMe,
     };
 
     // 8. Clean response payload with no internal or redundant data
     const profileResponse = {
       id: user.id,
+      username: user.username,
+      profilePhoto: primaryProfilePhoto,
+      profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
+      coverPhoto,
+      coverPicture: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
+      coverPhotoUrl: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       profile: profileData,
       moreAboutMe,
       interests: formattedInterests,
@@ -560,6 +571,7 @@ export const uploadCoverPhotoHandler = async (req: AuthenticatedRequest, res: Re
       {
         coverPicture: coverUrl,
         coverPictureUrl: coverUrl,
+        coverPhotoUrl: coverUrl,
         thumbnailUrl,
         key: s3Key,
         coverPhoto: {
@@ -609,7 +621,10 @@ export const requestProfileEmailOtpHandler = async (req: AuthenticatedRequest, r
       );
     }
 
-    const result = await otpService.requestEmailOtp(normalizedEmail);
+    const result = await otpService.requestEmailOtp(normalizedEmail, {
+      purpose: 'profile_email_change',
+      userId,
+    });
 
     if (result.error) {
       return sendError(res, result.error, result.statusCode);
@@ -675,7 +690,10 @@ export const resendProfileEmailOtpHandler = async (req: AuthenticatedRequest, re
     const { verificationId, email } = req.body || {};
 
     if (verificationId) {
-      const result = await otpService.resendEmailOtp(verificationId);
+      const result = await otpService.resendEmailOtp(verificationId, {
+        purpose: 'profile_email_change',
+        userId,
+      });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
       }
@@ -700,7 +718,10 @@ export const resendProfileEmailOtpHandler = async (req: AuthenticatedRequest, re
         );
       }
 
-      const result = await otpService.requestEmailOtp(normalizedEmail);
+      const result = await otpService.requestEmailOtp(normalizedEmail, {
+        purpose: 'profile_email_change',
+        userId,
+      });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
       }
@@ -765,7 +786,10 @@ export const requestProfilePhoneOtpHandler = async (req: AuthenticatedRequest, r
     if (cleanCountry && cleanPhone.startsWith(cleanCountry) && cleanPhone.length > cleanCountry.length) {
       cleanPhone = cleanPhone.slice(cleanCountry.length);
     }
-    const result = await otpService.requestPhoneOtp(cc, cleanPhone);
+    const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
+      purpose: 'profile_phone_change',
+      userId,
+    });
 
     if (result.error) {
       return sendError(res, result.error, result.statusCode);
@@ -832,7 +856,10 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
     const { verificationId, phone, countryCode } = req.body || {};
 
     if (verificationId) {
-      const result = await otpService.resendPhoneOtp(verificationId);
+      const result = await otpService.resendPhoneOtp(verificationId, {
+        purpose: 'profile_phone_change',
+        userId,
+      });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
       }
@@ -863,10 +890,13 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
       const cc = countryCode ? (countryCode.startsWith('+') ? countryCode : `+${countryCode}`) : '+91';
       const cleanCountry = cc.replace(/\D/g, '');
       let cleanPhone = phone.trim().replace(/\D/g, '');
-      if (cleanCountry && cleanPhone.startsWith(cleanCountry)) {
+      if (cleanCountry && cleanPhone.startsWith(cleanCountry) && cleanPhone.length > cleanCountry.length) {
         cleanPhone = cleanPhone.slice(cleanCountry.length);
       }
-      const result = await otpService.requestPhoneOtp(cc, cleanPhone);
+      const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
+        purpose: 'profile_phone_change',
+        userId,
+      });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
       }

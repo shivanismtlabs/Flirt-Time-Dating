@@ -676,6 +676,10 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "users" ADD COLUMN "relationship" VARCHAR(50);
               END IF;
 
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'children') THEN
+                ALTER TABLE "users" ADD COLUMN "children" VARCHAR(100);
+              END IF;
+
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'city') THEN
                 ALTER TABLE "users" ADD COLUMN "city" VARCHAR(100) DEFAULT 'Mumbai';
               END IF;
@@ -783,6 +787,8 @@ export const initDb = async (force = false): Promise<void> => {
                 "trial_period" INTEGER,
                 "is_recurring" BOOLEAN NOT NULL DEFAULT true,
                 "bonus_coins" INTEGER NOT NULL DEFAULT 0,
+                "discount" VARCHAR(50),
+                "is_popular_plan" BOOLEAN NOT NULL DEFAULT false,
                 "google_product_id" VARCHAR(255),
                 "apple_product_id" VARCHAR(255),
                 "icon" VARCHAR(500),
@@ -796,6 +802,13 @@ export const initDb = async (force = false): Promise<void> => {
               CREATE INDEX IF NOT EXISTS "subscription_plans_sort_order_idx" ON "subscription_plans" ("is_active", "sort_order", "id");
               CREATE INDEX IF NOT EXISTS "subscription_plans_google_product_id_idx" ON "subscription_plans" ("google_product_id");
               CREATE INDEX IF NOT EXISTS "subscription_plans_apple_product_id_idx" ON "subscription_plans" ("apple_product_id");
+            ELSE
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscription_plans' AND column_name = 'discount') THEN
+                ALTER TABLE "subscription_plans" ADD COLUMN "discount" VARCHAR(50);
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscription_plans' AND column_name = 'is_popular_plan') THEN
+                ALTER TABLE "subscription_plans" ADD COLUMN "is_popular_plan" BOOLEAN DEFAULT false;
+              END IF;
             END IF;
 
             IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscription_features') THEN
@@ -846,6 +859,20 @@ export const initDb = async (force = false): Promise<void> => {
           await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
         } catch (_crColErr) {
           // Safe to ignore if connection_requests does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "email_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
+          await sequelize.query('ALTER TABLE "email_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+        } catch (_evColErr) {
+          // Safe to ignore if email_verifications does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+        } catch (_pvColErr) {
+          // Safe to ignore if phone_verifications does not exist yet
         }
 
         // Ensure quick_moments and moment_gifts tables exist immediately on all environments
@@ -1003,6 +1030,19 @@ export const ensureCoinPackageTables = async (): Promise<void> => {
  */
 export const ensureSubscriptionTables = async (): Promise<void> => {
   try {
+    if (sequelize.getDialect() === 'postgres') {
+      try {
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "discount" VARCHAR(50);');
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "is_popular_plan" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN "discount" VARCHAR(50);');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN "is_popular_plan" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+    }
     await SubscriptionPlan.sync();
     await SubscriptionFeature.sync();
     await PlanFeature.sync();

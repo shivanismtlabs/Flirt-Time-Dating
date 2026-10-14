@@ -5,9 +5,7 @@ import {
   handleUploadPhoto,
   handleUploadAudio,
   handleUploadProfilePhoto,
-  handleUploadCoverPhoto,
 } from '../middlewares/upload.middleware';
-import { uploadCoverPhotoHandler } from '../controllers/user.controller';
 import {
   updatePreferencesSchema,
   updateGenderPreferenceSchema,
@@ -55,10 +53,8 @@ router.put('/religion', validate(updateReligionSchema), updateReligion);
 router.get('/interests', getUserInterests);
 router.put('/interests', validate(updateInterestsSchema), updateUserInterests);
 
-// Screen 25: Profile Photos Gallery & Dedicated Profile / Cover Photo Upload
+// Screen 25: Profile Photos Gallery & Dedicated Profile Photo Upload
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
-router.post('/cover-photo', handleUploadCoverPhoto, uploadCoverPhotoHandler);
-router.post('/cover-picture', handleUploadCoverPhoto, uploadCoverPhotoHandler);
 router.get('/photos', getUserPhotos);
 router.post('/photos', handleUploadPhoto, uploadPhoto);
 router.delete('/photos/:photoId', deletePhoto);

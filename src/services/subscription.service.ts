@@ -110,6 +110,22 @@ export class SubscriptionService {
         return a.id - b.id;
       });
 
+    const rawDiscount = plan.getDataValue('discount');
+    const discount = rawDiscount !== undefined && rawDiscount !== null ? String(rawDiscount) : null;
+    const isPopular = Boolean(
+      plan.getDataValue('is_popular_plan') ||
+      (plan as any).is_popular ||
+      (plan as any).popular_plan
+    );
+
+    let discountPercentage = 0;
+    if (discount) {
+      const parsed = parseInt(discount.replace(/[^0-9]/g, ''), 10);
+      if (!isNaN(parsed)) {
+        discountPercentage = parsed;
+      }
+    }
+
     return {
       id: Number(plan.id),
       name: String(plan.name || ''),
@@ -119,6 +135,12 @@ export class SubscriptionService {
       is_active: Boolean(plan.is_active),
       description: plan.description !== undefined && plan.description !== null ? String(plan.description) : null,
       bonus_coins: Number(plan.bonus_coins || 0),
+      discount,
+      discount_percentage: discountPercentage,
+      is_popular: isPopular,
+      popular_plan: isPopular,
+      is_popular_plan: isPopular,
+      isPopular: isPopular,
       is_recurring: Boolean(plan.is_recurring),
       billing_cycle: String(plan.billing_cycle || 'monthly'),
       trial_period: plan.trial_period !== null && plan.trial_period !== undefined ? Number(plan.trial_period) : null,

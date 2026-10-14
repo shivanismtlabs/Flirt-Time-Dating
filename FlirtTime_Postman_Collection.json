@@ -400,6 +400,232 @@
       ]
     },
     {
+      "name": "Edit Profile - Email Verification",
+      "item": [
+        {
+          "name": "Request Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new_email@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/request-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "request-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: requests a 6-digit OTP to change email in edit profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "verify-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: verifies OTP and updates user's email only after successful verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "resend-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: resends OTP for edit profile email change."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Edit Profile - Phone Verification",
+      "item": [
+        {
+          "name": "Request Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+91\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/request-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "request-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: requests a 6-digit OTP to change phone number in edit profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "verify-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: verifies OTP, updates user's phone, and sets isPhoneVerified = true."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "resend-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: resends OTP for edit profile phone number change."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "User Management",
       "item": [
         {

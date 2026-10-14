@@ -22,6 +22,7 @@ export interface MoreAboutMeDTO {
   haircolor?: string | null;
   living: string | null;
   relationship: string | null;
+  children: string | null;
   items: MoreAboutMeItem[];
 }
 
@@ -44,6 +45,7 @@ export interface UpdateProfileInput {
   haircolor?: string | null;
   living?: string | null;
   relationship?: string | null;
+  children?: string | null;
   coverPicture?: string | null;
   coverPhoto?: string | null;
   moreAboutMe?: {
@@ -60,6 +62,7 @@ export interface UpdateProfileInput {
     haircolor?: string | null;
     living?: string | null;
     relationship?: string | null;
+    children?: string | null;
   };
 }
 
@@ -85,6 +88,7 @@ export const formatMoreAboutMe = (user: {
   hairColor?: string | null;
   living?: string | null;
   relationship?: string | null;
+  children?: string | null;
 }): MoreAboutMeDTO => {
   const drinking = user.drinking || null;
   const education = user.education || null;
@@ -97,6 +101,7 @@ export const formatMoreAboutMe = (user: {
   const hairColor = user.hairColor || null;
   const living = user.living || null;
   const relationship = user.relationship || null;
+  const children = user.children || null;
 
   const items: MoreAboutMeItem[] = [
     { key: 'drinking', label: 'Drinking', icon: '🍷', value: drinking },
@@ -110,6 +115,7 @@ export const formatMoreAboutMe = (user: {
     { key: 'hairColor', label: 'Haircolor', icon: '💇', value: hairColor },
     { key: 'living', label: 'Living', icon: '🏠', value: living },
     { key: 'relationship', label: 'Relationship', icon: '👩‍❤️‍👨', value: relationship },
+    { key: 'children', label: 'Children', icon: '👶', value: children },
   ];
 
   return {
@@ -126,6 +132,7 @@ export const formatMoreAboutMe = (user: {
     haircolor: hairColor,
     living,
     relationship,
+    children,
     items,
   };
 };
@@ -226,6 +233,9 @@ export const updateUserProfile = async (
   if (data.relationship !== undefined || moreSource.relationship !== undefined) {
     user.relationship = data.relationship !== undefined ? data.relationship : moreSource.relationship || null;
   }
+  if (data.children !== undefined || moreSource.children !== undefined) {
+    user.children = data.children !== undefined ? data.children : moreSource.children || null;
+  }
   if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
     user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
   }
@@ -259,7 +269,9 @@ export const updateUserProfile = async (
     haircolor: user.hairColor,
     living: user.living,
     relationship: user.relationship,
+    children: user.children,
     coverPicture: user.coverPicture ? formatMediaUrl(user.coverPicture) : null,
+    coverPhotoUrl: user.coverPicture ? formatMediaUrl(user.coverPicture) : null,
     coverPhoto: user.coverPicture
       ? {
           url: formatMediaUrl(user.coverPicture),
@@ -277,11 +289,18 @@ export const updateUserProfile = async (
 
 export interface OtherUserProfileResponse {
   userId: string;
+  username: string;
   name: string;
   age: number | null;
   isVerified: boolean;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
+  coverPhoto?: {
+    url: string;
+    thumbnailUrl: string;
+  } | null;
+  coverPicture?: string | null;
+  coverPhotoUrl?: string | null;
   city: string;
   distanceKm: number | null;
   bio: string | null;
@@ -298,6 +317,7 @@ export interface OtherUserProfileResponse {
   haircolor?: string | null;
   living?: string | null;
   relationship?: string | null;
+  children?: string | null;
   moreAboutMe?: MoreAboutMeDTO;
   vibeScore: number | null;
   vibeExplanation: {
@@ -579,11 +599,20 @@ export const getOtherUserProfile = async (
 
   return {
     userId: targetUser.id,
+    username: targetUser.username,
     name: displayName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto) : null,
+    coverPhoto: targetUser.coverPicture
+      ? {
+          url: formatMediaUrl(targetUser.coverPicture),
+          thumbnailUrl: formatThumbnailUrl(targetUser.coverPicture),
+        }
+      : null,
+    coverPicture: targetUser.coverPicture ? formatMediaUrl(targetUser.coverPicture) : null,
+    coverPhotoUrl: targetUser.coverPicture ? formatMediaUrl(targetUser.coverPicture) : null,
     city: targetUser.city || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
@@ -600,6 +629,7 @@ export const getOtherUserProfile = async (
     haircolor: targetUser.hairColor || null,
     living: targetUser.living || null,
     relationship: targetUser.relationship || null,
+    children: targetUser.children || null,
     moreAboutMe: formatMoreAboutMe(targetUser),
     vibeScore,
     vibeExplanation,

@@ -14,6 +14,8 @@ export interface SubscriptionPlanAttributes {
   trial_period: number | null;
   is_recurring: boolean;
   bonus_coins: number;
+  discount?: string | null;
+  is_popular_plan?: boolean;
   google_product_id?: string | null;
   apple_product_id?: string | null;
   icon?: string | null;
@@ -34,6 +36,8 @@ export interface SubscriptionPlanCreationAttributes
     | 'trial_period'
     | 'is_recurring'
     | 'bonus_coins'
+    | 'discount'
+    | 'is_popular_plan'
     | 'google_product_id'
     | 'apple_product_id'
     | 'icon'
@@ -58,6 +62,8 @@ export class SubscriptionPlan
   declare public trial_period: number | null;
   declare public is_recurring: boolean;
   declare public bonus_coins: number;
+  declare public discount: string | null;
+  declare public is_popular_plan: boolean;
   declare public google_product_id: string | null;
   declare public apple_product_id: string | null;
   declare public icon: string | null;
@@ -86,6 +92,15 @@ export class SubscriptionPlan
   }
   public get bonusCoins(): number {
     return this.bonus_coins;
+  }
+  public get isPopularPlan(): boolean {
+    return this.is_popular_plan;
+  }
+  public get isPopular(): boolean {
+    return this.is_popular_plan;
+  }
+  public get popularPlan(): boolean {
+    return this.is_popular_plan;
   }
   public get googleProductId(): string | null {
     return this.google_product_id;
@@ -158,6 +173,16 @@ SubscriptionPlan.init(
       validate: {
         min: 0,
       },
+    },
+    discount: {
+      type: DataTypes.STRING(50),
+      allowNull: true,
+      defaultValue: null,
+    },
+    is_popular_plan: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
     },
     google_product_id: {
       type: DataTypes.STRING(255),

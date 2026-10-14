@@ -53,25 +53,28 @@ export const dateOfBirthSchema = z
 export const updateProfileSchema = z.object({
   body: z.object({
     fullName: z
-      .string({ required_error: 'fullName is required' })
+      .string()
       .trim()
       .min(1, 'fullName cannot be empty')
-      .max(100, 'fullName must not exceed 100 characters'),
+      .max(100, 'fullName must not exceed 100 characters')
+      .optional(),
 
     nickName: z
-      .string({ required_error: 'nickName is required' })
+      .string()
       .trim()
       .min(1, 'nickName cannot be empty')
-      .max(50, 'nickName must not exceed 50 characters'),
-    dateOfBirth: dateOfBirthSchema,
+      .max(50, 'nickName must not exceed 50 characters')
+      .optional(),
+    dateOfBirth: dateOfBirthSchema.optional(),
     gender: z
-      .string({ required_error: 'gender is required' })
+      .string()
       .trim()
       .min(1, 'gender cannot be empty')
       .transform((val) => val.toLowerCase())
       .refine((val) => ['male', 'female', 'non-binary', 'other'].includes(val), {
         message: 'Invalid gender. Allowed values: male, female, non-binary, other',
-      }),
+      })
+      .optional(),
     about: z
       .string()
       .trim()
@@ -92,6 +95,7 @@ export const updateProfileSchema = z.object({
     haircolor: z.string().trim().max(50).optional().nullable(),
     living: z.string().trim().max(100).optional().nullable(),
     relationship: z.string().trim().max(50).optional().nullable(),
+    children: z.string().trim().max(100).optional().nullable(),
     coverPicture: z.string().trim().max(500).optional().nullable(),
     coverPhoto: z.string().trim().max(500).optional().nullable(),
     moreAboutMe: z.record(z.any()).optional().nullable(),
@@ -113,6 +117,7 @@ export const updateMoreAboutMeSchema = z.object({
     haircolor: z.string().trim().max(50).optional().nullable(),
     living: z.string().trim().max(100).optional().nullable(),
     relationship: z.string().trim().max(50).optional().nullable(),
+    children: z.string().trim().max(100).optional().nullable(),
     moreAboutMe: z.record(z.any()).optional().nullable(),
   }),
 });

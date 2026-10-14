@@ -1648,7 +1648,7 @@ export class MomentService {
         {
           model: User,
           as: 'sender',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -1669,6 +1669,7 @@ export class MomentService {
       canDelete: c.senderId === viewerId || moment.userId === viewerId,
       user: {
         id: c.sender?.id,
+        username: c.sender?.username || null,
         name: c.sender?.fullName || c.sender?.nickName || 'User',
         profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
         avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,

@@ -160,19 +160,20 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   describe('3. Request Field Validation Assertions', () => {
-    it('should reject missing required fields (fullName, nickName, dateOfBirth, gender)', async () => {
+    it('should allow partial updates without requiring dateOfBirth or gender', async () => {
       const res = await request(app)
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
-          // fullName missing
           nickName: 'Mikey',
-          dateOfBirth: '1996-10-09',
-          gender: 'male',
+          about: 'Only updating about and children without dateOfBirth or gender',
+          children: '1 Child',
         });
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.nickName).toBe('Mikey');
+      expect(res.body.data.children).toBe('1 Child');
     });
 
     it('should reject empty or whitespace-only required fields', async () => {
@@ -472,20 +473,40 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedUser?.coverPicture).toBe(`covers/${testUser.id}/cover_12345.jpg`);
     });
 
-    it('should also support cover-picture and profile/cover-photo aliases', async () => {
+    it('should also accept coverPicture multipart form field name on /users/cover-photo', async () => {
       jest.spyOn(s3Service, 'uploadMedia').mockImplementation(async (_buf, uid) => {
         return `covers/${uid}/cover_alias.jpg`;
       });
       jest.spyOn(s3Service, 'generateAndUploadThumbnail').mockResolvedValue('thumbnails/covers/mock.jpg');
 
       const res = await request(app)
-        .post('/api/v1/users/profile/cover-photo')
+        .post('/api/v1/users/cover-photo')
         .set('Authorization', `Bearer ${authToken}`)
         .attach('coverPicture', validJpegBuffer, 'cover.jpg');
 
       expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.key).toBe(`covers/${testUser.id}/cover_alias.jpg`);
+    });
+
+    it('should return coverPhoto, coverPicture, and coverPhotoUrl in GET /api/v1/users/profile', async () => {
+      await User.update(
+        { coverPicture: `covers/${testUser.id}/profile_cover.jpg` },
+        { where: { id: testUser.id } }
+      );
+
+      const res = await request(app)
+        .get('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.coverPhoto).toBeDefined();
+      expect(res.body.data.coverPhoto.url).toContain('profile_cover.jpg');
+      expect(res.body.data.coverPicture).toContain('profile_cover.jpg');
+      expect(res.body.data.coverPhotoUrl).toContain('profile_cover.jpg');
+      expect(res.body.data.profile.coverPhoto).toBeDefined();
+      expect(res.body.data.profile.coverPicture).toContain('profile_cover.jpg');
     });
   });
 
@@ -500,7 +521,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       });
     });
 
-    it('should request an Email OTP for a new email address from profile', async () => {
+    it('should request an Email OTP for a new email address from profile and bind userId and purpose', async () => {
       const res = await request(app)
         .post('/api/v1/users/profile/email/request-otp')
         .set('Authorization', `Bearer ${authToken}`)
@@ -511,6 +532,11 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.verificationId).toBeDefined();
       expect(res.body.data.email).toBe('newemail@example.com');
       expect(capturedOtp).toMatch(/^\d{6}$/);
+
+      // Verify DB record has userId and profile_email_change purpose
+      const record = await EmailVerification.findByPk(res.body.data.verificationId);
+      expect(record?.userId).toBe(testUser.id);
+      expect(record?.purpose).toBe('profile_email_change');
     });
 
     it('should reject email OTP request if email is already taken by another account with 409', async () => {
@@ -531,6 +557,48 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.message).toMatch(/already associated with another account/i);
     });
 
+    it('should resend email OTP for profile change via verificationId and via email', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'resendtest@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // Fast-forward lastResentAt to bypass 60s cooldown for test
+      await EmailVerification.update(
+        { lastResentAt: new Date(Date.now() - 70000) },
+        { where: { id: verificationId } }
+      );
+
+      const resendRes = await request(app)
+        .post('/api/v1/users/profile/email/resend-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ verificationId });
+
+      expect(resendRes.status).toBe(200);
+      expect(resendRes.body.success).toBe(true);
+      expect(resendRes.body.data.verificationId).toBe(verificationId);
+    });
+
+    it('should reject resending email OTP before cooldown period elapses', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'cooldown.email@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const resendRes = await request(app)
+        .post('/api/v1/users/profile/email/resend-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ verificationId });
+
+      expect(resendRes.status).toBe(429);
+      expect(resendRes.body.success).toBe(false);
+      expect(resendRes.body.message).toMatch(/please wait before requesting another/i);
+    });
+
     it('should reject incorrect OTP with 401', async () => {
       const reqRes = await request(app)
         .post('/api/v1/users/profile/email/request-otp')
@@ -549,6 +617,33 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
 
       expect(res.status).toBe(401);
       expect(res.body.success).toBe(false);
+    });
+
+    it('should reject expired email OTP with 400', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'expired.email@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // Mark record as expired in past
+      await EmailVerification.update(
+        { expiresAt: new Date(Date.now() - 10000) },
+        { where: { id: verificationId } }
+      );
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/expired/i);
     });
 
     it('should successfully verify email OTP and update user email in database', async () => {
@@ -605,6 +700,102 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res2.status).toBe(400);
       expect(res2.body.message).toMatch(/already been used/i);
     });
+
+    it('should reject cross-purpose email OTP (signup OTP cannot be used for profile email update)', async () => {
+      // 1. Generate auth signup OTP (purpose: 'auth')
+      let authOtp = '';
+      jest.spyOn(emailProvider, 'sendOtp').mockImplementation(async (_email, otp) => {
+        authOtp = otp;
+        return true;
+      });
+
+      const authReqRes = await request(app)
+        .post('/api/v1/auth/email/request-otp')
+        .send({ email: 'cross.auth@example.com' });
+
+      expect(authReqRes.status).toBe(200);
+      const authVerificationId = authReqRes.body.data.verificationId;
+
+      // 2. Try to verify this auth OTP in profile email verification endpoint
+      const verifyRes = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId: authVerificationId,
+          otp: authOtp,
+        });
+
+      expect(verifyRes.status).toBe(400);
+      expect(verifyRes.body.success).toBe(false);
+      expect(verifyRes.body.message).toMatch(/invalid verification session/i);
+
+      // Verify user email did NOT change
+      const refreshedUser = await User.findByPk(testUser.id);
+      expect(refreshedUser?.email).toBe('mike@example.com');
+    });
+
+    it('should reject cross-purpose email OTP (profile OTP cannot be used for auth signup/login)', async () => {
+      // 1. Generate profile email change OTP
+      const profileReqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'profile.for.auth@example.com' });
+
+      expect(profileReqRes.status).toBe(200);
+      const profileVerificationId = profileReqRes.body.data.verificationId;
+
+      // 2. Try to verify in public auth login endpoint
+      const authVerifyRes = await request(app)
+        .post('/api/v1/auth/email/verify-otp')
+        .send({
+          verificationId: profileVerificationId,
+          otp: capturedOtp,
+        });
+
+      expect(authVerifyRes.status).toBe(400);
+      expect(authVerifyRes.body.success).toBe(false);
+      expect(authVerifyRes.body.message).toMatch(/invalid verification session for authentication/i);
+    });
+
+    it('should reject profile email OTP if verified by a different authenticated user', async () => {
+      // User A requests profile change
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/email/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ email: 'user.a.target@example.com' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // User B logs in
+      const userB = await User.create({
+        username: 'user_b',
+        email: 'userb@example.com',
+        role: 'user',
+        isActive: true,
+      });
+      const userBToken = generateToken({
+        id: userB.id,
+        email: userB.email,
+        role: userB.role,
+      });
+
+      // User B attempts to verify User A's verification session
+      const res = await request(app)
+        .post('/api/v1/users/profile/email/verify-otp')
+        .set('Authorization', `Bearer ${userBToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/does not belong to this user/i);
+
+      // Verify userB email did NOT change
+      const refreshedUserB = await User.findByPk(userB.id);
+      expect(refreshedUserB?.email).toBe('userb@example.com');
+    });
   });
 
   describe('8. Profile Phone OTP Verification Flow', () => {
@@ -618,7 +809,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       });
     });
 
-    it('should request a Phone OTP for a new phone number from profile', async () => {
+    it('should request a Phone OTP for a new phone number from profile and bind userId and purpose', async () => {
       const res = await request(app)
         .post('/api/v1/users/profile/phone/request-otp')
         .set('Authorization', `Bearer ${authToken}`)
@@ -632,6 +823,11 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.verificationId).toBeDefined();
       expect(res.body.data.phone).toBe('+919876543210');
       expect(capturedOtp).toMatch(/^\d{6}$/);
+
+      // Verify DB record has userId and profile_phone_change purpose
+      const record = await PhoneVerification.findByPk(res.body.data.verificationId);
+      expect(record?.userId).toBe(testUser.id);
+      expect(record?.purpose).toBe('profile_phone_change');
     });
 
     it('should reject phone OTP request if phone is already taken by another account with 409', async () => {
@@ -653,6 +849,107 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.status).toBe(409);
       expect(res.body.success).toBe(false);
       expect(res.body.message).toMatch(/already associated with another account/i);
+    });
+
+    it('should resend phone OTP for profile change via verificationId and via phone', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9112233445',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // Fast-forward lastResentAt to bypass 60s cooldown for test
+      await PhoneVerification.update(
+        { lastResentAt: new Date(Date.now() - 70000) },
+        { where: { id: verificationId } }
+      );
+
+      const resendRes = await request(app)
+        .post('/api/v1/users/profile/phone/resend-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ verificationId });
+
+      expect(resendRes.status).toBe(200);
+      expect(resendRes.body.success).toBe(true);
+      expect(resendRes.body.data.verificationId).toBe(verificationId);
+    });
+
+    it('should reject resending phone OTP before cooldown period elapses', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9112233446',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const resendRes = await request(app)
+        .post('/api/v1/users/profile/phone/resend-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ verificationId });
+
+      expect(resendRes.status).toBe(429);
+      expect(resendRes.body.success).toBe(false);
+      expect(resendRes.body.message).toMatch(/please wait before requesting another/i);
+    });
+
+    it('should reject incorrect phone OTP with 401', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9988771122',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: '000000',
+        });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject expired phone OTP with 400', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9988771133',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // Mark record as expired in past
+      await PhoneVerification.update(
+        { expiresAt: new Date(Date.now() - 10000) },
+        { where: { id: verificationId } }
+      );
+
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/expired/i);
     });
 
     it('should successfully verify phone OTP and update user phone and isPhoneVerified in database', async () => {
@@ -684,6 +981,135 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedUser?.phone).toBe('+919988776655');
       expect(updatedUser?.isPhoneVerified).toBe(true);
     });
+
+    it('should reject already consumed phone OTP with 400', async () => {
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          countryCode: '+91',
+          phone: '9988776644',
+        });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // First verify: success
+      await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      // Second verify: already used
+      const res2 = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res2.status).toBe(400);
+      expect(res2.body.message).toMatch(/already been used/i);
+    });
+
+    it('should reject cross-purpose phone OTP (signup OTP cannot be used for profile phone update)', async () => {
+      // 1. Generate auth signup OTP (purpose: 'auth')
+      let authPhoneOtp = '';
+      jest.spyOn(smsProvider, 'sendOtp').mockImplementation(async (_phone, otp) => {
+        authPhoneOtp = otp;
+        return true;
+      });
+
+      const authReqRes = await request(app)
+        .post('/api/v1/auth/phone/request-otp')
+        .send({ countryCode: '+91', phone: '9123456789' });
+
+      expect(authReqRes.status).toBe(200);
+      const authVerificationId = authReqRes.body.data.verificationId;
+
+      // 2. Try to verify this auth OTP in profile phone verification endpoint
+      const verifyRes = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          verificationId: authVerificationId,
+          otp: authPhoneOtp,
+        });
+
+      expect(verifyRes.status).toBe(400);
+      expect(verifyRes.body.success).toBe(false);
+      expect(verifyRes.body.message).toMatch(/invalid verification session/i);
+
+      // Verify user phone did NOT change
+      const refreshedUser = await User.findByPk(testUser.id);
+      expect(refreshedUser?.phone).toBeNull();
+    });
+
+    it('should reject cross-purpose phone OTP (profile OTP cannot be used for auth signup/login)', async () => {
+      // 1. Generate profile phone change OTP
+      const profileReqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ countryCode: '+91', phone: '9123456780' });
+
+      expect(profileReqRes.status).toBe(200);
+      const profileVerificationId = profileReqRes.body.data.verificationId;
+
+      // 2. Try to verify in public auth login endpoint
+      const authVerifyRes = await request(app)
+        .post('/api/v1/auth/phone/verify-otp')
+        .send({
+          verificationId: profileVerificationId,
+          otp: capturedOtp,
+        });
+
+      expect(authVerifyRes.status).toBe(400);
+      expect(authVerifyRes.body.success).toBe(false);
+      expect(authVerifyRes.body.message).toMatch(/invalid verification session for authentication/i);
+    });
+
+    it('should reject profile phone OTP if verified by a different authenticated user', async () => {
+      // User A requests profile change
+      const reqRes = await request(app)
+        .post('/api/v1/users/profile/phone/request-otp')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ countryCode: '+91', phone: '9123456781' });
+
+      const verificationId = reqRes.body.data.verificationId;
+
+      // User B logs in
+      const userB = await User.create({
+        username: 'user_b_phone',
+        email: 'userbphone@example.com',
+        role: 'user',
+        isActive: true,
+      });
+      const userBToken = generateToken({
+        id: userB.id,
+        email: userB.email,
+        role: userB.role,
+      });
+
+      // User B attempts to verify User A's verification session
+      const res = await request(app)
+        .post('/api/v1/users/profile/phone/verify-otp')
+        .set('Authorization', `Bearer ${userBToken}`)
+        .send({
+          verificationId,
+          otp: capturedOtp,
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/does not belong to this user/i);
+
+      // Verify userB phone did NOT change
+      const refreshedUserB = await User.findByPk(userB.id);
+      expect(refreshedUserB?.phone).toBeNull();
+    });
   });
 
   describe('9. Complete Profile Fetch (GET /api/v1/users/profile)', () => {
@@ -704,11 +1130,13 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.profile.email).toBe(testUser.email);
       expect(res.body.data.profile.phone).toBe('+919988776655');
       expect(res.body.data.profile.isPhoneVerified).toBe(true);
+      expect(res.body.data.profile.username).toBe(testUser.username);
+      expect(res.body.data.username).toBe(testUser.username);
     });
   });
 
   describe('10. User Interests on Edit Profile (PUT /api/v1/users/interests)', () => {
-    it('should update user interests using UUID string array', async () => {
+    it('should update user interests using UUID string array and return interest id in profile', async () => {
       const { Interest } = await import('../src/models');
       const interest = await Interest.create({
         name: 'Photography_Test',
@@ -725,12 +1153,54 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.success).toBe(true);
 
       const getRes = await request(app)
-        .get('/api/v1/users/interests')
+        .get('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(getRes.status).toBe(200);
       expect(getRes.body.data.interests).toHaveLength(1);
+      expect(getRes.body.data.interests[0].id).toBe(interest.id);
+      expect(getRes.body.data.interests[0].interestId).toBe(interest.id);
       expect(getRes.body.data.interests[0].name).toBe('Photography_Test');
+    });
+  });
+
+  describe('11. Set Gallery Photo as Primary (PATCH /api/v1/onboarding/photos/:photoId/primary)', () => {
+    it('should update user profilePhoto and profilePicture when a gallery photo is set as primary', async () => {
+      const { UserPhoto } = await import('../src/models');
+      const photo = await UserPhoto.create({
+        userId: testUser.id,
+        imageUrl: 'photos/mike_gallery_1.jpg',
+        isPrimary: false,
+        status: 'approved',
+      });
+
+      const res = await request(app)
+        .patch(`/api/v1/onboarding/photos/${photo.id}/primary`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.profilePhoto).toBeDefined();
+      expect(res.body.data.profilePicture).toBe('photos/mike_gallery_1.jpg');
+
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.profilePicture).toBe('photos/mike_gallery_1.jpg');
+    });
+  });
+
+  describe('12. S3 Media & Verification URL Formatter Safeguards', () => {
+    it('should not return double thumbnail prefix or 403-inducing thumbnails/verifications paths', async () => {
+      const { formatMediaUrl, formatThumbnailUrl } = await import('../src/services/s3.service');
+
+      const verificationKey = 'verifications/user123/selfie.jpg';
+      const verUrl = formatMediaUrl(verificationKey);
+      const verThumb = formatThumbnailUrl(verificationKey);
+
+      expect(verUrl).toContain('verifications/user123/selfie.jpg');
+      expect(verThumb).not.toContain('thumbnails/verifications');
+
+      const doubleThumb = formatThumbnailUrl('thumbnails/photos/user1/pic.jpg');
+      expect(doubleThumb).not.toContain('thumbnails/thumbnails');
     });
   });
 });

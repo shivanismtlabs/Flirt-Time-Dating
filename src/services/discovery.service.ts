@@ -13,6 +13,7 @@ export interface DiscoveryQueryInput {
 export interface DiscoveryUserProfile {
   userId: string;
   name: string;
+  username: string;
   age: number | null;
   profilePhoto: string | null;
   isVerified: boolean;
@@ -60,6 +61,7 @@ export interface GetDiscoveryInterestsOutput {
 export interface InterestUserCard {
   id: string;
   name: string;
+  username: string;
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
@@ -384,6 +386,7 @@ export class DiscoveryService {
       return {
         userId: user.id,
         name: resolveDisplayName(user),
+        username: user.username,
         age: calculateAge(user.dateOfBirth),
         profilePhoto: user.profilePicture ? formatThumbnailUrl(user.profilePicture) : null,
         isVerified: !!user.isFaceVerified,
@@ -640,6 +643,7 @@ export class DiscoveryService {
       return {
         id: user.id,
         name: resolveDisplayName(user),
+        username: user.username,
         age: calculateAge(user.dateOfBirth),
         profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
         isVerified: Boolean(user.isFaceVerified),
@@ -788,6 +792,7 @@ export class DiscoveryService {
           return {
             id: user.id,
             name: resolveDisplayName(user),
+            username: user.username,
             age: calculateAge(user.dateOfBirth),
             profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
             isVerified: Boolean(user.isFaceVerified),

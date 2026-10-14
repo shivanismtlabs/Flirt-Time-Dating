@@ -18,6 +18,8 @@ export interface VerifiedPlanDefinition {
   is_active: boolean;
   description: string;
   bonus_coins: number;
+  discount?: string | null;
+  is_popular_plan?: boolean;
   is_recurring: boolean;
   billing_cycle: string;
   trial_period: number | null;
@@ -85,6 +87,8 @@ export const VERIFIED_SUBSCRIPTION_PLANS: VerifiedPlanDefinition[] = [
     is_active: true,
     description: 'Access basic features for 1 week',
     bonus_coins: 50,
+    discount: '0%',
+    is_popular_plan: false,
     is_recurring: true,
     billing_cycle: 'monthly',
     trial_period: null,
@@ -103,6 +107,8 @@ export const VERIFIED_SUBSCRIPTION_PLANS: VerifiedPlanDefinition[] = [
     is_active: true,
     description: 'Access basic features for 1 month',
     bonus_coins: 100,
+    discount: '20%',
+    is_popular_plan: true,
     is_recurring: true,
     billing_cycle: 'monthly',
     trial_period: null,
@@ -164,6 +170,8 @@ export const seedSubscriptions = async (forceOverwrite = false): Promise<{
         is_active: item.is_active,
         description: item.description,
         bonus_coins: item.bonus_coins,
+        discount: item.discount ?? null,
+        is_popular_plan: item.is_popular_plan ?? false,
         is_recurring: item.is_recurring,
         billing_cycle: item.billing_cycle,
         trial_period: item.trial_period,
@@ -198,6 +206,8 @@ export const seedSubscriptions = async (forceOverwrite = false): Promise<{
           is_active: item.is_active,
           description: item.description,
           bonus_coins: item.bonus_coins,
+          discount: item.discount ?? null,
+          is_popular_plan: item.is_popular_plan ?? false,
           is_recurring: item.is_recurring,
           billing_cycle: item.billing_cycle,
           trial_period: item.trial_period,

@@ -35,6 +35,7 @@ export interface UserAttributes {
   hairColor?: string | null;
   living?: string | null;
   relationship?: string | null;
+  children?: string | null;
   city?: string | null;
   latitude?: number | null;
   longitude?: number | null;
@@ -81,6 +82,7 @@ export interface UserCreationAttributes
     | 'hairColor'
     | 'living'
     | 'relationship'
+    | 'children'
     | 'city'
     | 'latitude'
     | 'longitude'
@@ -124,6 +126,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public hairColor: string | null;
   declare public living: string | null;
   declare public relationship: string | null;
+  declare public children: string | null;
   declare public city: string | null;
   declare public latitude: number | null;
   declare public longitude: number | null;
@@ -295,6 +298,10 @@ User.init(
     },
     relationship: {
       type: DataTypes.STRING(50),
+      allowNull: true,
+    },
+    children: {
+      type: DataTypes.STRING(100),
       allowNull: true,
     },
     city: {

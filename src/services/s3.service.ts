@@ -217,14 +217,105 @@ export class S3Service {
   }
 
   /**
-   * Resolves an S3 key or external URL to a full public URL
+   * Generates a presigned S3 GET URL (SigV4) for private objects (e.g. verifications)
+   */
+  public getPresignedGetUrl(key: string, expiresInSeconds = 3600): string {
+    if (!key) return '';
+    const cleanKey = this.extractKey(key);
+    const accessKey = env.AWS_ACCESS_KEY_ID;
+    const secretKey = env.AWS_SECRET_ACCESS_KEY;
+    const region = env.AWS_REGION;
+    const bucket = this.bucket;
+
+    if (!accessKey || !secretKey || process.env.NODE_ENV === 'test') {
+      if (env.AWS_CLOUDFRONT_URL) {
+        const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
+        return `${cdnBase}/${cleanKey}`;
+      }
+      return `https://${bucket}.s3.${region}.amazonaws.com/${cleanKey}`;
+    }
+
+    try {
+      const dateObj = new Date();
+      const amzDate = dateObj.toISOString().replace(/[:-]|\.\d{3}/g, '');
+      const dateStamp = amzDate.substring(0, 8);
+      const host = `${bucket}.s3.${region}.amazonaws.com`;
+      const credentialScope = `${dateStamp}/${region}/s3/aws4_request`;
+
+      const queryParams: Record<string, string> = {
+        'X-Amz-Algorithm': 'AWS4-HMAC-SHA256',
+        'X-Amz-Credential': `${accessKey}/${credentialScope}`,
+        'X-Amz-Date': amzDate,
+        'X-Amz-Expires': expiresInSeconds.toString(),
+        'X-Amz-SignedHeaders': 'host',
+      };
+
+      const sortedQueryString = Object.keys(queryParams)
+        .sort()
+        .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(queryParams[k])}`)
+        .join('&');
+
+      const canonicalUri = `/${encodeURI(cleanKey).replace(/\+/g, '%20')}`;
+      const canonicalHeaders = `host:${host}\n`;
+      const signedHeaders = 'host';
+      const payloadHash = 'UNSIGNED-PAYLOAD';
+
+      const canonicalRequest = [
+        'GET',
+        canonicalUri,
+        sortedQueryString,
+        canonicalHeaders,
+        signedHeaders,
+        payloadHash,
+      ].join('\n');
+
+      const stringToSign = [
+        'AWS4-HMAC-SHA256',
+        amzDate,
+        credentialScope,
+        crypto.createHash('sha256').update(canonicalRequest).digest('hex'),
+      ].join('\n');
+
+      const kDate = crypto.createHmac('sha256', `AWS4${secretKey}`).update(dateStamp).digest();
+      const kRegion = crypto.createHmac('sha256', kDate).update(region).digest();
+      const kService = crypto.createHmac('sha256', kRegion).update('s3').digest();
+      const kSigning = crypto.createHmac('sha256', kService).update('aws4_request').digest();
+      const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
+
+      return `https://${host}${canonicalUri}?${sortedQueryString}&X-Amz-Signature=${signature}`;
+    } catch (err: any) {
+      console.error('[Presigned GET URL Error]:', err.message);
+      return `https://${bucket}.s3.${region}.amazonaws.com/${cleanKey}`;
+    }
+  }
+
+  /**
+   * Resolves an S3 key or external URL to a full public URL (or presigned GET URL for verifications)
    */
   public getPublicUrl(keyOrUrl?: string | null): string {
     if (!keyOrUrl) return '';
-    if (keyOrUrl.startsWith('http://') || keyOrUrl.startsWith('https://')) {
-      return keyOrUrl;
+    const trimmed = keyOrUrl.trim();
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      // If it's an unsigned S3 verification URL, sign it to prevent 403 Forbidden
+      if (
+        trimmed.includes('.amazonaws.com') &&
+        trimmed.includes('/verifications/') &&
+        !trimmed.includes('X-Amz-Signature')
+      ) {
+        const key = this.extractKey(trimmed);
+        return this.getPresignedGetUrl(key);
+      }
+      return trimmed;
     }
-    const cleanKey = keyOrUrl.replace(/^\/+/, '');
+
+    const cleanKey = trimmed.replace(/^\/+/, '');
+
+    // Private verification documents must use presigned GET URLs
+    if (cleanKey.startsWith('verifications/')) {
+      return this.getPresignedGetUrl(cleanKey);
+    }
+
     if (env.AWS_CLOUDFRONT_URL) {
       const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
       return `${cdnBase}/${cleanKey}`;
@@ -239,6 +330,12 @@ export class S3Service {
   public getThumbnailUrl(keyOrUrl?: string | null): string {
     if (!keyOrUrl) return '';
     const trimmed = keyOrUrl.trim();
+
+    // Verifications are private and never have thumbnails in S3; return presigned URL directly to avoid 403
+    const cleanKey = this.extractKey(trimmed);
+    if (cleanKey.startsWith('verifications/')) {
+      return this.getPublicUrl(cleanKey);
+    }
 
     // If it's an external HTTP/HTTPS URL
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -267,11 +364,13 @@ export class S3Service {
       return trimmed;
     }
 
-    const cleanKey = trimmed.replace(/^\/+/, '');
-    if (cleanKey.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`)) {
-      return this.getPublicUrl(cleanKey);
+    // Prevent double thumbnails prefix (e.g. thumbnails/thumbnails/...)
+    let normalized = cleanKey;
+    while (normalized.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`)) {
+      normalized = normalized.slice(env.AWS_S3_THUMBNAIL_PREFIX.length + 1);
     }
-    const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${cleanKey}`;
+
+    const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${normalized}`;
     if (env.AWS_CLOUDFRONT_URL) {
       const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
       return `${cdnBase}/${thumbKey}`;

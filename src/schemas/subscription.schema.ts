@@ -27,6 +27,12 @@ export interface SubscriptionPlanDTO {
   trial_period: number | null;
   is_recurring: boolean;
   bonus_coins: number;
+  discount: string | null;
+  discount_percentage?: number;
+  is_popular: boolean;
+  popular_plan: boolean;
+  is_popular_plan: boolean;
+  isPopular?: boolean;
   google_product_id: string | null;
   apple_product_id: string | null;
   icon: string | null;

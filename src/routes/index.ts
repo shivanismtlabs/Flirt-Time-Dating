@@ -22,6 +22,9 @@ import {
 } from '../controllers/faceVerification.controller';
 
 import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
+import { getProfile, updateProfile } from '../controllers/user.controller';
+import { updateProfileSchema } from '../schemas/user.schema';
+import { validate } from '../middlewares/validate.middleware';
 
 const router = Router();
 
@@ -49,5 +52,10 @@ router.get('/gesture-upload', authenticate, getGestureVerificationInfo);
 router.post('/gesture-upload', authenticate, handleUploadSelfie, uploadFaceVerification);
 router.get('/gesture', authenticate, getGestureVerificationInfo);
 router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification);
+
+// Direct Profile aliases: /api/v1/profile, /api/profile
+router.get('/profile', authenticate, getProfile);
+router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
+router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 
 export default router;

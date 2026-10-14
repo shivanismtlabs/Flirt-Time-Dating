@@ -42,6 +42,9 @@ export interface UserAttributes {
   voicePromptUrl?: string | null;
   voicePromptDuration?: number | null;
   coins?: number;
+  isSubscribed?: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -89,6 +92,9 @@ export interface UserCreationAttributes
     | 'voicePromptUrl'
     | 'voicePromptDuration'
     | 'coins'
+    | 'isSubscribed'
+    | 'subscriptionExpiresAt'
+    | 'activeSubscriptionPlanId'
   > {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
@@ -133,6 +139,9 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public voicePromptUrl: string | null;
   declare public voicePromptDuration: number | null;
   declare public coins: number;
+  declare public isSubscribed: boolean;
+  declare public subscriptionExpiresAt: Date | null;
+  declare public activeSubscriptionPlanId: number | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -329,6 +338,22 @@ User.init(
       type: DataTypes.INTEGER,
       defaultValue: 500,
       allowNull: false,
+    },
+    isSubscribed: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+      field: 'is_subscribed',
+    },
+    subscriptionExpiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+      field: 'subscription_expires_at',
+    },
+    activeSubscriptionPlanId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      field: 'active_subscription_plan_id',
     },
   },
   {

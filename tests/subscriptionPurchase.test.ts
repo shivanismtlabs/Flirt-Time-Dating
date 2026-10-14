@@ -1,0 +1,622 @@
+import request from 'supertest';
+import app from '../src/app';
+import { Op } from 'sequelize';
+import {
+  sequelize,
+  User,
+  initDb,
+  SubscriptionPlan,
+  SubscriptionFeature,
+  PlanFeature,
+  UserSubscription,
+  SubscriptionEventLog,
+  CoinTransaction,
+} from '../src/models';
+import { generateToken } from '../src/utils/jwt';
+import { iapService } from '../src/services/iap.service';
+import { seedSubscriptions } from '../src/services/seedSubscription.service';
+
+describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
+  let testUser: User;
+  let testToken: string;
+  let weeklyPlan: SubscriptionPlan;
+  let monthlyPlan: SubscriptionPlan;
+
+  beforeAll(async () => {
+    process.env.NODE_ENV = 'test';
+    await initDb(true);
+  });
+
+  beforeEach(async () => {
+    // Clear subscription and transaction tables
+    await CoinTransaction.destroy({ where: {} });
+    await SubscriptionEventLog.destroy({ where: {} });
+    await UserSubscription.destroy({ where: {} });
+    await PlanFeature.destroy({ where: {} });
+    await SubscriptionPlan.destroy({ where: {}, force: true });
+    await SubscriptionFeature.destroy({ where: {}, force: true });
+    await User.destroy({ where: {} });
+
+    // Seed authoritative plans
+    await seedSubscriptions(true);
+    weeklyPlan = (await SubscriptionPlan.findByPk(1))!;
+    monthlyPlan = (await SubscriptionPlan.findByPk(2))!;
+
+    testUser = await User.create({
+      username: 'sub_tester',
+      email: 'subscriber@flirttime.app',
+      isActive: true,
+      role: 'user',
+      coins: 500,
+      isSubscribed: false,
+    });
+
+    testToken = generateToken({
+      id: testUser.id,
+      email: testUser.email!,
+      role: testUser.role,
+    });
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  describe('1. Apple App Store Subscription Verification (POST /api/v1/subscriptions/purchase/verify)', () => {
+    it('should successfully verify a valid Apple subscription and grant entitlement + bonus coins', async () => {
+      const mockTxId = `apple_sub_tx_${Date.now()}`;
+      const expiresDate = new Date(Date.now() + 7 * 86400000); // 7 days in future
+
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'com.flirttime.weekly',
+        transactionId: mockTxId,
+        originalTransactionId: mockTxId,
+        purchaseDate: Date.now(),
+        expiresDate: expiresDate.getTime(),
+        type: 'Auto-Renewable Subscription',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          productId: 'com.flirttime.weekly',
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isEntitled).toBe(true);
+      expect(res.body.data.status).toBe('active');
+      expect(res.body.data.bonusCoinsCredited).toBe(50); // Plan 1 bonus coins
+      expect(res.body.data.currentBalance).toBe(550); // 500 + 50
+
+      // Verify Database records
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.isSubscribed).toBe(true);
+      expect(updatedUser?.coins).toBe(550);
+
+      const dbSub = await UserSubscription.findOne({ where: { storeTransactionId: mockTxId } });
+      expect(dbSub).not.toBeNull();
+      expect(dbSub?.isEntitled).toBe(true);
+      expect(dbSub?.bonusCoinsCredited).toBe(true);
+      expect(dbSub?.bonusCoinsAmount).toBe(50);
+
+      // Verify Ledger record
+      const ledger = await CoinTransaction.findOne({ where: { referenceId: dbSub!.id } });
+      expect(ledger).not.toBeNull();
+      expect(ledger?.amount).toBe(50);
+      expect(ledger?.balanceAfter).toBe(550);
+    });
+
+    it('should verify Apple subscription by productId alone without requiring planId', async () => {
+      const mockTxId = `apple_sub_pid_${Date.now()}`;
+      const expiresDate = new Date(Date.now() + 30 * 86400000);
+
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'com.flirttime.monthly',
+        transactionId: mockTxId,
+        originalTransactionId: mockTxId,
+        purchaseDate: Date.now(),
+        expiresDate: expiresDate.getTime(),
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          productId: 'com.flirttime.monthly',
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.plan.name).toBe('One Month + 200 Coin');
+      expect(res.body.data.bonusCoinsCredited).toBe(100);
+      expect(res.body.data.currentBalance).toBe(600);
+    });
+
+    it('should reject Apple subscription with bundle ID mismatch', async () => {
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.onevibe.live', // Wrong/unauthorized bundle
+        productId: 'com.flirttime.weekly',
+        transactionId: '1001',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('BUNDLE_ID_MISMATCH');
+    });
+
+    it('should reject revoked or refunded Apple subscription', async () => {
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'com.flirttime.weekly',
+        transactionId: '1002',
+        revocationDate: Date.now(),
+        revocationReason: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('SUBSCRIPTION_REVOKED');
+    });
+  });
+
+  describe('2. Google Play Subscription Verification (POST /api/v1/subscriptions/purchase/verify)', () => {
+    it('should successfully verify a valid Google Play subscription and grant entitlement + bonus coins', async () => {
+      const mockOrderId = `GPA.${Date.now()}-12345..0`;
+      const expiresDate = new Date(Date.now() + 7 * 86400000);
+
+      jest.spyOn(iapService, 'queryGooglePlaySubscriptionAPI').mockResolvedValue({
+        startTimeMillis: String(Date.now()),
+        expiryTimeMillis: String(expiresDate.getTime()),
+        autoRenewing: true,
+        paymentState: 1, // Received
+        acknowledgementState: 1,
+        orderId: mockOrderId,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'android',
+          productId: 'one_week_subscription',
+          purchaseToken: 'play_valid_sub_token_123',
+          packageName: 'com.app.flirttime',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isEntitled).toBe(true);
+      expect(res.body.data.status).toBe('active');
+      expect(res.body.data.bonusCoinsCredited).toBe(50);
+      expect(res.body.data.currentBalance).toBe(550);
+    });
+
+    it('should reject Google Play subscription when package name mismatches', async () => {
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'android',
+          productId: 'one_week_subscription',
+          purchaseToken: 'play_token',
+          packageName: 'com.app.wrongpackage',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('PACKAGE_NAME_MISMATCH');
+    });
+
+    it('should reject Google Play subscription if payment is pending (state 0)', async () => {
+      jest.spyOn(iapService, 'queryGooglePlaySubscriptionAPI').mockResolvedValue({
+        startTimeMillis: String(Date.now()),
+        expiryTimeMillis: String(Date.now() + 7 * 86400000),
+        autoRenewing: true,
+        paymentState: 0, // Pending
+        acknowledgementState: 0,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'android',
+          productId: 'one_week_subscription',
+          purchaseToken: 'play_token_pending',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('SUBSCRIPTION_PAYMENT_PENDING');
+    });
+
+    it('should preserve entitlement until expiry when subscription is canceled (autoRenewing = false)', async () => {
+      const expiresDate = new Date(Date.now() + 5 * 86400000); // 5 days left
+
+      jest.spyOn(iapService, 'queryGooglePlaySubscriptionAPI').mockResolvedValue({
+        startTimeMillis: String(Date.now()),
+        expiryTimeMillis: String(expiresDate.getTime()),
+        autoRenewing: false, // Canceled auto-renew
+        cancelReason: 0, // User canceled
+        paymentState: 1,
+        acknowledgementState: 1,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'android',
+          productId: 'one_week_subscription',
+          purchaseToken: 'play_token_canceled_active',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('canceled');
+      expect(res.body.data.isEntitled).toBe(true); // Entitled until expiry!
+      expect(res.body.data.autoRenewing).toBe(false);
+    });
+  });
+
+  describe('3. Validation, Product Mismatch & Idempotency Safeguards', () => {
+    it('should reject purchase for an inactive subscription plan with 400', async () => {
+      await weeklyPlan.update({ is_active: false });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('PLAN_INACTIVE');
+    });
+
+    it('should reject when store product does not match database plan product', async () => {
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'different_unmatched_product',
+        transactionId: '1004',
+        purchaseDate: Date.now(),
+        expiresDate: Date.now() + 86400000,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.errorCode).toBe('PRODUCT_MISMATCH');
+    });
+
+    it('should handle duplicate verification request idempotently without crediting bonus coins again', async () => {
+      const mockTxId = `dup_sub_tx_${Date.now()}`;
+      const expiresDate = new Date(Date.now() + 7 * 86400000);
+
+      jest.spyOn(iapService, 'verifyAppleSubscription').mockResolvedValue({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        originalTransactionId: mockTxId,
+        productId: 'com.flirttime.weekly',
+        environment: 'production',
+        purchaseDate: new Date(),
+        expiresDate,
+        autoRenewing: true,
+        status: 'active',
+        isEntitled: true,
+        isAcknowledged: true,
+        rawResponse: {},
+      });
+
+      // Request 1: Fresh purchase
+      const res1 = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({ platform: 'ios', planId: weeklyPlan.id, transactionId: mockTxId });
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.alreadyProcessed).toBe(false);
+      expect(res1.body.data.bonusCoinsCredited).toBe(50);
+      expect(res1.body.data.currentBalance).toBe(550);
+
+      // Request 2: Duplicate request
+      const res2 = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({ platform: 'ios', planId: weeklyPlan.id, transactionId: mockTxId });
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.alreadyProcessed).toBe(true);
+      expect(res2.body.data.bonusCoinsCredited).toBe(0); // ZERO duplicate coins!
+      expect(res2.body.data.currentBalance).toBe(550); // Balance unchanged!
+
+      // Check DB records: exactly ONE subscription and ONE bonus coin ledger entry
+      const subCount = await UserSubscription.count({ where: { storeTransactionId: mockTxId } });
+      expect(subCount).toBe(1);
+
+      const ledgerCount = await CoinTransaction.count({ where: { description: { [Op.like]: '%One Week%' } } });
+      expect(ledgerCount).toBe(1);
+    });
+
+    it('should safely handle two concurrent verification requests without duplicate entitlements or bonus coins', async () => {
+      const concurrentTxId = `concurrent_sub_${Date.now()}`;
+      const expiresDate = new Date(Date.now() + 7 * 86400000);
+
+      jest.spyOn(iapService, 'verifyAppleSubscription').mockResolvedValue({
+        platform: 'ios',
+        storeTransactionId: concurrentTxId,
+        originalTransactionId: concurrentTxId,
+        productId: 'com.flirttime.weekly',
+        environment: 'production',
+        purchaseDate: new Date(),
+        expiresDate,
+        autoRenewing: true,
+        status: 'active',
+        isEntitled: true,
+        isAcknowledged: true,
+        rawResponse: {},
+      });
+
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/v1/subscriptions/purchase/verify')
+          .set('Authorization', `Bearer ${testToken}`)
+          .send({ platform: 'ios', planId: weeklyPlan.id, transactionId: concurrentTxId }),
+        request(app)
+          .post('/api/v1/subscriptions/purchase/verify')
+          .set('Authorization', `Bearer ${testToken}`)
+          .send({ platform: 'ios', planId: weeklyPlan.id, transactionId: concurrentTxId }),
+      ]);
+
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+
+      const oneAlreadyProcessed = res1.body.data.alreadyProcessed || res2.body.data.alreadyProcessed;
+      expect(oneAlreadyProcessed).toBe(true);
+
+      const finalUser = await User.findByPk(testUser.id);
+      expect(finalUser?.coins).toBe(550); // Credited exactly ONCE!
+      expect(finalUser?.isSubscribed).toBe(true);
+    });
+  });
+
+  describe('4. Entitlement & History APIs (GET /my and GET /history)', () => {
+    it('should retrieve current subscription and entitlement status via GET /api/v1/subscriptions/my', async () => {
+      const expiresDate = new Date(Date.now() + 10 * 86400000);
+
+      await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'my_sub_tx_1',
+        originalTransactionId: 'my_sub_tx_1',
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: expiresDate,
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      await testUser.update({ isSubscribed: true });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isSubscribed).toBe(true);
+      expect(res.body.data.subscription.productId).toBe('com.flirttime.weekly');
+      expect(res.body.data.plan.name).toBe('One Week + 50 Coins');
+      expect(Array.isArray(res.body.data.features)).toBe(true);
+      expect(res.body.data.features.length).toBeGreaterThan(0);
+    });
+
+    it('should mark entitlement as false when subscription is expired', async () => {
+      const pastDate = new Date(Date.now() - 2 * 86400000); // Expired 2 days ago
+
+      await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'expired_sub_tx',
+        originalTransactionId: 'expired_sub_tx',
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(Date.now() - 9 * 86400000),
+        expiresAt: pastDate,
+        autoRenewing: false,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.isSubscribed).toBe(false);
+      expect(res.body.data.subscription.status).toBe('expired');
+    });
+
+    it('should retrieve paginated subscription history via GET /api/v1/subscriptions/history', async () => {
+      await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'hist_tx_1',
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 86400000),
+        autoRenewing: true,
+        price: '4.99',
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/history?page=1&limit=10')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.subscriptions.length).toBe(1);
+      expect(res.body.data.pagination.totalSubscriptions).toBe(1);
+    });
+  });
+
+  describe('5. Store Server Notifications & Webhooks', () => {
+    it('should handle Apple App Store Server Notification (DID_RENEW)', async () => {
+      const origTx = 'orig_tx_renew_test';
+      const initialExpires = new Date(Date.now() + 1000);
+      const renewedExpires = new Date(Date.now() + 7 * 86400000);
+
+      const sub = await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: origTx,
+        originalTransactionId: origTx,
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: initialExpires,
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockImplementation((jws: string) => {
+        if (jws.includes('payload_signed_transaction')) {
+          return {
+            transactionId: `renewed_tx_${Date.now()}`,
+            originalTransactionId: origTx,
+            productId: 'com.flirttime.weekly',
+            expiresDate: renewedExpires.getTime(),
+          };
+        }
+        return {
+          notificationType: 'DID_RENEW',
+          subtype: 'BILLING_RECOVERY',
+          notificationUUID: `notif_${Date.now()}`,
+          data: {
+            signedTransactionInfo: 'payload_signed_transaction',
+          },
+        };
+      });
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/webhook/apple')
+        .send({ signedPayload: 'outer_apple_jws_payload' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.eventType).toBe('DID_RENEW');
+
+      const updatedSub = await UserSubscription.findByPk(sub.id);
+      expect(updatedSub?.status).toBe('active');
+      expect(updatedSub?.isEntitled).toBe(true);
+      expect(new Date(updatedSub!.expiresAt).getTime()).toBe(renewedExpires.getTime());
+    });
+
+    it('should handle Google Play Pub/Sub Real-Time Notification', async () => {
+      const token = 'google_sub_token_webhook';
+      const sub = await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'android',
+        productId: 'one_week_subscription',
+        storeTransactionId: 'gpa_webhook_order',
+        purchaseToken: token,
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 86400000),
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      const pubSubBody = {
+        message: {
+          data: Buffer.from(
+            JSON.stringify({
+              version: '1.0',
+              packageName: 'com.app.flirttime',
+              eventTimeMillis: String(Date.now()),
+              subscriptionNotification: {
+                version: '1.0',
+                notificationType: 13, // SUBSCRIPTION_EXPIRED
+                purchaseToken: token,
+                subscriptionId: 'one_week_subscription',
+              },
+            })
+          ).toString('base64'),
+          messageId: `msg_${Date.now()}`,
+        },
+      };
+
+      const res = await request(app)
+        .post('/api/v1/subscriptions/webhook/google')
+        .send(pubSubBody);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      const refreshedSub = await UserSubscription.findByPk(sub.id);
+      expect(refreshedSub?.status).toBe('expired');
+      expect(refreshedSub?.isEntitled).toBe(false);
+    });
+  });
+});

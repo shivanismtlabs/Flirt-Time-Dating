@@ -34,6 +34,8 @@ import { SubscriptionFeature } from './subscriptionFeature.model';
 import { PlanFeature } from './planFeature.model';
 import { CoinPurchase } from './coinPurchase.model';
 import { CoinTransaction } from './coinTransaction.model';
+import { UserSubscription } from './userSubscription.model';
+import { SubscriptionEventLog } from './subscriptionEventLog.model';
 
 // Define associations
 User.hasMany(UserIdentity, {
@@ -538,6 +540,30 @@ CoinTransaction.belongsTo(User, {
   as: 'user',
 });
 
+// User <-> UserSubscription associations
+User.hasMany(UserSubscription, {
+  foreignKey: 'userId',
+  as: 'subscriptions',
+  onDelete: 'CASCADE',
+});
+
+UserSubscription.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// SubscriptionPlan <-> UserSubscription associations
+SubscriptionPlan.hasMany(UserSubscription, {
+  foreignKey: 'planId',
+  as: 'subscriptions',
+  onDelete: 'SET NULL',
+});
+
+UserSubscription.belongsTo(SubscriptionPlan, {
+  foreignKey: 'planId',
+  as: 'plan',
+});
+
 export {
   sequelize,
   User,
@@ -573,6 +599,8 @@ export {
   PlanFeature,
   CoinPurchase,
   CoinTransaction,
+  UserSubscription,
+  SubscriptionEventLog,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -1073,10 +1101,22 @@ export const ensureSubscriptionTables = async (): Promise<void> => {
   try {
     if (sequelize.getDialect() === 'postgres') {
       try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_subscribed" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "subscription_expires_at" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "active_subscription_plan_id" INTEGER;');
         await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "discount" VARCHAR(50);');
         await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "is_popular_plan" BOOLEAN DEFAULT false;');
       } catch (_e) {}
     } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "is_subscribed" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "subscription_expires_at" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "active_subscription_plan_id" INTEGER;');
+      } catch (_e) {}
       try {
         await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN "discount" VARCHAR(50);');
       } catch (_e) {}
@@ -1087,6 +1127,8 @@ export const ensureSubscriptionTables = async (): Promise<void> => {
     await SubscriptionPlan.sync();
     await SubscriptionFeature.sync();
     await PlanFeature.sync();
+    await UserSubscription.sync();
+    await SubscriptionEventLog.sync();
   } catch (err: any) {
     console.warn('⚠️ Could not sync Subscription tables:', err.message);
   }

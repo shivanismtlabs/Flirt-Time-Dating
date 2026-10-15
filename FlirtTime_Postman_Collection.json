@@ -1737,6 +1737,359 @@
             "description": "Reports target user for policy violations. Supported reasons: fake_profile, harassment, inappropriate_content, spam, scam, underage, other."
           },
           "response": []
+        },
+        {
+          "name": "Discovery Filters: Get Supported Options",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters/options",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters",
+                "options"
+              ]
+            },
+            "description": "Returns authoritative discovery filter options sourced from backend configuration: supported genders (women, men, non_binary, everyone), min/max age boundaries (18-70), distance range (1-100 km, null for Anywhere), looking-for values, 20 canonical UI interests with icons, verification options, and online presence freshness rules. Dual route: also accessible at /api/discovery/filters/options."
+          },
+          "response": [
+            {
+              "name": "200 OK - Supported Filter Options Fetched Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filter options fetched successfully\",\n  \"data\": {\n    \"genders\": [\n      {\n        \"value\": \"women\",\n        \"label\": \"Women\"\n      },\n      {\n        \"value\": \"men\",\n        \"label\": \"Men\"\n      },\n      {\n        \"value\": \"non_binary\",\n        \"label\": \"Non-binary\"\n      },\n      {\n        \"value\": \"everyone\",\n        \"label\": \"Everyone\"\n      }\n    ],\n    \"age\": {\n      \"minAllowed\": 18,\n      \"maxAllowed\": 70,\n      \"defaultMin\": 18,\n      \"defaultMax\": 35\n    },\n    \"distance\": {\n      \"minKm\": 1,\n      \"maxKm\": 100,\n      \"defaultKm\": 50,\n      \"anywhereValue\": null,\n      \"anywhereLabel\": \"Anywhere\"\n    },\n    \"lookingFor\": [\n      {\n        \"value\": \"long_term\",\n        \"label\": \"Long-term\"\n      },\n      {\n        \"value\": \"casual\",\n        \"label\": \"Something casual\"\n      },\n      {\n        \"value\": \"not_sure\",\n        \"label\": \"Not sure yet\"\n      }\n    ],\n    \"interests\": [\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000001\",\n        \"name\": \"Cinema\",\n        \"icon\": \"🎬\",\n        \"displayOrder\": 1\n      },\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000002\",\n        \"name\": \"Cooking\",\n        \"icon\": \"🍳\",\n        \"displayOrder\": 2\n      },\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000003\",\n        \"name\": \"Dance\",\n        \"icon\": \"💃\",\n        \"displayOrder\": 3\n      }\n    ],\n    \"verification\": [\n      {\n        \"value\": \"verified_only\",\n        \"label\": \"Verified only\",\n        \"description\": \"Show only photo-verified profiles\"\n      }\n    ],\n    \"online\": [\n      {\n        \"value\": \"online_now\",\n        \"label\": \"Online now\",\n        \"freshnessThresholdMinutes\": 15,\n        \"description\": \"Show only currently active users\"\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Get Saved Preferences (or Documented Defaults)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters"
+              ]
+            },
+            "description": "Returns the authenticated user's saved discovery filter preferences. If no preferences have been saved yet, returns documented defaults (women, 18-35, 50km, all looking-for, empty interests, verifiedOnly: false, onlineOnly: false) without creating duplicate DB records on read. Dual route: /api/discovery/filters."
+          },
+          "response": [
+            {
+              "name": "200 OK - Saved Preferences or Documented Defaults",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filter preferences fetched successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 18,\n    \"ageMax\": 35,\n    \"maxDistanceKm\": 50,\n    \"isAnywhere\": false,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\",\n      \"not_sure\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": false,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:00:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Invalid Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid or expired token\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Update Preferences",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"genders\": [\n    \"women\",\n    \"non_binary\"\n  ],\n  \"ageMin\": 21,\n  \"ageMax\": 32,\n  \"maxDistanceKm\": null,\n  \"lookingFor\": [\n    \"long_term\",\n    \"casual\"\n  ],\n  \"interestIds\": [\n    \"11111111-0000-0000-0000-000000000001\"\n  ],\n  \"verifiedOnly\": true,\n  \"onlineOnly\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters"
+              ]
+            },
+            "description": "Validates and saves the authenticated user's filter preferences atomically using transactions. Strict schema validation rejects unknown fields, prevents ageMin > ageMax, deduplicates interest IDs and gender selections, validates interest UUIDs, and treats maxDistanceKm: null explicitly as Anywhere. Dual route: /api/discovery/filters."
+          },
+          "response": [
+            {
+              "name": "200 OK - Preferences Updated Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filters updated successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\",\n      \"non_binary\"\n    ],\n    \"ageMin\": 21,\n    \"ageMax\": 32,\n    \"maxDistanceKm\": null,\n    \"isAnywhere\": true,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\"\n    ],\n    \"interestIds\": [\n      \"11111111-0000-0000-0000-000000000001\"\n    ],\n    \"verifiedOnly\": true,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:05:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Validation Error (e.g. ageMin > ageMax)",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid discovery filter payload\",\n  \"errors\": [\n    {\n      \"field\": \"ageMin\",\n      \"message\": \"ageMin (40) cannot be greater than ageMax (25)\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "400 Bad Request - Unsupported Interest ID",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid discovery filter payload\",\n  \"errors\": [\n    {\n      \"field\": \"interestIds\",\n      \"message\": \"Interest with ID \\\"00000000-0000-0000-0000-000000000000\\\" not found or inactive\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "401 Unauthorized - Token Missing",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Reset Preferences to Defaults",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters",
+                "reset"
+              ]
+            },
+            "description": "Atomically resets the authenticated user's saved filter preferences to default values (women, 18-35, 50km, all looking-for, empty interests, verifiedOnly: false, onlineOnly: false). Never deletes profile, matches, likes, messages, or moments. Dual route: /api/discovery/filters/reset."
+          },
+          "response": [
+            {
+              "name": "200 OK - Preferences Reset Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filters reset to defaults successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 18,\n    \"ageMax\": 35,\n    \"maxDistanceKm\": 50,\n    \"isAnywhere\": false,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\",\n      \"not_sure\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": false,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:10:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Search Profiles & Calculate Match Count",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": {\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 20,\n    \"ageMax\": 30,\n    \"maxDistanceKm\": 50,\n    \"lookingFor\": [\n      \"long_term\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": true,\n    \"onlineOnly\": false\n  },\n  \"page\": 1,\n  \"limit\": 10,\n  \"countOnly\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "search"
+              ]
+            },
+            "description": "Applies filter parameters (or falls back to user's saved preferences) to return eligible dating profile cards with pagination. Strictly excludes authenticated user, blocked users, previously swiped profiles, and inactive profiles. Supports countOnly: true for fast real-time UI match counter without returning profile cards. Dual route: /api/discovery/search."
+          },
+          "response": [
+            {
+              "name": "200 OK - Search Results with Profiles",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery search completed successfully\",\n  \"data\": {\n    \"profiles\": [\n      {\n        \"id\": \"c138fd90-1c52-4753-b09e-7164ec397451\",\n        \"name\": \"Sophia\",\n        \"age\": 24,\n        \"gender\": \"female\",\n        \"bio\": \"Art enthusiast, yoga lover, and weekend traveler.\",\n        \"isFaceVerified\": true,\n        \"isOnline\": true,\n        \"lastActiveAt\": \"2026-10-15T12:00:00.000Z\",\n        \"distanceKm\": 12,\n        \"city\": \"Mumbai\",\n        \"state\": \"Maharashtra\",\n        \"lookingFor\": \"long_term\",\n        \"primaryPhotoUrl\": \"https://flirttime-media.s3.amazonaws.com/photos/sophia_primary.jpg\",\n        \"photos\": [\n          {\n            \"id\": \"p1\",\n            \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/sophia_primary.jpg\",\n            \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/sophia_primary.jpg\",\n            \"isPrimary\": true,\n            \"displayOrder\": 1\n          }\n        ],\n        \"interests\": [\n          {\n            \"id\": \"11111111-0000-0000-0000-000000000001\",\n            \"name\": \"Cinema\",\n            \"icon\": \"🎬\",\n            \"displayOrder\": 1\n          }\n        ],\n        \"quickMomentCount\": 2,\n        \"hasViewedQuickMoment\": false\n      }\n    ],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 1,\n      \"totalPages\": 1,\n      \"hasMore\": false\n    },\n    \"totalCount\": 1,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"women\"\n      ],\n      \"ageMin\": 20,\n      \"ageMax\": 30,\n      \"maxDistanceKm\": 50,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": true,\n      \"onlineOnly\": false\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK - Match Count Only (countOnly: true)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery match count retrieved successfully\",\n  \"data\": {\n    \"profiles\": [],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 42,\n      \"totalPages\": 5,\n      \"hasMore\": false\n    },\n    \"totalCount\": 42,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"women\"\n      ],\n      \"ageMin\": 18,\n      \"ageMax\": 35,\n      \"maxDistanceKm\": 50,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\",\n        \"casual\",\n        \"not_sure\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": false,\n      \"onlineOnly\": false\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK - Empty Results",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"No profiles match your filter criteria\",\n  \"data\": {\n    \"profiles\": [],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 0,\n      \"totalPages\": 0,\n      \"hasMore\": false\n    },\n    \"totalCount\": 0,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"men\"\n      ],\n      \"ageMin\": 65,\n      \"ageMax\": 70,\n      \"maxDistanceKm\": 5,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": true,\n      \"onlineOnly\": true\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Invalid Search Parameters",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid search parameters\",\n  \"errors\": [\n    {\n      \"field\": \"limit\",\n      \"message\": \"Limit must be at most 50\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
         }
       ]
     },
@@ -2635,7 +2988,7 @@
           "response": []
         },
         {
-          "name": "Screen 25: Upload Photo to Gallery",
+          "name": "Screen 25: Upload Photos to Gallery (Min 3, Max 5)",
           "request": {
             "method": "POST",
             "header": [
@@ -2648,15 +3001,22 @@
               "mode": "formdata",
               "formdata": [
                 {
-                  "key": "photo",
+                  "key": "photos",
                   "type": "file",
                   "src": [],
-                  "description": "Image file (JPEG, PNG, WebP <= 5MB)"
+                  "description": "Image file 1 (JPEG, PNG, WebP <= 5MB) - Minimum 3, Maximum 5 photos required"
                 },
                 {
-                  "key": "isPrimary",
-                  "value": "false",
-                  "type": "text"
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 2 (JPEG, PNG, WebP <= 5MB)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 3 (JPEG, PNG, WebP <= 5MB)"
                 }
               ]
             },
@@ -2671,7 +3031,57 @@
                 "onboarding",
                 "photos"
               ]
-            }
+            },
+            "description": "Upload gallery profile photos (Screen 25 & Edit Profile). Strictly enforces minimum 3 and maximum 5 images in every request. Also supported under POST /api/v1/users/photos."
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Edit Profile Photos (PUT /api/v1/users/photos - Min 3, Max 5)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 1 (Min 3, Max 5)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 2"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 3"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "photos"
+              ]
+            },
+            "description": "Edit or replace profile photos gallery. Strictly requires min 3 and max 5 photos. Also supported under PUT /api/v1/onboarding/photos."
           },
           "response": []
         },

@@ -299,6 +299,10 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       quickMoments: quickMomentsSummary,
     };
 
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     return sendSuccess(res, 'Profile fetched successfully', profileResponse);
   } catch (error: any) {
     return sendError(res, error.message || 'Error fetching profile', 500);
@@ -323,6 +327,10 @@ export const getOtherUserProfileHandler = async (req: AuthenticatedRequest, res:
     }
 
     const profileData = await getOtherUserProfile(viewerUserId, targetUserId);
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
 
     return sendSuccess(res, 'Profile fetched successfully', profileData);
   } catch (error: any) {

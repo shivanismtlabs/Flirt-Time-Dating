@@ -20,7 +20,7 @@ describe('Onboarding Preference & Media APIs', () => {
 
     // Mock S3 storage
     jest.spyOn(s3Service, 'uploadMedia').mockResolvedValue('mock_s3_key_123.jpg');
-    jest.spyOn(s3Service, 'deleteObject').mockResolvedValue(undefined);
+    jest.spyOn(s3Service as any, 'deleteObject').mockResolvedValue(undefined as any);
   });
 
   beforeEach(async () => {
@@ -160,24 +160,89 @@ describe('Onboarding Preference & Media APIs', () => {
     });
   });
 
-  describe('5. Screen 25: Profile Photos Gallery', () => {
-    it('should upload a photo and mark the first photo as primary', async () => {
-      const fakePhoto = await createBlankImage(200, 200);
+  describe('5. Screen 25: Profile Photos Gallery (Min 3 and Max 5 images)', () => {
+    it('should reject upload when fewer than 3 photos are provided (MIN_PHOTOS_REQUIRED)', async () => {
+      const fakePhoto1 = await createBlankImage(200, 200);
+      const fakePhoto2 = await createBlankImage(200, 200);
 
       const res = await request(app)
         .post('/api/v1/onboarding/photos')
         .set('Authorization', `Bearer ${authToken}`)
-        .attach('photo', fakePhoto, 'profile.jpg');
+        .attach('photos', fakePhoto1, 'p1.jpg')
+        .attach('photos', fakePhoto2, 'p2.jpg');
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/at least 3 photos/i);
+    });
+
+    it('should reject upload when more than 5 photos are provided (MAX_PHOTOS_EXCEEDED)', async () => {
+      const p1 = await createBlankImage(200, 200);
+      const p2 = await createBlankImage(200, 200);
+      const p3 = await createBlankImage(200, 200);
+      const p4 = await createBlankImage(200, 200);
+      const p5 = await createBlankImage(200, 200);
+      const p6 = await createBlankImage(200, 200);
+
+      const res = await request(app)
+        .post('/api/v1/onboarding/photos')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('photos', p1, 'p1.jpg')
+        .attach('photos', p2, 'p2.jpg')
+        .attach('photos', p3, 'p3.jpg')
+        .attach('photos', p4, 'p4.jpg')
+        .attach('photos', p5, 'p5.jpg')
+        .attach('photos', p6, 'p6.jpg');
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/maximum 5/i);
+    });
+
+    it('should successfully upload 3 photos, set first as primary, and update profilePicture', async () => {
+      const fakePhoto1 = await createBlankImage(200, 200);
+      const fakePhoto2 = await createBlankImage(200, 200);
+      const fakePhoto3 = await createBlankImage(200, 200);
+
+      const res = await request(app)
+        .post('/api/v1/onboarding/photos')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('photos', fakePhoto1, 'p1.jpg')
+        .attach('photos', fakePhoto2, 'p2.jpg')
+        .attach('photos', fakePhoto3, 'p3.jpg');
 
       expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
       expect(res.body.data.photo).toBeDefined();
       expect(res.body.data.photo.isPrimary).toBe(true);
+      expect(res.body.data.photos).toHaveLength(3);
+      expect(res.body.data.totalPhotos).toBe(3);
 
       const updatedUser = await User.findByPk(user.id);
       expect(updatedUser?.profilePicture).toBe('mock_s3_key_123.jpg');
     });
 
-    it('should allow setting a photo as primary and deleting photos', async () => {
+    it('should allow editing/replacing photos via PUT /api/v1/onboarding/photos with 4 photos', async () => {
+      const p1 = await createBlankImage(200, 200);
+      const p2 = await createBlankImage(200, 200);
+      const p3 = await createBlankImage(200, 200);
+      const p4 = await createBlankImage(200, 200);
+
+      const res = await request(app)
+        .put('/api/v1/onboarding/photos')
+        .set('Authorization', `Bearer ${authToken}`)
+        .attach('photos', p1, 'new1.jpg')
+        .attach('photos', p2, 'new2.jpg')
+        .attach('photos', p3, 'new3.jpg')
+        .attach('photos', p4, 'new4.jpg');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(4);
+      expect(res.body.data.totalPhotos).toBe(4);
+    });
+
+    it('should allow setting a photo as primary', async () => {
       const p1 = await UserPhoto.create({
         userId: user.id,
         imageUrl: 'photo1.jpg',
@@ -192,6 +257,13 @@ describe('Onboarding Preference & Media APIs', () => {
         displayOrder: 1,
       });
 
+      const p3 = await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo3.jpg',
+        isPrimary: false,
+        displayOrder: 2,
+      });
+
       // Set p2 as primary
       const patchRes = await request(app)
         .patch(`/api/v1/onboarding/photos/${p2.id}/primary`)
@@ -199,13 +271,77 @@ describe('Onboarding Preference & Media APIs', () => {
 
       expect(patchRes.status).toBe(200);
       expect(patchRes.body.data.photo.isPrimary).toBe(true);
+    });
 
-      // Delete p1
+    it('should reject deleting a photo when user has only 3 photos (cannot drop below min 3)', async () => {
+      const p1 = await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo1.jpg',
+        isPrimary: true,
+        displayOrder: 0,
+      });
+
+      await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo2.jpg',
+        isPrimary: false,
+        displayOrder: 1,
+      });
+
+      await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo3.jpg',
+        isPrimary: false,
+        displayOrder: 2,
+      });
+
+      const delRes = await request(app)
+        .delete(`/api/v1/onboarding/photos/${p1.id}`)
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(delRes.status).toBe(400);
+      expect(delRes.body.success).toBe(false);
+      expect(delRes.body.message).toMatch(/minimum 3 profile photos required/i);
+    });
+
+    it('should allow deleting a photo when user has more than 3 photos (e.g. 4 photos)', async () => {
+      const p1 = await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo1.jpg',
+        isPrimary: true,
+        displayOrder: 0,
+      });
+
+      await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo2.jpg',
+        isPrimary: false,
+        displayOrder: 1,
+      });
+
+      await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo3.jpg',
+        isPrimary: false,
+        displayOrder: 2,
+      });
+
+      await UserPhoto.create({
+        userId: user.id,
+        imageUrl: 'photo4.jpg',
+        isPrimary: false,
+        displayOrder: 3,
+      });
+
       const delRes = await request(app)
         .delete(`/api/v1/onboarding/photos/${p1.id}`)
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(delRes.status).toBe(200);
+      expect(delRes.body.success).toBe(true);
+
+      const remaining = await UserPhoto.count({ where: { userId: user.id } });
+      expect(remaining).toBe(3);
     });
   });
 

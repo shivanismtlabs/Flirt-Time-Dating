@@ -79,13 +79,13 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
 };
 
 /**
- * Middleware for gallery profile photo uploads (Max 5MB, JPEG/PNG/WebP)
+ * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP, up to 5 images)
  */
 export const uploadPhoto = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB
-    files: 1,
+    fileSize: 5 * 1024 * 1024, // 5 MB per photo
+    files: 5,
   },
   fileFilter: (_req, file, cb) => {
     if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
@@ -98,15 +98,31 @@ export const uploadPhoto = multer({
 
 export const handleUploadPhoto = (req: Request, res: Response, next: NextFunction) => {
   const upload = uploadPhoto.fields([
-    { name: 'photo', maxCount: 1 },
-    { name: 'image', maxCount: 1 },
+    { name: 'photos', maxCount: 5 },
+    { name: 'images', maxCount: 5 },
+    { name: 'photo', maxCount: 5 },
+    { name: 'image', maxCount: 5 },
+    { name: 'files', maxCount: 5 },
   ]);
 
   upload(req, res, (err: any) => {
     if (err) {
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return sendError(res, 'Photo size exceeds 5MB limit. Please upload a smaller image.', 400, 'FILE_TOO_LARGE');
+          return sendError(
+            res,
+            'Photo size exceeds 5MB limit. Please upload a smaller image.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
+          return sendError(
+            res,
+            'Maximum 5 photos allowed. Please upload between 3 and 5 images.',
+            400,
+            'MAX_PHOTOS_EXCEEDED'
+          );
         }
         return sendError(res, err.message, 400, err.code);
       }

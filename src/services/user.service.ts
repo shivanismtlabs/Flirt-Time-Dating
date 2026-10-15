@@ -1,4 +1,5 @@
 import { User } from '../models/user.model';
+import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
 
@@ -75,6 +76,9 @@ export interface UpdateProfileInput {
   children?: string | null;
   coverPicture?: string | null;
   coverPhoto?: string | null;
+  profilePicture?: string | null;
+  profilePhoto?: string | null;
+  imageKey?: string | null;
   moreAboutMe?: {
     drinking?: string | null;
     education?: string | null;
@@ -310,6 +314,40 @@ export const updateUserProfile = async (
   }
   if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
     user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
+  }
+
+  const incomingPhoto = data.profilePicture ?? data.profilePhoto ?? (data as any).imageKey;
+  if (incomingPhoto !== undefined) {
+    if (incomingPhoto === null) {
+      user.profilePicture = null;
+      await UserPhoto.update(
+        { isPrimary: false },
+        { where: { userId, isPrimary: true } }
+      );
+    } else if (typeof incomingPhoto === 'string' && incomingPhoto.trim()) {
+      const cleanPhoto = incomingPhoto.trim();
+      user.profilePicture = cleanPhoto;
+      // Demote existing primary photo
+      await UserPhoto.update(
+        { isPrimary: false },
+        { where: { userId, isPrimary: true } }
+      );
+      // Ensure UserPhoto record exists and is marked primary
+      const [photoRec] = await UserPhoto.findOrCreate({
+        where: { userId, imageUrl: cleanPhoto },
+        defaults: {
+          userId,
+          imageUrl: cleanPhoto,
+          isPrimary: true,
+          status: 'approved',
+          displayOrder: 0,
+        },
+      });
+      if (!photoRec.isPrimary) {
+        photoRec.isPrimary = true;
+        await photoRec.save();
+      }
+    }
   }
 
   user.isProfileComplete = true;
@@ -574,10 +612,13 @@ export const getOtherUserProfile = async (
 
   // 7. Moments gallery (active Quick Moments with fallback to approved gallery photos)
   const rawPhotos = (targetUser.photos || []) as any[];
+  const primaryPhotoRecord = rawPhotos.find((p) => p.isPrimary);
   const primaryPhoto =
+    primaryPhotoRecord?.imageUrl ||
     targetUser.profilePicture ||
-    rawPhotos.find((p) => p.isPrimary)?.imageUrl ||
+    (rawPhotos[0]?.imageUrl) ||
     null;
+  const photoVersion = primaryPhotoRecord?.updatedAt || targetUser.updatedAt;
 
   const { momentService } = await import('./moment.service');
   let moments: any[] = [];
@@ -684,8 +725,8 @@ export const getOtherUserProfile = async (
     fullName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
-    profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto) : null,
-    profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto) : null,
+    profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
+    profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
     coverPhoto: targetUser.coverPicture
       ? {
           url: formatMediaUrl(targetUser.coverPicture),

@@ -305,7 +305,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'user',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
             },
           ],
         },
@@ -316,7 +316,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'viewer',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'updatedAt'],
             },
           ],
         },
@@ -325,7 +325,7 @@ export class QuickMomentService {
     });
 
     const viewer = await User.findByPk(viewerUserId, {
-      attributes: ['id', 'fullName', 'nickName', 'profilePicture'],
+      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'updatedAt'],
     });
 
     const authorName = viewer?.fullName || viewer?.nickName || 'You';
@@ -376,7 +376,7 @@ export class QuickMomentService {
           user: {
             id: r.user?.id,
             name: r.user?.fullName || r.user?.nickName || 'User',
-            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
+            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
             city: r.user?.city,
             isVerified: !!r.user?.isFaceVerified,
           },
@@ -384,7 +384,7 @@ export class QuickMomentService {
         viewers: (m.views || []).map((v: any) => ({
           userId: v.viewer?.id,
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-          avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture) : null,
+          avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
           isVerified: !!v.viewer?.isFaceVerified,
           viewedAt: v.createdAt,
         })),
@@ -540,6 +540,18 @@ export class QuickMomentService {
       throw new QuickMomentServiceError('Quick moment not found', 404, 'MOMENT_NOT_FOUND');
     }
 
+    const viewer = await User.findByPk(viewerUserId, { attributes: ['id', 'role'] });
+    const isOwner = moment.userId === viewerUserId;
+    const isAuthorized = isOwner || viewer?.role === 'admin';
+
+    if (!isAuthorized) {
+      throw new QuickMomentServiceError(
+        'Only the moment owner can view reaction details',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
     const page = Math.max(1, options.page || 1);
     const limit = Math.max(1, Math.min(100, options.limit || 20));
     const offset = (page - 1) * limit;
@@ -564,7 +576,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'user',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -580,7 +592,7 @@ export class QuickMomentService {
       user: {
         id: r.user?.id,
         name: r.user?.fullName || r.user?.nickName || 'User',
-        avatar: r.user?.profilePicture,
+        avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
         city: r.user?.city,
         isVerified: !!r.user?.isFaceVerified,
       },
@@ -638,11 +650,74 @@ export class QuickMomentService {
         await existingReaction.destroy();
         action = 'removed';
         currentEmoji = null;
+
+        // Clean up reaction notification since reaction was removed
+        if (moment.userId !== viewerUserId) {
+          try {
+            await Notification.destroy({
+              where: {
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                entityId: momentId,
+              },
+            });
+          } catch (notifErr: any) {
+            console.warn('[Quick Moment Notif Clean Warning]:', notifErr.message);
+          }
+        }
       } else {
         // Update to new emoji
         existingReaction.emoji = emoji;
         await existingReaction.save();
         action = 'updated';
+
+        // Update existing notification or create if not present without duplicating
+        if (moment.userId !== viewerUserId) {
+          try {
+            const reactor = await User.findByPk(viewerUserId, {
+              attributes: ['id', 'fullName', 'nickName'],
+            });
+            const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
+
+            const existingNotif = await Notification.findOne({
+              where: {
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                entityId: momentId,
+              },
+            });
+
+            if (existingNotif) {
+              existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
+              existingNotif.data = {
+                quickMomentId: momentId,
+                emoji,
+                navigation: { type: 'quick_moment', targetId: momentId },
+              };
+              existingNotif.isRead = false;
+              await existingNotif.save();
+            } else {
+              await Notification.create({
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                title: 'New Quick Moment Reaction',
+                body: `${reactorName} reacted ${emoji} to your quick moment`,
+                entityId: momentId,
+                data: {
+                  quickMomentId: momentId,
+                  emoji,
+                  navigation: { type: 'quick_moment', targetId: momentId },
+                },
+                isRead: false,
+              });
+            }
+          } catch (notifErr: any) {
+            console.warn('[Quick Moment Notif Update Warning]:', notifErr.message);
+          }
+        }
       }
     } else {
       // Add new reaction
@@ -653,7 +728,7 @@ export class QuickMomentService {
       });
       action = 'added';
 
-      // Send in-app notification to story author if not self
+      // Send in-app notification to story author if not self (reuse/upsert to avoid duplicates)
       if (moment.userId !== viewerUserId) {
         try {
           const reactor = await User.findByPk(viewerUserId, {
@@ -661,17 +736,40 @@ export class QuickMomentService {
           });
           const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
 
-          await Notification.create({
-            recipientId: moment.userId,
-            senderId: viewerUserId,
-            type: 'moment_reaction',
-            title: 'New Quick Moment Reaction',
-            body: `${reactorName} reacted ${emoji} to your quick moment`,
-            data: {
-              quickMomentId: momentId,
-              emoji,
+          const existingNotif = await Notification.findOne({
+            where: {
+              recipientId: moment.userId,
+              senderId: viewerUserId,
+              type: 'moment_reaction',
+              entityId: momentId,
             },
           });
+
+          if (existingNotif) {
+            existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
+            existingNotif.data = {
+              quickMomentId: momentId,
+              emoji,
+              navigation: { type: 'quick_moment', targetId: momentId },
+            };
+            existingNotif.isRead = false;
+            await existingNotif.save();
+          } else {
+            await Notification.create({
+              recipientId: moment.userId,
+              senderId: viewerUserId,
+              type: 'moment_reaction',
+              title: 'New Quick Moment Reaction',
+              body: `${reactorName} reacted ${emoji} to your quick moment`,
+              entityId: momentId,
+              data: {
+                quickMomentId: momentId,
+                emoji,
+                navigation: { type: 'quick_moment', targetId: momentId },
+              },
+              isRead: false,
+            });
+          }
         } catch (notifErr: any) {
           console.warn('[Quick Moment Notif Warning]:', notifErr.message);
         }
@@ -797,7 +895,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'viewer',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -806,7 +904,7 @@ export class QuickMomentService {
     const viewers = views.map((v: any) => ({
       userId: v.viewer?.id,
       name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-      avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture) : null,
+      avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
       isVerified: !!v.viewer?.isFaceVerified,
       city: v.viewer?.city,
       viewedAt: v.createdAt,

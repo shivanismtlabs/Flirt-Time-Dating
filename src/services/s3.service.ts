@@ -22,6 +22,20 @@ export class S3ServiceError extends Error {
   }
 }
 
+function appendVersionToUrl(url: string, version?: string | number | Date | null): string {
+  if (!version || !url) return url;
+  if (url.includes('X-Amz-Signature')) return url;
+  const vStr = version instanceof Date ? version.getTime().toString() : String(version);
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.set('v', vStr);
+    return parsed.toString();
+  } catch {
+    const separator = url.includes('?') ? '&' : '?';
+    return `${url}${separator}v=${encodeURIComponent(vStr)}`;
+  }
+}
+
 export class S3Service {
   private bucket: string;
 
@@ -292,7 +306,7 @@ export class S3Service {
   /**
    * Resolves an S3 key or external URL to a full public URL (or presigned GET URL for verifications)
    */
-  public getPublicUrl(keyOrUrl?: string | null): string {
+  public getPublicUrl(keyOrUrl?: string | null, version?: string | number | Date | null): string {
     if (!keyOrUrl) return '';
     const trimmed = keyOrUrl.trim();
 
@@ -306,7 +320,7 @@ export class S3Service {
         const key = this.extractKey(trimmed);
         return this.getPresignedGetUrl(key);
       }
-      return trimmed;
+      return appendVersionToUrl(trimmed, version);
     }
 
     const cleanKey = trimmed.replace(/^\/+/, '');
@@ -316,18 +330,21 @@ export class S3Service {
       return this.getPresignedGetUrl(cleanKey);
     }
 
+    let url: string;
     if (env.AWS_CLOUDFRONT_URL) {
       const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
-      return `${cdnBase}/${cleanKey}`;
+      url = `${cdnBase}/${cleanKey}`;
+    } else {
+      url = `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${cleanKey}`;
     }
-    return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${cleanKey}`;
+    return appendVersionToUrl(url, version);
   }
 
   /**
    * Resolves an S3 key or external URL to an AWS Lambda-generated thumbnail URL
    * AWS Lambda generates and saves resized thumbnails under: thumbnails/${key}
    */
-  public getThumbnailUrl(keyOrUrl?: string | null): string {
+  public getThumbnailUrl(keyOrUrl?: string | null, version?: string | number | Date | null): string {
     if (!keyOrUrl) return '';
     const trimmed = keyOrUrl.trim();
 
@@ -340,7 +357,8 @@ export class S3Service {
     // If it's an external HTTP/HTTPS URL
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       if (trimmed.includes('images.unsplash.com')) {
-        return trimmed.includes('?') ? `${trimmed}&w=300&h=300&fit=crop` : `${trimmed}?w=300&h=300&fit=crop`;
+        const unsplash = trimmed.includes('?') ? `${trimmed}&w=300&h=300&fit=crop` : `${trimmed}?w=300&h=300&fit=crop`;
+        return appendVersionToUrl(unsplash, version);
       }
       try {
         const parsed = new URL(trimmed);
@@ -350,18 +368,21 @@ export class S3Service {
             pathname = pathname.slice(this.bucket.length + 1);
           }
           if (pathname.startsWith(`${env.AWS_S3_THUMBNAIL_PREFIX}/`)) {
-            return trimmed;
+            return appendVersionToUrl(trimmed, version);
           }
           const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${pathname}`;
+          let s3ThumbUrl: string;
           if (env.AWS_CLOUDFRONT_URL) {
             const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
-            return `${cdnBase}/${thumbKey}`;
+            s3ThumbUrl = `${cdnBase}/${thumbKey}`;
+          } else {
+            s3ThumbUrl = `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
           }
-          return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
+          return appendVersionToUrl(s3ThumbUrl, version);
         }
       } catch (_) {}
 
-      return trimmed;
+      return appendVersionToUrl(trimmed, version);
     }
 
     // Prevent double thumbnails prefix (e.g. thumbnails/thumbnails/...)
@@ -371,11 +392,14 @@ export class S3Service {
     }
 
     const thumbKey = `${env.AWS_S3_THUMBNAIL_PREFIX}/${normalized}`;
+    let finalThumbUrl: string;
     if (env.AWS_CLOUDFRONT_URL) {
       const cdnBase = env.AWS_CLOUDFRONT_URL.replace(/\/+$/, '');
-      return `${cdnBase}/${thumbKey}`;
+      finalThumbUrl = `${cdnBase}/${thumbKey}`;
+    } else {
+      finalThumbUrl = `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
     }
-    return `https://${this.bucket}.s3.${env.AWS_REGION}.amazonaws.com/${thumbKey}`;
+    return appendVersionToUrl(finalThumbUrl, version);
   }
 
   /**
@@ -638,7 +662,9 @@ export const s3Service = new S3Service();
 /**
  * Common universal functions for resolving image and thumbnail URLs across all modules
  */
-export const formatMediaUrl = (keyOrUrl?: string | null): string => s3Service.getPublicUrl(keyOrUrl);
-export const formatThumbnailUrl = (keyOrUrl?: string | null): string => s3Service.getThumbnailUrl(keyOrUrl);
+export const formatMediaUrl = (keyOrUrl?: string | null, version?: string | number | Date | null): string =>
+  s3Service.getPublicUrl(keyOrUrl, version);
+export const formatThumbnailUrl = (keyOrUrl?: string | null, version?: string | number | Date | null): string =>
+  s3Service.getThumbnailUrl(keyOrUrl, version);
 export const extractS3Key = (keyOrUrl?: string | null): string => s3Service.extractKey(keyOrUrl);
 

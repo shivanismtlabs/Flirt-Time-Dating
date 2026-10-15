@@ -31,6 +31,10 @@ export const getDiscoveryPeople = async (req: AuthenticatedRequest, res: Respons
       limit,
     });
 
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     return sendSuccess(res, 'Discovery profiles retrieved successfully', result, 200);
   } catch (error: any) {
     if (error instanceof DiscoveryServiceError) {

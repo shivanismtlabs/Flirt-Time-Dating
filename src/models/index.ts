@@ -1041,12 +1041,14 @@ export const initDb = async (force = false): Promise<void> => {
     // Seed initial interests catalog
     await seedDefaultInterests();
 
-    // Seed 50 dummy discovery people profiles
-    try {
-      const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
-      await seed50DiscoveryUsers();
-    } catch (seedErr: any) {
-      console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+    // Seed 50 dummy discovery people profiles (skip in test environment to avoid SQLite file locking)
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
+        await seed50DiscoveryUsers();
+      } catch (seedErr: any) {
+        console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+      }
     }
 
     // Seed 10 production coin packages idempotently

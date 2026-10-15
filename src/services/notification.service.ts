@@ -108,16 +108,23 @@ export class NotificationService {
   /**
    * Helper to resolve primary approved profile photo URL
    */
-  public resolvePrimaryPhoto(userProfilePicture?: string | null, photos?: any[] | null): string | null {
+  public resolvePrimaryPhoto(userProfilePicture?: string | null, photos?: any[] | null, version?: any): string | null {
     let photo = userProfilePicture || null;
-    if (!photo && photos && photos.length > 0) {
+    let photoVersion = version;
+    if (photos && photos.length > 0) {
       const approvedPhotos = photos.filter((p) => p.status === 'approved');
       if (approvedPhotos.length > 0) {
         const primary = approvedPhotos.find((p) => p.isPrimary);
-        photo = primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+        if (primary) {
+          photo = primary.imageUrl;
+          photoVersion = primary.updatedAt || version;
+        } else if (!photo) {
+          photo = approvedPhotos[0].imageUrl;
+          photoVersion = approvedPhotos[0].updatedAt || version;
+        }
       }
     }
-    return photo ? formatThumbnailUrl(photo) : null;
+    return photo ? formatThumbnailUrl(photo, photoVersion) : null;
   }
 
   /**
@@ -474,7 +481,7 @@ export class NotificationService {
         senderSummary = {
           id: n.sender.id,
           name: resolveDisplayName(n.sender),
-          profilePhotoUrl: this.resolvePrimaryPhoto(n.sender.profilePicture, n.sender.photos),
+          profilePhotoUrl: this.resolvePrimaryPhoto(n.sender.profilePicture, n.sender.photos, n.sender.updatedAt),
         };
       }
 

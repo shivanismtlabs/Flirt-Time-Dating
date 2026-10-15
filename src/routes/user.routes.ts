@@ -47,12 +47,15 @@ import { getUserMomentsHandler } from '../controllers/moment.controller';
 import { getUserMomentsSchema } from '../schemas/moment.schema';
 import { registerDeviceTokenHandler } from '../controllers/connection.controller';
 import { registerDeviceTokenSchema } from '../schemas/connection.schema';
-import { handleUploadProfilePhoto, handleUploadCoverPhoto } from '../middlewares/upload.middleware';
+import { handleUploadProfilePhoto, handleUploadCoverPhoto, handleUploadPhoto } from '../middlewares/upload.middleware';
 import {
   uploadProfilePhoto,
   getUserInterests,
   updateUserInterests,
   setPrimaryPhoto,
+  getUserPhotos,
+  uploadPhoto,
+  deletePhoto,
 } from '../controllers/onboarding.controller';
 import { updateInterestsSchema } from '../schemas/onboarding.schema';
 
@@ -71,6 +74,11 @@ router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 router.put('/profile', validate(updateProfileSchema), updateProfile);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
+router.get('/photos', getUserPhotos);
+router.post('/photos', handleUploadPhoto, uploadPhoto);
+router.put('/photos', handleUploadPhoto, uploadPhoto);
+router.patch('/photos', handleUploadPhoto, uploadPhoto);
+router.delete('/photos/:photoId', deletePhoto);
 router.patch('/photos/:photoId/primary', setPrimaryPhoto);
 
 // User Interests Endpoints (Edit Profile "Interests" section)

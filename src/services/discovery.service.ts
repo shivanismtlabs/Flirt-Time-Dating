@@ -363,6 +363,7 @@ export class DiscoveryService {
     // 5. For each target user, fetch their complete saved interests, eligible moment counts, and quick moment viewed status in parallel batches
     const targetUserIds = targetUsers.map((u) => u.id);
     let allTargetUserInterests: Map<string, Interest[]> = new Map();
+    let allTargetUserPhotos: Map<string, UserPhoto[]> = new Map();
     let momentCountsMap: Map<string, number> = new Map();
     let quickMomentViewedMap: Map<string, boolean> = new Map();
 
@@ -378,6 +379,12 @@ export class DiscoveryService {
               where: { isActive: true },
               required: false,
             },
+            {
+              model: UserPhoto,
+              as: 'photos',
+              where: { status: 'approved' },
+              required: false,
+            },
           ],
         }),
         momentService.getEligibleMomentCountsByUserIds(currentUserId, targetUserIds),
@@ -386,6 +393,7 @@ export class DiscoveryService {
 
       for (const u of fullUsersWithInterests) {
         allTargetUserInterests.set(u.id, (u.interests || []) as Interest[]);
+        allTargetUserPhotos.set(u.id, (u.photos || []) as UserPhoto[]);
       }
       momentCountsMap = momentCounts;
       quickMomentViewedMap = quickMomentViewed;
@@ -439,13 +447,22 @@ export class DiscoveryService {
       const momentCount = momentCountsMap.get(user.id) || 0;
       const hasViewedQuickMoment = quickMomentViewedMap.get(user.id) || false;
 
+      const userPhotos = allTargetUserPhotos.get(user.id) || [];
+      const primaryPhotoRecord = userPhotos.find((p) => p.isPrimary);
+      const primaryPhotoKey =
+        primaryPhotoRecord?.imageUrl ||
+        user.profilePicture ||
+        (userPhotos[0]?.imageUrl) ||
+        null;
+      const photoVersion = primaryPhotoRecord?.updatedAt || user.updatedAt;
+
       return {
         id: user.id,
         userId: user.id,
         name: resolveDisplayName(user),
         username: user.username,
         age: calculateAge(user.dateOfBirth),
-        profilePhoto: user.profilePicture ? formatThumbnailUrl(user.profilePicture) : null,
+        profilePhoto: primaryPhotoKey ? formatThumbnailUrl(primaryPhotoKey, photoVersion) : null,
         isVerified: !!user.isFaceVerified,
         city: user.city || 'Mumbai',
         distanceKm,

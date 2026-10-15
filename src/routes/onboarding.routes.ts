@@ -57,6 +57,8 @@ router.put('/interests', validate(updateInterestsSchema), updateUserInterests);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
 router.get('/photos', getUserPhotos);
 router.post('/photos', handleUploadPhoto, uploadPhoto);
+router.put('/photos', handleUploadPhoto, uploadPhoto);
+router.patch('/photos', handleUploadPhoto, uploadPhoto);
 router.delete('/photos/:photoId', deletePhoto);
 router.patch('/photos/:photoId/primary', setPrimaryPhoto);
 

@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
-import { onboardingService, OnboardingServiceError } from '../services/onboarding.service';
+import { OnboardingService, onboardingService, OnboardingServiceError } from '../services/onboarding.service';
 import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
 
 const getUserIdOrThrow = (req: AuthenticatedRequest, res: Response): string | null => {
@@ -129,27 +129,119 @@ export const uploadPhoto = async (req: AuthenticatedRequest, res: Response) => {
     const userId = getUserIdOrThrow(req, res);
     if (!userId) return;
 
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-    const photoFile = files?.['photo']?.[0] || files?.['image']?.[0] || req.file;
-    const { imageKey, imageUrl } = req.body || {};
-    const preUploadedKey = imageKey || imageUrl;
+    // 1. Extract all uploaded files across supported fields
+    const fileList: Express.Multer.File[] = [];
+    if (req.files) {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const field of ['photos', 'images', 'photo', 'image', 'files']) {
+        if (Array.isArray(filesObj[field])) {
+          fileList.push(...filesObj[field]);
+        }
+      }
+    }
+    if (req.file) {
+      fileList.push(req.file);
+    }
 
-    if (!photoFile?.buffer && !preUploadedKey) {
+    // 2. Extract pre-uploaded keys, image URLs or existing photo IDs from req.body
+    const preUploadedKeys: string[] = [];
+    const bodySource =
+      req.body?.imageKeys ??
+      req.body?.photos ??
+      req.body?.images ??
+      req.body?.imageUrls ??
+      req.body?.keys;
+
+    if (bodySource !== undefined && bodySource !== null) {
+      if (Array.isArray(bodySource)) {
+        for (const item of bodySource) {
+          if (typeof item === 'string' && item.trim()) {
+            preUploadedKeys.push(item.trim());
+          } else if (item && typeof item === 'object') {
+            const val = item.key || item.imageKey || item.url || item.imageUrl || item.id;
+            if (val && typeof val === 'string' && val.trim()) {
+              preUploadedKeys.push(val.trim());
+            }
+          }
+        }
+      } else if (typeof bodySource === 'string' && bodySource.trim()) {
+        try {
+          const parsed = JSON.parse(bodySource);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (typeof item === 'string' && item.trim()) {
+                preUploadedKeys.push(item.trim());
+              } else if (item && typeof item === 'object') {
+                const val = item.key || item.imageKey || item.url || item.imageUrl || item.id;
+                if (val && typeof val === 'string' && val.trim()) {
+                  preUploadedKeys.push(val.trim());
+                }
+              }
+            }
+          } else {
+            preUploadedKeys.push(bodySource.trim());
+          }
+        } catch {
+          if (bodySource.includes(',')) {
+            preUploadedKeys.push(
+              ...bodySource
+                .split(',')
+                .map((s: string) => s.trim())
+                .filter(Boolean)
+            );
+          } else {
+            preUploadedKeys.push(bodySource.trim());
+          }
+        }
+      }
+    }
+
+    // Single key fallbacks
+    const singleKey = req.body?.imageKey || req.body?.imageUrl;
+    if (singleKey && typeof singleKey === 'string' && singleKey.trim()) {
+      if (!preUploadedKeys.includes(singleKey.trim())) {
+        preUploadedKeys.push(singleKey.trim());
+      }
+    }
+
+    const totalCount = fileList.length + preUploadedKeys.length;
+    if (totalCount === 0) {
       return sendError(
         res,
-        'No photo file provided. Attach image in "photo" or "image" field or pass "imageKey"',
+        `No photos provided. You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed).`,
         400,
-        'MISSING_FILE'
+        'MIN_PHOTOS_REQUIRED'
       );
     }
 
-    const photo = await onboardingService.addPhoto(
-      userId,
-      photoFile?.buffer,
-      photoFile?.mimetype,
-      preUploadedKey
-    );
-    return sendSuccess(res, 'Photo uploaded successfully', { photo }, 201);
+    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
+      return sendError(
+        res,
+        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        400,
+        'MIN_PHOTOS_REQUIRED'
+      );
+    }
+
+    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
+      return sendError(
+        res,
+        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        400,
+        'MAX_PHOTOS_EXCEEDED'
+      );
+    }
+
+    const result = await onboardingService.savePhotos(userId, {
+      files: fileList,
+      preUploadedKeys,
+      primaryIndex:
+        req.body?.primaryIndex !== undefined && req.body?.primaryIndex !== null && String(req.body.primaryIndex).trim() !== ''
+          ? Number(req.body.primaryIndex)
+          : undefined,
+    });
+
+    return sendSuccess(res, 'Profile photos saved successfully', result, 201);
   } catch (err: any) {
     return handleControllerError(res, err);
   }

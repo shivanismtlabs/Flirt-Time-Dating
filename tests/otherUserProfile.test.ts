@@ -180,7 +180,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.name).toBeUndefined();
       expect(typeof data.age).toBe('number');
       expect(data.isVerified).toBe(true);
-      expect(data.profilePhoto).toBe('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
+      expect(data.profilePhoto).toContain('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
       expect(data.city).toBe('Mumbai');
       expect(typeof data.distanceKm).toBe('number');
       expect(data.bio).toBe('Plant mom. Amateur chef. Professional overthinker.');
@@ -303,7 +303,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
         .set('Authorization', `Bearer ${viewerToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.profilePhoto).toBe('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
+      expect(res.body.data.profilePhoto).toContain('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
     });
   });
 

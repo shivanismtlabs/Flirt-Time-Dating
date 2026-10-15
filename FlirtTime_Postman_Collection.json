@@ -2090,6 +2090,50 @@
               "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
             }
           ]
+        },
+        {
+          "name": "Search Users by Name or City with Pagination",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/search?query=Cindy&page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "Cindy",
+                  "description": "Search keyword matching user name or city"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Items per page (default: 10, max: 50)"
+                }
+              ]
+            },
+            "description": "Search users by name or city with proper pagination. Directly powers the 'Search by name or city' screen in the FlirtTime app. Strictly excludes current user, blocked users, reported users, and inactive accounts."
+          },
+          "response": []
         }
       ]
     },

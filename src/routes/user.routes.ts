@@ -62,10 +62,17 @@ import { updateInterestsSchema } from '../schemas/onboarding.schema';
 import { sendComplimentHandler } from '../controllers/interaction.controller';
 import { sendComplimentSchema } from '../schemas/interaction.schema';
 
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
+
 const router = Router();
 
 // All user management routes require authentication
 router.use(authenticate);
+
+// User Search API: GET /api/v1/users/search and POST /api/v1/users/search
+router.get('/search', validate(userSearchSchema), searchUsersHandler);
+router.post('/search', validate(userSearchSchema), searchUsersHandler);
 
 // Device token registration for push notifications (and aliases)
 router.post('/device-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);

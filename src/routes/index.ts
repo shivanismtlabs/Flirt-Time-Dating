@@ -70,4 +70,10 @@ router.put('/profile', authenticate, validate(updateProfileSchema), updateProfil
 router.post('/compliments', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
 router.post('/compliment', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
 
+// Direct Search aliases: /api/v1/search, /api/search
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
+router.get('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
+router.post('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
+
 export default router;

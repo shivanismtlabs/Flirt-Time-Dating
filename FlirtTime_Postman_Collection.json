@@ -866,6 +866,40 @@
           "response": []
         },
         {
+          "name": "Get Other User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "profile"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<USER_ID>",
+                  "description": "UUID of the target user to view"
+                }
+              ]
+            },
+            "description": "Retrieves another user's full profile details (photos, moments, mutual compatibility vibe score, distance, interests, voice note, match/swipe status) respecting privacy and blocking rules."
+          },
+          "response": []
+        },
+        {
           "name": "Get All Users (Admin Only)",
           "request": {
             "method": "GET",

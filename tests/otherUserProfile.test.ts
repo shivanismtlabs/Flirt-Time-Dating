@@ -189,6 +189,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.voiceIntro).toEqual({
         url: 'https://flirttime-media.s3.amazonaws.com/audio/meera_voice.mp3',
         durationSeconds: 4,
+        duration: 4,
       });
       expect(Array.isArray(data.moments)).toBe(true);
       expect(data.moments.length).toBe(2);
@@ -198,6 +199,26 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.myAction).toBeNull();
       expect(data.isMatched).toBe(false);
       expect(data.canConnect).toBe(true);
+    });
+
+    it('should retrieve full other user profile via /api/v1/users/profile/:userId alias', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/profile/${targetUser.id}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.userId).toBe(targetUser.id);
+    });
+
+    it('should retrieve full other user profile via direct /api/v1/profile/:userId alias', async () => {
+      const res = await request(app)
+        .get(`/api/v1/profile/${targetUser.id}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.userId).toBe(targetUser.id);
     });
   });
 

@@ -92,6 +92,7 @@ router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutM
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
+router.get('/profile/:userId', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 
 // User Visible Moments Thumbnails Screen
 router.get(

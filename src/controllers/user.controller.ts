@@ -34,7 +34,20 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response) =>
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const updatedProfile = await updateUserProfile(userId, req.body);
+    const rawBody = req.body || {};
+    const nestedProfile =
+      typeof rawBody.profile === 'object' && rawBody.profile !== null
+        ? rawBody.profile
+        : typeof rawBody.user === 'object' && rawBody.user !== null
+        ? rawBody.user
+        : {};
+
+    const payload = {
+      ...nestedProfile,
+      ...rawBody,
+    };
+
+    const updatedProfile = await updateUserProfile(userId, payload);
 
     return sendSuccess(res, 'Profile updated successfully', updatedProfile);
   } catch (error: any) {

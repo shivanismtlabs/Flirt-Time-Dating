@@ -114,6 +114,20 @@ export const updateProfileSchema = z.object({
       .min(3, 'Username must be at least 3 characters')
       .max(50, 'Username must not exceed 50 characters')
       .optional(),
+    userName: z
+      .string()
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters')
+      .optional(),
+    user_name: z
+      .string()
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters')
+      .optional(),
+    profile: z.record(z.any()).optional(),
+    user: z.record(z.any()).optional(),
     nickName: z
       .string()
       .trim()

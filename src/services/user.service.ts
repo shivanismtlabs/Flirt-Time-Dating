@@ -236,8 +236,15 @@ export const updateUserProfile = async (
     }
   }
   // Handle Username update (with unique check and validation)
-  if (data.username !== undefined) {
-    const cleanUsername = data.username.trim();
+  const incomingUsername =
+    data.username !== undefined
+      ? data.username
+      : (data as any).userName !== undefined
+      ? (data as any).userName
+      : (data as any).user_name;
+
+  if (incomingUsername !== undefined && incomingUsername !== null) {
+    const cleanUsername = String(incomingUsername).trim();
     if (cleanUsername.length < 3 || cleanUsername.length > 50) {
       throw new ServiceError('Username must be between 3 and 50 characters', 400);
     }
@@ -252,7 +259,7 @@ export const updateUserProfile = async (
     }
     user.username = cleanUsername;
     // When nickName is not explicitly provided in the request payload, sync nickName to username
-    if (data.nickName === undefined) {
+    if (data.nickName === undefined && (data as any).nickname === undefined) {
       user.nickName = cleanUsername;
     }
   }

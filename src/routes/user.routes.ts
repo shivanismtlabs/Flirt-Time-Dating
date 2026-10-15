@@ -81,6 +81,7 @@ router.post('/token', validate(registerDeviceTokenSchema), registerDeviceTokenHa
 
 // Profile Onboarding & Edit Profile Endpoints
 router.get('/profile', (req, res) => getProfile(req, res));
+router.post('/profile', validate(updateProfileSchema), updateProfile);
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 router.put('/profile', validate(updateProfileSchema), updateProfile);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);

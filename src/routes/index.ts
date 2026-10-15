@@ -63,6 +63,7 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 
 // Direct Profile aliases: /api/v1/profile, /api/profile
 router.get('/profile', authenticate, getProfile);
+router.post('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 

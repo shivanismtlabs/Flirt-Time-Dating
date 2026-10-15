@@ -28,6 +28,8 @@ import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
 import { getProfile, updateProfile } from '../controllers/user.controller';
 import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
 
 const router = Router();
 
@@ -63,5 +65,9 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 router.get('/profile', authenticate, getProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
+
+// Direct Compliments aliases: /api/v1/compliments, /api/v1/compliment
+router.post('/compliments', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
 
 export default router;

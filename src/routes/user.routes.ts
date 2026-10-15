@@ -59,6 +59,8 @@ import {
   deletePhoto,
 } from '../controllers/onboarding.controller';
 import { updateInterestsSchema } from '../schemas/onboarding.schema';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
 
 const router = Router();
 
@@ -109,6 +111,11 @@ router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutM
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 router.get('/:userId/photos', validate(getOtherUserProfileSchema), (req, res) => getOtherUserPhotosHandler(req, res));
+router.post('/:userId/compliment', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/:userId/compliments', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliments', validate(sendComplimentSchema), sendComplimentHandler);
+
 
 // User Visible Moments Thumbnails Screen
 router.get(

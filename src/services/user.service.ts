@@ -531,7 +531,9 @@ export const getOtherUserProfile = async (
       {
         model: UserPhoto,
         as: 'photos',
-        where: { status: 'approved' },
+        where: {
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
+        },
         required: false,
       },
     ],
@@ -704,7 +706,7 @@ export const getOtherUserProfile = async (
 
   if (moments.length === 0 && rawPhotos.length > 0) {
     moments = rawPhotos
-      .filter((p) => !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
+      .filter((p) => p.status === 'approved' && !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
       .map((p) => ({
         id: p.id,
         momentId: p.id,
@@ -839,7 +841,7 @@ export const getOtherUserPhotos = async (
         model: UserPhoto,
         as: 'photos',
         where: {
-          [Op.or]: [{ status: 'approved' }, { status: null }],
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
         },
         required: false,
       },

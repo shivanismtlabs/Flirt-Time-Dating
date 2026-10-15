@@ -821,6 +821,70 @@ export class QuickMomentService {
   }
 
   /**
+   * Batch determines whether the authenticated viewer has viewed each target user's active quick moments (stories).
+   * - If candidate has active quick moment(s) and ALL have been viewed by viewer, returns true (gray story outline).
+   * - If candidate has active quick moment(s) and at least one is unviewed, returns false (active story outline).
+   * - If candidate has NO active quick moments (missing or expired), returns false.
+   * - Uses a single batch query with left-join on views to avoid N+1 queries.
+   */
+  public async getViewedStatusByUserIds(
+    viewerUserId: string,
+    targetUserIds: string[]
+  ): Promise<Map<string, boolean>> {
+    const statusMap = new Map<string, boolean>();
+    if (!targetUserIds || targetUserIds.length === 0) {
+      return statusMap;
+    }
+
+    // Default false for every requested candidate
+    for (const id of targetUserIds) {
+      statusMap.set(id, false);
+    }
+
+    await ensureQuickMomentTables();
+
+    const now = new Date();
+
+    const activeMoments = await QuickMoment.findAll({
+      where: {
+        userId: { [Op.in]: targetUserIds },
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'userId'],
+      include: [
+        {
+          model: QuickMomentView,
+          as: 'views',
+          attributes: ['userId'],
+          where: { userId: viewerUserId },
+          required: false,
+        },
+      ],
+    });
+
+    const userMomentsMap = new Map<string, Array<{ id: string; isViewed: boolean }>>();
+    for (const id of targetUserIds) {
+      userMomentsMap.set(id, []);
+    }
+
+    for (const moment of activeMoments) {
+      const isViewed = Array.isArray(moment.views) && moment.views.length > 0;
+      userMomentsMap.get(moment.userId)?.push({ id: moment.id, isViewed });
+    }
+
+    for (const [userId, moments] of userMomentsMap.entries()) {
+      if (moments.length > 0 && moments.every((m) => m.isViewed)) {
+        statusMap.set(userId, true);
+      } else {
+        statusMap.set(userId, false);
+      }
+    }
+
+    return statusMap;
+  }
+
+  /**
    * 9. CREATE QUICK MOMENT (Text or Image, 24-hour expiration)
    */
   public async createQuickMoment(

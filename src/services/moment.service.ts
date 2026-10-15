@@ -2439,6 +2439,89 @@ export class MomentService {
       gifts,
     };
   }
+
+  /**
+   * Batch aggregates active, non-expired, eligible moment counts for candidate user IDs
+   * viewed by a given viewer in Discover People.
+   *
+   * Requirements:
+   * - Count moments belonging to that candidate, not the logged-in viewer.
+   * - Count only moments that are active, not expired, not deleted, and eligible under privacy and moderation rules.
+   * - Reuses existing moment-expiry logic (expiresAt IS NULL OR expiresAt > now).
+   * - Excludes 'matches_only' and 'close_friends' audience since viewer and discovery candidates are non-matched strangers.
+   * - Excludes moments reported by viewer.
+   * - Avoids duplicate counts caused by joins (queries Moment directly with group by).
+   * - Zero N+1 queries.
+   */
+  public async getEligibleMomentCountsByUserIds(
+    viewerId: string,
+    targetUserIds: string[]
+  ): Promise<Map<string, number>> {
+    const countsMap = new Map<string, number>();
+    if (!targetUserIds || targetUserIds.length === 0) {
+      return countsMap;
+    }
+
+    // Default 0 for every requested candidate
+    for (const id of targetUserIds) {
+      countsMap.set(id, 0);
+    }
+
+    // Safety: ensure viewer's own ID is not queried for candidate count
+    const candidateIds = targetUserIds.filter((id) => id && id !== viewerId);
+    if (candidateIds.length === 0) {
+      return countsMap;
+    }
+
+    // Query moments reported by viewer to exclude them from candidate's visible count
+    const reportedRecords = await UserReport.findAll({
+      where: {
+        reporterId: viewerId,
+        momentId: { [Op.ne]: null },
+        status: { [Op.ne]: 'dismissed' },
+      },
+      attributes: ['momentId'],
+    });
+
+    const reportedMomentIds = reportedRecords
+      .map((r) => r.momentId)
+      .filter((id): id is string => Boolean(id));
+
+    const now = new Date();
+
+    const momentWhere: any = {
+      userId: { [Op.in]: candidateIds },
+      status: 'active',
+      audience: { [Op.notIn]: ['matches_only', 'close_friends'] },
+      [Op.or]: [
+        { expiresAt: null },
+        { expiresAt: { [Op.gt]: now } },
+      ],
+    };
+
+    if (reportedMomentIds.length > 0) {
+      momentWhere.id = { [Op.notIn]: reportedMomentIds };
+    }
+
+    const rows = await Moment.findAll({
+      where: momentWhere,
+      attributes: [
+        'userId',
+        [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+      ],
+      group: ['userId'],
+      raw: true,
+    });
+
+    for (const row of rows as any[]) {
+      const parsed = parseInt(String(row.count), 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        countsMap.set(row.userId, parsed);
+      }
+    }
+
+    return countsMap;
+  }
 }
 
 export const momentService = new MomentService();

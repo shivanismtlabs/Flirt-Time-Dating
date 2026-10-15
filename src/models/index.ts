@@ -36,8 +36,23 @@ import { CoinPurchase } from './coinPurchase.model';
 import { CoinTransaction } from './coinTransaction.model';
 import { UserSubscription } from './userSubscription.model';
 import { SubscriptionEventLog } from './subscriptionEventLog.model';
+import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
 
 // Define associations
+User.hasOne(UserDiscoveryPreference, {
+  foreignKey: 'userId',
+  as: 'discoveryPreference',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+UserDiscoveryPreference.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
 User.hasMany(UserIdentity, {
   foreignKey: 'userId',
   as: 'identities',
@@ -601,6 +616,7 @@ export {
   CoinTransaction,
   UserSubscription,
   SubscriptionEventLog,
+  UserDiscoveryPreference,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -770,6 +786,10 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
                 ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
+                ALTER TABLE "users" ADD COLUMN "lastActiveAt" TIMESTAMP WITH TIME ZONE;
               END IF;
             END IF;
 
@@ -943,6 +963,12 @@ export const initDb = async (force = false): Promise<void> => {
           // Safe to ignore if phone_verifications does not exist yet
         }
 
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastActiveAt" TIMESTAMP WITH TIME ZONE;');
+        } catch (_laColErr) {
+          // Safe to ignore if users does not exist yet
+        }
+
         // Ensure quick_moments and moment_gifts tables exist immediately on all environments
         try {
           await QuickMoment.sync();
@@ -959,12 +985,25 @@ export const initDb = async (force = false): Promise<void> => {
 
     try {
       if (sequelize.getDialect() === 'sqlite') {
+        if (isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = OFF;');
+          } catch (_) {}
+        }
         await sequelize.sync({ force: isForce });
+        if (isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = ON;');
+          } catch (_) {}
+        }
         try {
           await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);');
         } catch (_) {}
         try {
           await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "momentId" VARCHAR(36);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN "lastActiveAt" DATETIME;');
         } catch (_) {}
       } else {
         await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
@@ -978,7 +1017,17 @@ export const initDb = async (force = false): Promise<void> => {
         syncError.message?.includes('already exists')
       ) {
         console.warn('⚠️ Standardizing schema without dropping constraint aliases...');
+        if (sequelize.getDialect() === 'sqlite' && isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = OFF;');
+          } catch (_) {}
+        }
         await sequelize.sync({ force: isForce, alter: false });
+        if (sequelize.getDialect() === 'sqlite' && isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = ON;');
+          } catch (_) {}
+        }
       } else {
         throw syncError;
       }
@@ -987,6 +1036,7 @@ export const initDb = async (force = false): Promise<void> => {
     await ensureCoinPackageTables();
     await ensureSubscriptionTables();
     await ensureCoinPurchaseTables();
+    await UserDiscoveryPreference.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -1028,20 +1078,29 @@ export const initDb = async (force = false): Promise<void> => {
 export const seedDefaultInterests = async (): Promise<void> => {
   try {
     const defaultInterests = [
+      // 20 Canonical Discovery Filter UI Interests
+      { name: 'Cinema', icon: '🎬', category: 'Entertainment' },
       { name: 'Cooking', icon: '🍳', category: 'Lifestyle' },
-      { name: 'Lyrics Music', icon: '🎵', category: 'Entertainment' },
       { name: 'Dance', icon: '💃', category: 'Arts' },
+      { name: 'Drawing', icon: '🎨', category: 'Creativity' },
+      { name: 'Extreme', icon: '🏄', category: 'Sports' },
       { name: 'Fitness', icon: '💪', category: 'Fitness' },
       { name: 'Gaming', icon: '🎮', category: 'Entertainment' },
+      { name: 'Handcraft', icon: '🧵', category: 'Creativity' },
+      { name: 'Lyrics Music', icon: '🎵', category: 'Entertainment' },
       { name: 'Party', icon: '🎉', category: 'Social' },
       { name: 'Pets', icon: '🐶', category: 'Lifestyle' },
       { name: 'Photography', icon: '📷', category: 'Creativity' },
+      { name: 'Planting', icon: '🌱', category: 'Lifestyle' },
       { name: 'Reading', icon: '📚', category: 'Lifestyle' },
       { name: 'Shopping', icon: '🛍️', category: 'Lifestyle' },
       { name: 'Sports', icon: '⚽', category: 'Sports' },
+      { name: 'Television', icon: '📺', category: 'Entertainment' },
       { name: 'Travelling', icon: '✈️', category: 'Travel' },
-      { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
+      { name: 'Writing', icon: '✍️', category: 'Creativity' },
       { name: 'Yoga', icon: '🧘', category: 'Fitness' },
+      // Additional catalog items for backward compatibility
+      { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
       { name: 'Tennis', icon: '🎾', category: 'Sports' },
       { name: 'Running', icon: '🏃', category: 'Sports' },
       { name: 'Swimming', icon: '🏊', category: 'Sports' },

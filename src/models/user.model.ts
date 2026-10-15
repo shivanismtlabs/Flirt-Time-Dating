@@ -45,6 +45,7 @@ export interface UserAttributes {
   isSubscribed?: boolean;
   subscriptionExpiresAt?: Date | null;
   activeSubscriptionPlanId?: number | null;
+  lastActiveAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -95,6 +96,7 @@ export interface UserCreationAttributes
     | 'isSubscribed'
     | 'subscriptionExpiresAt'
     | 'activeSubscriptionPlanId'
+    | 'lastActiveAt'
   > {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
@@ -142,6 +144,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public isSubscribed: boolean;
   declare public subscriptionExpiresAt: Date | null;
   declare public activeSubscriptionPlanId: number | null;
+  declare public lastActiveAt: Date | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -149,6 +152,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public identities?: any[];
   declare public interests?: any[];
   declare public photos?: any[];
+  declare public discoveryPreference?: any;
 
   // Omit sensitive data when converting to JSON
   public toJSON(): Omit<UserAttributes, 'password'> {
@@ -354,6 +358,10 @@ User.init(
       type: DataTypes.INTEGER,
       allowNull: true,
       field: 'active_subscription_plan_id',
+    },
+    lastActiveAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
   },
   {

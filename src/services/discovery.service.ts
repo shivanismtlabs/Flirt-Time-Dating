@@ -2,6 +2,11 @@ import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
 import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto, UserReport } from '../models';
 import { formatThumbnailUrl } from './s3.service';
+import { momentService } from './moment.service';
+import { quickMomentService } from './quickMoment.service';
+import { calculateInterestMatchPercentage } from '../utils/compatibility';
+
+export { calculateInterestMatchPercentage };
 
 export interface DiscoveryQueryInput {
   currentUserId: string;
@@ -11,6 +16,7 @@ export interface DiscoveryQueryInput {
 }
 
 export interface DiscoveryUserProfile {
+  id: string;
   userId: string;
   name: string;
   username: string;
@@ -22,6 +28,11 @@ export interface DiscoveryUserProfile {
   vibeScore: number | null;
   sharedInterests: string[];
   interestTags: string[];
+  momentCount: number;
+  compatibility: {
+    interestMatchPercentage: number;
+  };
+  hasViewedQuickMoment: boolean;
 }
 
 export interface DiscoveryResponseData {
@@ -238,7 +249,8 @@ export class DiscoveryService {
         where: {
           reporterId: currentUserId,
           status: { [Op.ne]: 'dismissed' },
-        },
+          momentId: null,
+        } as any,
         attributes: ['targetUserId'],
       }),
     ]);
@@ -283,6 +295,13 @@ export class DiscoveryService {
 
     const currentUserInterests = (currentUser.interests || []) as Interest[];
     const currentUserInterestNames = new Set(currentUserInterests.map((i) => i.name.toLowerCase()));
+    const currentUserInterestIds = Array.from(
+      new Set(
+        currentUserInterests
+          .filter((i) => i.isActive !== false)
+          .map((i) => i.id)
+      )
+    );
 
     // 2. Validate optional interestId filter if supplied
     let filterInterest: Interest | null = null;
@@ -341,27 +360,35 @@ export class DiscoveryService {
       ],
     });
 
-    // 5. For each target user, fetch their complete saved interests for tag display & shared vibe
+    // 5. For each target user, fetch their complete saved interests, eligible moment counts, and quick moment viewed status in parallel batches
     const targetUserIds = targetUsers.map((u) => u.id);
     let allTargetUserInterests: Map<string, Interest[]> = new Map();
+    let momentCountsMap: Map<string, number> = new Map();
+    let quickMomentViewedMap: Map<string, boolean> = new Map();
 
     if (targetUserIds.length > 0) {
-      const fullUsersWithInterests = await User.findAll({
-        where: { id: { [Op.in]: targetUserIds } },
-        include: [
-          {
-            model: Interest,
-            as: 'interests',
-            through: { attributes: [] },
-            where: { isActive: true },
-            required: false,
-          },
-        ],
-      });
+      const [fullUsersWithInterests, momentCounts, quickMomentViewed] = await Promise.all([
+        User.findAll({
+          where: { id: { [Op.in]: targetUserIds } },
+          include: [
+            {
+              model: Interest,
+              as: 'interests',
+              through: { attributes: [] },
+              where: { isActive: true },
+              required: false,
+            },
+          ],
+        }),
+        momentService.getEligibleMomentCountsByUserIds(currentUserId, targetUserIds),
+        quickMomentService.getViewedStatusByUserIds(currentUserId, targetUserIds),
+      ]);
 
       for (const u of fullUsersWithInterests) {
         allTargetUserInterests.set(u.id, (u.interests || []) as Interest[]);
       }
+      momentCountsMap = momentCounts;
+      quickMomentViewedMap = quickMomentViewed;
     }
 
     // 6. Map and transform discovery profiles
@@ -395,7 +422,25 @@ export class DiscoveryService {
         user.isProfileComplete
       );
 
+      // Candidate unique active interest IDs
+      const candidateInterestIds = Array.from(
+        new Set(
+          userInterests
+            .filter((i) => i.isActive !== false)
+            .map((i) => i.id)
+        )
+      );
+
+      const interestMatchPercentage = calculateInterestMatchPercentage(
+        currentUserInterestIds,
+        candidateInterestIds
+      );
+
+      const momentCount = momentCountsMap.get(user.id) || 0;
+      const hasViewedQuickMoment = quickMomentViewedMap.get(user.id) || false;
+
       return {
+        id: user.id,
         userId: user.id,
         name: resolveDisplayName(user),
         username: user.username,
@@ -407,6 +452,11 @@ export class DiscoveryService {
         vibeScore,
         sharedInterests,
         interestTags,
+        momentCount,
+        compatibility: {
+          interestMatchPercentage,
+        },
+        hasViewedQuickMoment,
       };
     });
 

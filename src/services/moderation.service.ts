@@ -20,15 +20,10 @@ export interface ReportMomentResult {
 }
 
 export interface BlockedUserItem {
-  blockId: string;
   userId: string;
+  name: string;
   username: string;
-  fullName: string | null;
-  firstName: string | null;
   profilePhoto: string | null;
-  city: string | null;
-  gender: string | null;
-  isVerified: boolean;
   reason: string | null;
   blockedAt: Date;
 }
@@ -45,32 +40,17 @@ export interface BlockedUsersResponse {
 
 export interface ReportItem {
   id: string;
-  reporterId: string;
-  targetUserId: string;
   targetType: string;
+  targetUserId: string;
+  targetName: string | null;
+  targetPhoto: string | null;
   momentId?: string | null;
+  momentThumbnail?: string | null;
   reason: string;
-  description?: string | null;
+  description: string | null;
   status: string;
   createdAt: Date;
-  updatedAt: Date;
-  targetUser?: {
-    id: string;
-    username: string;
-    fullName: string | null;
-    profilePhoto: string | null;
-  } | null;
-  reporter?: {
-    id: string;
-    username: string;
-    fullName: string | null;
-    email?: string | null;
-  } | null;
-  moment?: {
-    id: string;
-    caption: string | null;
-    mediaUrl: string | null;
-  } | null;
+  reporterName?: string | null;
 }
 
 export interface ReportsListResponse {
@@ -498,15 +478,10 @@ export class ModerationService {
         'User';
 
       return {
-        blockId: block.id,
         userId: block.blockedUserId,
+        name: displayName,
         username: target?.username || 'Unknown',
-        fullName: target?.fullName || null,
-        firstName: displayName,
         profilePhoto: target?.profilePicture ? formatMediaUrl(target.profilePicture) : null,
-        city: target?.city || null,
-        gender: target?.gender || null,
-        isVerified: !!target?.isFaceVerified,
         reason: block.reason || null,
         blockedAt: block.createdAt,
       };
@@ -616,34 +591,26 @@ export class ModerationService {
 
     const reports: ReportItem[] = rows.map((r: any) => {
       const firstMediaUrl = r.moment?.media?.[0]?.mediaUrl;
+      const targetName =
+        r.targetUser?.firstName ||
+        (r.targetUser?.fullName ? r.targetUser.fullName.split(' ')[0] : null) ||
+        r.targetUser?.username ||
+        null;
+
       return {
         id: r.id,
-        reporterId: r.reporterId,
-        targetUserId: r.targetUserId,
         targetType: r.targetType,
+        targetUserId: r.targetUserId,
+        targetName,
+        targetPhoto: r.targetUser?.profilePicture
+          ? formatMediaUrl(r.targetUser.profilePicture)
+          : null,
         momentId: r.momentId || null,
+        momentThumbnail: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
         reason: r.reason,
         description: r.description || null,
         status: r.status,
         createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        targetUser: r.targetUser
-          ? {
-              id: r.targetUser.id,
-              username: r.targetUser.username,
-              fullName: r.targetUser.fullName || null,
-              profilePhoto: r.targetUser.profilePicture
-                ? formatMediaUrl(r.targetUser.profilePicture)
-                : null,
-            }
-          : null,
-        moment: r.moment
-          ? {
-              id: r.moment.id,
-              caption: r.moment.caption || null,
-              mediaUrl: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
-            }
-          : null,
       };
     });
 
@@ -724,42 +691,32 @@ export class ModerationService {
 
     const reports: ReportItem[] = totalCountResult.rows.map((r: any) => {
       const firstMediaUrl = r.moment?.media?.[0]?.mediaUrl;
+      const targetName =
+        r.targetUser?.firstName ||
+        (r.targetUser?.fullName ? r.targetUser.fullName.split(' ')[0] : null) ||
+        r.targetUser?.username ||
+        null;
+      const reporterName =
+        r.reporter?.firstName ||
+        (r.reporter?.fullName ? r.reporter.fullName.split(' ')[0] : null) ||
+        r.reporter?.username ||
+        null;
+
       return {
         id: r.id,
-        reporterId: r.reporterId,
-        targetUserId: r.targetUserId,
         targetType: r.targetType,
+        targetUserId: r.targetUserId,
+        targetName,
+        targetPhoto: r.targetUser?.profilePicture
+          ? formatMediaUrl(r.targetUser.profilePicture)
+          : null,
         momentId: r.momentId || null,
+        momentThumbnail: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
         reason: r.reason,
         description: r.description || null,
         status: r.status,
         createdAt: r.createdAt,
-        updatedAt: r.updatedAt,
-        reporter: r.reporter
-          ? {
-              id: r.reporter.id,
-              username: r.reporter.username,
-              email: r.reporter.email || null,
-              fullName: r.reporter.fullName || null,
-            }
-          : null,
-        targetUser: r.targetUser
-          ? {
-              id: r.targetUser.id,
-              username: r.targetUser.username,
-              fullName: r.targetUser.fullName || null,
-              profilePhoto: r.targetUser.profilePicture
-                ? formatMediaUrl(r.targetUser.profilePicture)
-                : null,
-            }
-          : null,
-        moment: r.moment
-          ? {
-              id: r.moment.id,
-              caption: r.moment.caption || null,
-              mediaUrl: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
-            }
-          : null,
+        reporterName,
       };
     });
 
@@ -808,23 +765,23 @@ export class ModerationService {
    */
   public getReportReasons() {
     return {
-      userReportReasons: [
-        { key: 'fake_profile', label: 'Fake profile / Impersonation', description: 'Stolen photos, catfish, or pretending to be someone else' },
-        { key: 'harassment', label: 'Harassment / Cyberbullying', description: 'Abusive language, stalking, or unwanted sexual advances' },
-        { key: 'inappropriate_content', label: 'Inappropriate Content', description: 'Explicit, vulgar, or offensive profile details' },
-        { key: 'spam', label: 'Spam or Commercial Promotion', description: 'Selling services, bots, or repetitive unsolicited messages' },
-        { key: 'scam', label: 'Scam or Fraud', description: 'Requesting money, cryptocurrency, gift cards, or financial fraud' },
-        { key: 'underage', label: 'Underage User', description: 'User appears to be under 18 years old' },
-        { key: 'other', label: 'Other', description: 'Other community guideline violations' },
+      userReasons: [
+        { key: 'fake_profile', label: 'Fake profile / Impersonation' },
+        { key: 'harassment', label: 'Harassment / Cyberbullying' },
+        { key: 'inappropriate_content', label: 'Inappropriate Content' },
+        { key: 'spam', label: 'Spam or Commercial Promotion' },
+        { key: 'scam', label: 'Scam or Fraud' },
+        { key: 'underage', label: 'Underage User' },
+        { key: 'other', label: 'Other' },
       ],
-      momentReportReasons: [
-        { key: 'nudity', label: 'Nudity or Sexual Content', description: 'Sexually explicit or suggestive images' },
-        { key: 'violence', label: 'Violence or Graphic Content', description: 'Violent acts, gore, self-harm, or dangerous activities' },
-        { key: 'harassment', label: 'Harassment or Bullying', description: 'Targeting, shaming, or threatening individuals' },
-        { key: 'spam', label: 'Spam or Advertising', description: 'Promotional spam or fake marketing material' },
-        { key: 'fake_content', label: 'Fake or Misleading Content', description: 'Deepfakes, misinformation, or impersonation' },
-        { key: 'underage', label: 'Involves Minors', description: 'Content involving minors or safety violations' },
-        { key: 'other', label: 'Other Guidelines Violation', description: 'Other violation of community guidelines' },
+      momentReasons: [
+        { key: 'nudity', label: 'Nudity or Sexual Content' },
+        { key: 'violence', label: 'Violence or Graphic Content' },
+        { key: 'harassment', label: 'Harassment or Bullying' },
+        { key: 'spam', label: 'Spam or Advertising' },
+        { key: 'fake_content', label: 'Fake or Misleading Content' },
+        { key: 'underage', label: 'Involves Minors' },
+        { key: 'other', label: 'Other' },
       ],
     };
   }

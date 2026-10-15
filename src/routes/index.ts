@@ -17,7 +17,6 @@ import coinPackageRoutes from './coinPackage.routes';
 import subscriptionRoutes from './subscription.routes';
 import coinRoutes from './coin.routes';
 import walletRoutes from './wallet.routes';
-import moderationRoutes from './moderation.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
@@ -26,8 +25,8 @@ import {
 } from '../controllers/faceVerification.controller';
 
 import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
-import { getProfile, updateProfile, getOtherUserProfileHandler } from '../controllers/user.controller';
-import { updateProfileSchema, getOtherUserProfileSchema } from '../schemas/user.schema';
+import { getProfile, updateProfile } from '../controllers/user.controller';
+import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
 
 const router = Router();
@@ -50,8 +49,6 @@ router.use('/coin-packages', coinPackageRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
-router.use('/moderation', moderationRoutes);
-router.use('/reports', moderationRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);
@@ -66,6 +63,5 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 router.get('/profile', authenticate, getProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
-router.get('/profile/:userId', authenticate, validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 
 export default router;

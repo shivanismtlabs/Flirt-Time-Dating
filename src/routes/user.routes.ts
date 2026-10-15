@@ -99,7 +99,6 @@ router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutM
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
-router.get('/profile/:userId', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 
 // User Visible Moments Thumbnails Screen
 router.get(
@@ -110,10 +109,8 @@ router.get(
 
 // Moderation Endpoints: Block, Unblock, and Report User
 router.get('/blocked', validate(getBlockedUsersSchema), getBlockedUsersHandler);
-router.get('/blocks', validate(getBlockedUsersSchema), getBlockedUsersHandler);
 router.post('/:userId/block', validate(blockUserSchema), blockUserHandler);
 router.delete('/:userId/block', validate(unblockUserSchema), unblockUserHandler);
-router.post('/:userId/unblock', validate(unblockUserSchema), unblockUserHandler);
 
 router.get('/reports', validate(getUserReportsSchema), getUserReportsHandler);
 router.get('/report-reasons', getReportReasonsHandler);

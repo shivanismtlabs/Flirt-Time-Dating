@@ -11,7 +11,7 @@ import {
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 
-describe('Block and Report List APIs', () => {
+describe('Block and Report APIs', () => {
   let userA: User;
   let userB: User;
   let userC: User;
@@ -120,8 +120,7 @@ describe('Block and Report List APIs', () => {
       expect(res.body.data.pagination.total).toBe(0);
     });
 
-    it('should return list of blocked users with details and pagination', async () => {
-      // User A blocks User B and User C
+    it('should return clean list of blocked users without unnecessary fields', async () => {
       await UserBlock.create({
         userId: userA.id,
         blockedUserId: userB.id,
@@ -144,46 +143,21 @@ describe('Block and Report List APIs', () => {
       expect(res.body.data.pagination.page).toBe(1);
 
       const meeraBlock = res.body.data.blockedUsers.find((b: any) => b.userId === userB.id);
-      expect(meeraBlock).toBeDefined();
-      expect(meeraBlock.username).toBe('user_meera');
-      expect(meeraBlock.fullName).toBe('Meera Patel');
-      expect(meeraBlock.firstName).toBe('Meera');
-      expect(meeraBlock.city).toBe('Delhi');
-      expect(meeraBlock.profilePhoto).toContain('meera.jpg');
-      expect(meeraBlock.isVerified).toBe(true);
-      expect(meeraBlock.reason).toBe('Harassment');
-      expect(meeraBlock.blockedAt).toBeDefined();
-    });
-
-    it('should work via route alias /api/v1/users/blocks', async () => {
-      await UserBlock.create({
-        userId: userA.id,
-        blockedUserId: userB.id,
-        reason: 'Inappropriate',
+      expect(meeraBlock).toEqual({
+        userId: userB.id,
+        name: 'Meera',
+        username: 'user_meera',
+        profilePhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
+        reason: 'Harassment',
+        blockedAt: expect.any(String),
       });
 
-      const res = await request(app)
-        .get('/api/v1/users/blocks')
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.blockedUsers).toHaveLength(1);
-    });
-
-    it('should work via moderation alias /api/v1/moderation/blocked-users', async () => {
-      await UserBlock.create({
-        userId: userA.id,
-        blockedUserId: userB.id,
-      });
-
-      const res = await request(app)
-        .get('/api/v1/moderation/blocked-users')
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.blockedUsers).toHaveLength(1);
+      // Verify no unnecessary fields are exposed
+      expect(meeraBlock.blockId).toBeUndefined();
+      expect(meeraBlock.city).toBeUndefined();
+      expect(meeraBlock.gender).toBeUndefined();
+      expect(meeraBlock.isVerified).toBeUndefined();
+      expect(meeraBlock.fullName).toBeUndefined();
     });
   });
 
@@ -221,14 +195,17 @@ describe('Block and Report List APIs', () => {
       expect(res.body.message).toMatch(/not blocked/i);
     });
 
-    it('should successfully unblock user via DELETE /api/v1/users/:userId/block', async () => {
+    it('should successfully unblock user', async () => {
       const res = await request(app)
         .delete(`/api/v1/users/${userB.id}/block`)
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.isBlocked).toBe(false);
+      expect(res.body.data).toEqual({
+        userId: userB.id,
+        isBlocked: false,
+      });
 
       // Verify block record is removed from DB
       const blockCount = await UserBlock.count({
@@ -241,16 +218,6 @@ describe('Block and Report List APIs', () => {
         .get('/api/v1/users/blocked')
         .set('Authorization', `Bearer ${tokenA}`);
       expect(listRes.body.data.blockedUsers).toHaveLength(0);
-    });
-
-    it('should successfully unblock user via POST /api/v1/users/:userId/unblock alias', async () => {
-      const res = await request(app)
-        .post(`/api/v1/users/${userB.id}/unblock`)
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.isBlocked).toBe(false);
     });
   });
 
@@ -271,7 +238,7 @@ describe('Block and Report List APIs', () => {
       expect(res.body.data.pagination.total).toBe(0);
     });
 
-    it('should return filed user and moment reports with details', async () => {
+    it('should return clean report records with concise target info', async () => {
       // User A reports User B
       await UserReport.create({
         reporterId: userA.id,
@@ -303,16 +270,39 @@ describe('Block and Report List APIs', () => {
       expect(res.body.data.pagination.total).toBe(2);
 
       const userReport = res.body.data.reports.find((r: any) => r.targetType === 'user');
-      expect(userReport).toBeDefined();
-      expect(userReport.reason).toBe('fake_profile');
-      expect(userReport.description).toBe('Impersonating another person');
-      expect(userReport.targetUser.username).toBe('user_meera');
-      expect(userReport.targetUser.profilePhoto).toContain('meera.jpg');
+      expect(userReport).toEqual({
+        id: expect.any(String),
+        targetType: 'user',
+        targetUserId: userB.id,
+        targetName: 'Meera',
+        targetPhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
+        momentId: null,
+        momentThumbnail: null,
+        reason: 'fake_profile',
+        description: 'Impersonating another person',
+        status: 'pending',
+        createdAt: expect.any(String),
+      });
 
       const momentReport = res.body.data.reports.find((r: any) => r.targetType === 'moment');
-      expect(momentReport).toBeDefined();
-      expect(momentReport.momentId).toBe(momentB.id);
-      expect(momentReport.moment.caption).toBe('Sunset vibes');
+      expect(momentReport).toEqual({
+        id: expect.any(String),
+        targetType: 'moment',
+        targetUserId: userB.id,
+        targetName: 'Meera',
+        targetPhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
+        momentId: momentB.id,
+        momentThumbnail: 'https://flirttime-media.s3.amazonaws.com/moments/sunset.jpg',
+        reason: 'inappropriate_content',
+        description: 'Offensive image',
+        status: 'reviewed',
+        createdAt: expect.any(String),
+      });
+
+      // Verify no reporter details or internal DB bloat leaked
+      expect(userReport.reporterId).toBeUndefined();
+      expect(userReport.reporter).toBeUndefined();
+      expect(userReport.updatedAt).toBeUndefined();
     });
 
     it('should filter reports by status', async () => {
@@ -339,135 +329,25 @@ describe('Block and Report List APIs', () => {
       expect(res.body.data.reports).toHaveLength(1);
       expect(res.body.data.reports[0].status).toBe('resolved');
     });
-
-    it('should work via /api/v1/reports/my-reports alias', async () => {
-      await UserReport.create({
-        reporterId: userA.id,
-        targetUserId: userB.id,
-        targetType: 'user',
-        reason: 'scam',
-        status: 'pending',
-      });
-
-      const res = await request(app)
-        .get('/api/v1/reports/my-reports')
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.reports).toHaveLength(1);
-    });
   });
 
-  describe('4. Report Reasons Catalog API (GET /api/v1/reports/reasons)', () => {
-    it('should return catalog of user and moment report reasons', async () => {
-      const res = await request(app).get('/api/v1/reports/reasons');
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.userReportReasons).toBeDefined();
-      expect(Array.isArray(res.body.data.userReportReasons)).toBe(true);
-      expect(res.body.data.userReportReasons.length).toBeGreaterThan(0);
-
-      const fakeProfileReason = res.body.data.userReportReasons.find(
-        (r: any) => r.key === 'fake_profile'
-      );
-      expect(fakeProfileReason).toBeDefined();
-      expect(fakeProfileReason.label).toBeDefined();
-
-      expect(res.body.data.momentReportReasons).toBeDefined();
-      expect(Array.isArray(res.body.data.momentReportReasons)).toBe(true);
-    });
-
-    it('should work via /api/v1/users/report-reasons alias', async () => {
+  describe('4. Report Reasons Catalog API (GET /api/v1/users/report-reasons)', () => {
+    it('should return clean report reasons list with key and label only', async () => {
       const res = await request(app)
         .get('/api/v1/users/report-reasons')
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.userReportReasons).toBeDefined();
-    });
-  });
+      expect(res.body.data.userReasons).toBeDefined();
+      expect(res.body.data.momentReasons).toBeDefined();
 
-  describe('5. Moderation/Admin All Reports API (GET /api/v1/reports)', () => {
-    beforeEach(async () => {
-      await UserReport.create({
-        reporterId: userA.id,
-        targetUserId: userB.id,
-        targetType: 'user',
-        reason: 'harassment',
-        status: 'pending',
+      const fakeProfile = res.body.data.userReasons.find((r: any) => r.key === 'fake_profile');
+      expect(fakeProfile).toEqual({
+        key: 'fake_profile',
+        label: 'Fake profile / Impersonation',
       });
-      await UserReport.create({
-        reporterId: userB.id,
-        targetUserId: userA.id,
-        targetType: 'user',
-        reason: 'fake_profile',
-        status: 'resolved',
-      });
-    });
-
-    it('should retrieve all reports with counts', async () => {
-      const res = await request(app)
-        .get('/api/v1/reports')
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.reports).toHaveLength(2);
-      expect(res.body.data.counts).toBeDefined();
-      expect(res.body.data.counts.pending).toBe(1);
-      expect(res.body.data.counts.resolved).toBe(1);
-      expect(res.body.data.counts.total).toBe(2);
-    });
-
-    it('should work via /api/v1/moderation/reports alias', async () => {
-      const res = await request(app)
-        .get('/api/v1/moderation/reports')
-        .set('Authorization', `Bearer ${tokenA}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.reports).toHaveLength(2);
-    });
-  });
-
-  describe('6. Update Report Status API (PATCH /api/v1/reports/:reportId/status)', () => {
-    let report: UserReport;
-
-    beforeEach(async () => {
-      report = await UserReport.create({
-        reporterId: userA.id,
-        targetUserId: userB.id,
-        targetType: 'user',
-        reason: 'harassment',
-        status: 'pending',
-      });
-    });
-
-    it('should update report status to reviewed', async () => {
-      const res = await request(app)
-        .patch(`/api/v1/reports/${report.id}/status`)
-        .set('Authorization', `Bearer ${tokenA}`)
-        .send({ status: 'reviewed' });
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.report.status).toBe('reviewed');
-
-      const updated = await UserReport.findByPk(report.id);
-      expect(updated?.status).toBe('reviewed');
-    });
-
-    it('should return 400 for invalid status', async () => {
-      const res = await request(app)
-        .patch(`/api/v1/reports/${report.id}/status`)
-        .set('Authorization', `Bearer ${tokenA}`)
-        .send({ status: 'invalid_status_value' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
+      expect(fakeProfile.description).toBeUndefined();
     });
   });
 });

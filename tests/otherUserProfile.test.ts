@@ -200,26 +200,6 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.isMatched).toBe(false);
       expect(data.canConnect).toBe(true);
     });
-
-    it('should retrieve full other user profile via /api/v1/users/profile/:userId alias', async () => {
-      const res = await request(app)
-        .get(`/api/v1/users/profile/${targetUser.id}`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.userId).toBe(targetUser.id);
-    });
-
-    it('should retrieve full other user profile via direct /api/v1/profile/:userId alias', async () => {
-      const res = await request(app)
-        .get(`/api/v1/profile/${targetUser.id}`)
-        .set('Authorization', `Bearer ${viewerToken}`);
-
-      expect(res.status).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.userId).toBe(targetUser.id);
-    });
   });
 
   describe('2. Invalid and Nonexistent User IDs', () => {

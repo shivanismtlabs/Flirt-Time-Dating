@@ -7,6 +7,7 @@ import {
   updateProfile,
   getProfile,
   getOtherUserProfileHandler,
+  getOtherUserPhotosHandler,
   blockUserHandler,
   reportUserHandler,
   getBlockedUsersHandler,
@@ -107,6 +108,7 @@ router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutM
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
+router.get('/:userId/photos', validate(getOtherUserProfileSchema), (req, res) => getOtherUserPhotosHandler(req, res));
 
 // User Visible Moments Thumbnails Screen
 router.get(

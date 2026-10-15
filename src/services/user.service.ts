@@ -404,6 +404,15 @@ export const updateUserProfile = async (
   };
 };
 
+export interface OtherUserProfilePhotoDTO {
+  id: string;
+  url: string;
+  imageUrl: string;
+  thumbnailUrl?: string | null;
+  isPrimary: boolean;
+  displayOrder: number;
+}
+
 export interface OtherUserProfileResponse {
   userId: string;
   username: string;
@@ -412,6 +421,7 @@ export interface OtherUserProfileResponse {
   isVerified: boolean;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
+  photos: OtherUserProfilePhotoDTO[];
   coverPhoto?: {
     url: string;
     thumbnailUrl: string;
@@ -610,9 +620,9 @@ export const getOtherUserProfile = async (
     };
   }
 
-  // 7. Moments gallery (active Quick Moments with fallback to approved gallery photos)
+  // 7. Photos gallery formatting
   const rawPhotos = (targetUser.photos || []) as any[];
-  const primaryPhotoRecord = rawPhotos.find((p) => p.isPrimary);
+  const primaryPhotoRecord = rawPhotos.find((p: any) => p.isPrimary);
   const primaryPhoto =
     primaryPhotoRecord?.imageUrl ||
     targetUser.profilePicture ||
@@ -620,6 +630,47 @@ export const getOtherUserProfile = async (
     null;
   const photoVersion = primaryPhotoRecord?.updatedAt || targetUser.updatedAt;
 
+  const formattedPhotos: OtherUserProfilePhotoDTO[] = rawPhotos.map((p: any) => ({
+    id: p.id,
+    url: formatMediaUrl(p.imageUrl, p.updatedAt),
+    imageUrl: formatMediaUrl(p.imageUrl, p.updatedAt),
+    thumbnailUrl: formatThumbnailUrl(p.imageUrl, p.updatedAt),
+    isPrimary: !!p.isPrimary,
+    displayOrder: p.displayOrder,
+  }));
+
+  const primaryFormattedUrl = primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null;
+  if (formattedPhotos.length === 0 && primaryFormattedUrl) {
+    formattedPhotos.push({
+      id: `profile-${targetUser.id}`,
+      url: primaryFormattedUrl,
+      imageUrl: primaryFormattedUrl,
+      thumbnailUrl: formatThumbnailUrl(primaryPhoto, photoVersion),
+      isPrimary: true,
+      displayOrder: 0,
+    });
+  } else if (primaryFormattedUrl) {
+    const alreadyIncludesPrimary = formattedPhotos.some(
+      (p: any) => p.url === primaryFormattedUrl || p.imageUrl === primaryFormattedUrl
+    );
+    if (!alreadyIncludesPrimary) {
+      formattedPhotos.unshift({
+        id: `profile-${targetUser.id}`,
+        url: primaryFormattedUrl,
+        imageUrl: primaryFormattedUrl,
+        thumbnailUrl: formatThumbnailUrl(primaryPhoto, photoVersion),
+        isPrimary: true,
+        displayOrder: 0,
+      });
+    }
+  }
+
+  const hasPrimaryInList = formattedPhotos.some((p: any) => p.isPrimary);
+  if (!hasPrimaryInList && formattedPhotos.length > 0) {
+    formattedPhotos[0].isPrimary = true;
+  }
+
+  // 8. Moments gallery (active Quick Moments with fallback to approved gallery photos)
   const { momentService } = await import('./moment.service');
   let moments: any[] = [];
   try {
@@ -673,7 +724,7 @@ export const getOtherUserProfile = async (
       }));
   }
 
-  // 8. Existing actions & match state
+  // 9. Existing actions & match state
   const [existingSwipe, existingMatch, existingRequest] = await Promise.all([
     SwipeAction.findOne({
       where: {
@@ -727,6 +778,7 @@ export const getOtherUserProfile = async (
     isVerified: !!targetUser.isFaceVerified,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
+    photos: formattedPhotos,
     coverPhoto: targetUser.coverPicture
       ? {
           url: formatMediaUrl(targetUser.coverPicture),
@@ -751,6 +803,109 @@ export const getOtherUserProfile = async (
     myAction,
     isMatched,
     canConnect,
+  };
+};
+
+/**
+ * Retrieves the photos gallery of another user
+ * GET /api/v1/users/:userId/photos
+ */
+export const getOtherUserPhotos = async (
+  viewerUserId: string,
+  targetUserId: string
+): Promise<{ photos: OtherUserProfilePhotoDTO[]; totalPhotos: number }> => {
+  const { Op } = await import('sequelize');
+  const { UserBlock, UserPhoto } = await import('../models');
+
+  const blockRecord = await UserBlock.findOne({
+    where: {
+      [Op.or]: [
+        { userId: viewerUserId, blockedUserId: targetUserId },
+        { userId: targetUserId, blockedUserId: viewerUserId },
+      ],
+    },
+  });
+
+  if (blockRecord) {
+    throw new ServiceError(
+      'Profile unavailable due to privacy restrictions',
+      403
+    );
+  }
+
+  const targetUser = await User.findByPk(targetUserId, {
+    include: [
+      {
+        model: UserPhoto,
+        as: 'photos',
+        where: {
+          [Op.or]: [{ status: 'approved' }, { status: null }],
+        },
+        required: false,
+      },
+    ],
+    order: [
+      [{ model: UserPhoto, as: 'photos' }, 'displayOrder', 'ASC'],
+      [{ model: UserPhoto, as: 'photos' }, 'createdAt', 'DESC'],
+    ],
+  });
+
+  if (!targetUser || !targetUser.isActive) {
+    throw new ServiceError('Profile not found or unavailable', 404);
+  }
+
+  const rawPhotos = (targetUser.photos || []) as any[];
+  const primaryPhotoRecord = rawPhotos.find((p) => p.isPrimary);
+  const primaryPhoto =
+    primaryPhotoRecord?.imageUrl ||
+    targetUser.profilePicture ||
+    (rawPhotos[0]?.imageUrl) ||
+    null;
+  const photoVersion = primaryPhotoRecord?.updatedAt || targetUser.updatedAt;
+
+  const formattedPhotos: OtherUserProfilePhotoDTO[] = rawPhotos.map((p: any) => ({
+    id: p.id,
+    url: formatMediaUrl(p.imageUrl, p.updatedAt),
+    imageUrl: formatMediaUrl(p.imageUrl, p.updatedAt),
+    thumbnailUrl: formatThumbnailUrl(p.imageUrl, p.updatedAt),
+    isPrimary: !!p.isPrimary,
+    displayOrder: p.displayOrder,
+  }));
+
+  const primaryFormattedUrl = primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null;
+  if (formattedPhotos.length === 0 && primaryFormattedUrl) {
+    formattedPhotos.push({
+      id: `profile-${targetUser.id}`,
+      url: primaryFormattedUrl,
+      imageUrl: primaryFormattedUrl,
+      thumbnailUrl: formatThumbnailUrl(primaryPhoto, photoVersion),
+      isPrimary: true,
+      displayOrder: 0,
+    });
+  } else if (primaryFormattedUrl) {
+    const alreadyIncludesPrimary = formattedPhotos.some(
+      (p: any) => p.url === primaryFormattedUrl || p.imageUrl === primaryFormattedUrl
+    );
+    if (!alreadyIncludesPrimary) {
+      formattedPhotos.unshift({
+        id: `profile-${targetUser.id}`,
+        url: primaryFormattedUrl,
+        imageUrl: primaryFormattedUrl,
+        thumbnailUrl: formatThumbnailUrl(primaryPhoto, photoVersion),
+        isPrimary: true,
+        displayOrder: 0,
+      });
+    }
+  }
+
+  const hasPrimaryInList = formattedPhotos.some((p: any) => p.isPrimary);
+  if (!hasPrimaryInList && formattedPhotos.length > 0) {
+    formattedPhotos[0].isPrimary = true;
+  }
+
+  return {
+    photos: formattedPhotos,
+    totalPhotos: formattedPhotos.length,
   };
 };
 

@@ -693,4 +693,43 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.moreAboutMe.items.length).toBe(12);
     });
   });
+
+  describe('17. Photos Gallery Verification on Other User Profile', () => {
+    it('should return all approved gallery photos in data.photos and exclude rejected photos', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      const data = res.body.data;
+
+      expect(Array.isArray(data.photos)).toBe(true);
+      expect(data.photos.length).toBe(3); // 1 primary + 2 approved gallery, 1 rejected excluded
+
+      const urls = data.photos.map((p: any) => p.url);
+      expect(urls.some((u: string) => u.includes('profiles/meera_main.jpg'))).toBe(true);
+      expect(urls.some((u: string) => u.includes('moments/meera_food.jpg'))).toBe(true);
+      expect(urls.some((u: string) => u.includes('moments/meera_plant.jpg'))).toBe(true);
+      expect(urls.some((u: string) => u.includes('moments/meera_rejected.jpg'))).toBe(false);
+
+      const primaryPhoto = data.photos.find((p: any) => p.isPrimary);
+      expect(primaryPhoto).toBeDefined();
+      expect(primaryPhoto.url).toContain('meera_main.jpg');
+    });
+
+    it('should return 200 OK from dedicated GET /api/v1/users/:userId/photos endpoint', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/photos`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Profile photos retrieved successfully');
+      expect(Array.isArray(res.body.data.photos)).toBe(true);
+      expect(res.body.data.photos.length).toBe(3);
+      expect(res.body.data.totalPhotos).toBe(3);
+    });
+  });
 });
+

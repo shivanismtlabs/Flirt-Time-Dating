@@ -14,6 +14,8 @@ import {
   Match,
   UserBlock,
   UserReport,
+  UserInterest,
+  Interest,
 } from '../models';
 import {
   s3Service,
@@ -21,6 +23,7 @@ import {
   formatThumbnailUrl,
   extractS3Key,
 } from './s3.service';
+import { calculateInterestMatchPercentage } from '../utils/compatibility';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
 
@@ -470,10 +473,18 @@ export class MomentService {
     const limit = Math.min(50, Math.max(1, options.limit || 20));
     const offset = (page - 1) * limit;
 
+    const now = new Date();
+
     // 5. Query active Moments
     const whereConditions: any[] = [
       { userId: resolvedUserId },
       { status: 'active' },
+      {
+        [Op.or]: [
+          { expiresAt: null },
+          { expiresAt: { [Op.gt]: now } },
+        ],
+      },
     ];
 
     if (!isSelf && !isMatched) {
@@ -593,6 +604,15 @@ export class MomentService {
       } catch {}
     }
 
+    const { momentCounts, compatibilityMap } = await this.getCompatibilityAndMomentCounts(
+      viewerId,
+      [resolvedUserId]
+    );
+    const targetMomentCount = momentCounts.get(resolvedUserId) || count;
+    const targetCompatibility = compatibilityMap.get(resolvedUserId) || {
+      interestMatchPercentage: 0,
+    };
+
     const creatorName =
       targetUser.firstName ||
       (targetUser.fullName ? targetUser.fullName.split(' ')[0] : null) ||
@@ -613,6 +633,8 @@ export class MomentService {
       isFaceVerified: !!targetUser.isFaceVerified,
       city: targetUser.city || null,
       location: targetUser.city || null,
+      momentCount: targetMomentCount,
+      compatibility: targetCompatibility,
     };
 
     const mappedMoments = moments.map((m: any) => {
@@ -649,6 +671,8 @@ export class MomentService {
       return {
         id: m.id,
         momentId: m.id,
+        momentCount: targetMomentCount,
+        compatibility: targetCompatibility,
         imageUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
         firstImageUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
         mediaUrl: firstMedia ? formatMediaUrl(firstMedia.mediaUrl) : null,
@@ -692,6 +716,8 @@ export class MomentService {
 
     return {
       userId: resolvedUserId,
+      momentCount: targetMomentCount,
+      compatibility: targetCompatibility,
       page,
       limit,
       totalCount: count,
@@ -902,6 +928,22 @@ export class MomentService {
         });
       }
 
+      // Batch fetch moment counts & compatibility for story creators
+      const storyCreatorIds = Array.from(storiesMap.keys());
+      const { momentCounts: storyMomentCounts, compatibilityMap: storyCompatibilityMap } =
+        await this.getCompatibilityAndMomentCounts(viewerId, storyCreatorIds);
+
+      for (const [cId, entry] of storiesMap.entries()) {
+        const cMomentCount = storyMomentCounts.get(cId) || entry.momentsCount;
+        const cCompat = storyCompatibilityMap.get(cId) || { interestMatchPercentage: 0 };
+        entry.momentCount = cMomentCount;
+        entry.compatibility = cCompat;
+        for (const sm of entry.moments) {
+          sm.momentCount = cMomentCount;
+          sm.compatibility = cCompat;
+        }
+      }
+
       // Viewer's own story first if present, followed by others sorted by latest moment
       const stories = Array.from(storiesMap.values()).sort((a, b) => {
         if (a.isSelf) return -1;
@@ -1012,6 +1054,15 @@ export class MomentService {
       } catch {}
     }
 
+    // Batch query moment counts and interest compatibility for creators in feed
+    const creatorUserIds = Array.from(
+      new Set(moments.map((m: any) => m.userId || (m.user && m.user.id)).filter(Boolean))
+    );
+    const { momentCounts, compatibilityMap } = await this.getCompatibilityAndMomentCounts(
+      viewerId,
+      creatorUserIds
+    );
+
     const feedItems = moments.map((m: any) => {
       const creator = m.user;
       const sortedMedia = (m.media || []).sort(
@@ -1052,9 +1103,15 @@ export class MomentService {
           'User'
         : 'User';
 
+      const creatorId = creator ? creator.id : m.userId;
+      const creatorMomentCount = momentCounts.get(creatorId) || 0;
+      const creatorCompatibility = compatibilityMap.get(creatorId) || { interestMatchPercentage: 0 };
+
       return {
         id: m.id,
         momentId: m.id,
+        momentCount: creatorMomentCount,
+        compatibility: creatorCompatibility,
         caption: m.caption,
         audience: m.audience,
         publishedAt: m.publishedAt,
@@ -1077,6 +1134,8 @@ export class MomentService {
               isFaceVerified: !!creator.isFaceVerified,
               city: creator.city || null,
               location: creator.city || null,
+              momentCount: creatorMomentCount,
+              compatibility: creatorCompatibility,
             }
           : null,
         media: sortedMedia.map((media: any) => ({
@@ -1287,9 +1346,20 @@ export class MomentService {
 
     const likesCount = reactions.length;
 
+    const { momentCounts, compatibilityMap } = await this.getCompatibilityAndMomentCounts(
+      viewerId,
+      [creator.id]
+    );
+    const creatorMomentCount = momentCounts.get(creator.id) || 1;
+    const creatorCompatibility = compatibilityMap.get(creator.id) || {
+      interestMatchPercentage: 0,
+    };
+
     return {
       id: moment.id,
       momentId: moment.id,
+      momentCount: creatorMomentCount,
+      compatibility: creatorCompatibility,
       creator: {
         id: creator.id,
         creatorId: creator.id,
@@ -1303,6 +1373,8 @@ export class MomentService {
         isFaceVerified: !!creator.isFaceVerified,
         city: creator.city || null,
         location: creator.city || null,
+        momentCount: creatorMomentCount,
+        compatibility: creatorCompatibility,
       },
       media,
       imageUrl: media[0] ? formatMediaUrl(media[0].mediaUrl) : null,
@@ -2442,13 +2514,14 @@ export class MomentService {
 
   /**
    * Batch aggregates active, non-expired, eligible moment counts for candidate user IDs
-   * viewed by a given viewer in Discover People.
+   * viewed by a given viewer in Discover People and Moments Feed.
    *
    * Requirements:
-   * - Count moments belonging to that candidate, not the logged-in viewer.
+   * - Count moments belonging to candidate users or viewer.
    * - Count only moments that are active, not expired, not deleted, and eligible under privacy and moderation rules.
    * - Reuses existing moment-expiry logic (expiresAt IS NULL OR expiresAt > now).
-   * - Excludes 'matches_only' and 'close_friends' audience since viewer and discovery candidates are non-matched strangers.
+   * - Excludes 'matches_only' audience unless viewer and candidate are matched.
+   * - Excludes 'close_friends' audience.
    * - Excludes moments reported by viewer.
    * - Avoids duplicate counts caused by joins (queries Moment directly with group by).
    * - Zero N+1 queries.
@@ -2467,7 +2540,24 @@ export class MomentService {
       countsMap.set(id, 0);
     }
 
-    // Safety: ensure viewer's own ID is not queried for candidate count
+    const now = new Date();
+
+    // 1. Viewer's own moments count if requested
+    if (targetUserIds.includes(viewerId)) {
+      const selfCount = await Moment.count({
+        where: {
+          userId: viewerId,
+          status: 'active',
+          [Op.or]: [
+            { expiresAt: null },
+            { expiresAt: { [Op.gt]: now } },
+          ],
+        },
+      });
+      countsMap.set(viewerId, selfCount);
+    }
+
+    // 2. Candidate counts
     const candidateIds = targetUserIds.filter((id) => id && id !== viewerId);
     if (candidateIds.length === 0) {
       return countsMap;
@@ -2487,15 +2577,47 @@ export class MomentService {
       .map((r) => r.momentId)
       .filter((id): id is string => Boolean(id));
 
-    const now = new Date();
+    // Check matches between viewer and candidate IDs
+    const matches = await Match.findAll({
+      where: {
+        [Op.or]: [
+          { user1Id: viewerId, user2Id: { [Op.in]: candidateIds } },
+          { user2Id: viewerId, user1Id: { [Op.in]: candidateIds } },
+        ],
+        isActive: true,
+      },
+      attributes: ['user1Id', 'user2Id'],
+    });
+
+    const matchedCandidateIds = new Set<string>();
+    for (const m of matches) {
+      matchedCandidateIds.add(m.user1Id === viewerId ? m.user2Id : m.user1Id);
+    }
+
+    const candidateOrConditions: any[] = [];
+    const nonMatchedIds = candidateIds.filter((id) => !matchedCandidateIds.has(id));
+    if (nonMatchedIds.length > 0) {
+      candidateOrConditions.push({
+        userId: { [Op.in]: nonMatchedIds },
+        audience: { [Op.notIn]: ['matches_only', 'close_friends'] },
+      });
+    }
+    const matchedIdsArray = Array.from(matchedCandidateIds);
+    if (matchedIdsArray.length > 0) {
+      candidateOrConditions.push({
+        userId: { [Op.in]: matchedIdsArray },
+        audience: { [Op.ne]: 'close_friends' },
+      });
+    }
 
     const momentWhere: any = {
-      userId: { [Op.in]: candidateIds },
       status: 'active',
-      audience: { [Op.notIn]: ['matches_only', 'close_friends'] },
       [Op.or]: [
         { expiresAt: null },
         { expiresAt: { [Op.gt]: now } },
+      ],
+      [Op.and]: [
+        { [Op.or]: candidateOrConditions },
       ],
     };
 
@@ -2521,6 +2643,80 @@ export class MomentService {
     }
 
     return countsMap;
+  }
+
+  /**
+   * Batch resolves moment counts and interest compatibility percentages for target creators
+   * against the authenticated viewer.
+   */
+  public async getCompatibilityAndMomentCounts(
+    viewerId: string,
+    targetUserIds: string[]
+  ): Promise<{
+    momentCounts: Map<string, number>;
+    compatibilityMap: Map<string, { interestMatchPercentage: number }>;
+  }> {
+    const compatibilityMap = new Map<string, { interestMatchPercentage: number }>();
+    const uniqueTargetIds = Array.from(new Set(targetUserIds.filter(Boolean)));
+
+    for (const id of uniqueTargetIds) {
+      compatibilityMap.set(id, { interestMatchPercentage: 0 });
+    }
+
+    if (uniqueTargetIds.length === 0) {
+      return {
+        momentCounts: new Map<string, number>(),
+        compatibilityMap,
+      };
+    }
+
+    // Parallel fetch: eligible moment counts AND all active user interests (viewer + targets)
+    const userIdsToFetch = Array.from(new Set([viewerId, ...uniqueTargetIds]));
+    const [momentCounts, userInterests] = await Promise.all([
+      this.getEligibleMomentCountsByUserIds(viewerId, uniqueTargetIds),
+      UserInterest.findAll({
+        where: {
+          userId: { [Op.in]: userIdsToFetch },
+        },
+        include: [
+          {
+            model: Interest,
+            as: 'interest',
+            where: { isActive: true },
+            attributes: ['id'],
+            required: true,
+          },
+        ],
+        attributes: ['userId', 'interestId'],
+      }),
+    ]);
+
+    // Group active interest IDs per user
+    const userInterestMap = new Map<string, Set<string>>();
+    for (const ui of userInterests) {
+      if (!userInterestMap.has(ui.userId)) {
+        userInterestMap.set(ui.userId, new Set());
+      }
+      userInterestMap.get(ui.userId)!.add(ui.interestId);
+    }
+
+    const viewerInterestIds = userInterestMap.get(viewerId) || new Set<string>();
+
+    for (const targetId of uniqueTargetIds) {
+      const targetInterestIds = userInterestMap.get(targetId) || new Set<string>();
+      const interestMatchPercentage = calculateInterestMatchPercentage(
+        viewerInterestIds,
+        targetInterestIds
+      );
+      compatibilityMap.set(targetId, {
+        interestMatchPercentage,
+      });
+    }
+
+    return {
+      momentCounts,
+      compatibilityMap,
+    };
   }
 }
 

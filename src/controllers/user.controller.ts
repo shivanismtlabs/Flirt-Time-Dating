@@ -7,6 +7,7 @@ import {
   updateUserProfile,
   ServiceError,
   getOtherUserProfile,
+  getOtherUserPhotos,
   calculateProfileCompletion,
   parseLocation,
   formatMoreAboutMe,
@@ -338,6 +339,38 @@ export const getOtherUserProfileHandler = async (req: AuthenticatedRequest, res:
       return sendError(res, error.message, error.statusCode);
     }
     return sendError(res, 'Error fetching profile', 500);
+  }
+};
+
+/**
+ * Controller to retrieve another user's photos gallery
+ * GET /api/v1/users/:userId/photos (and /api/users/:userId/photos)
+ */
+export const getOtherUserPhotosHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const viewerUserId = req.user?.id;
+
+    if (!viewerUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = req.params.userId as string;
+    if (!targetUserId) {
+      return sendError(res, 'Target user ID is required', 400);
+    }
+
+    const photosData = await getOtherUserPhotos(viewerUserId, targetUserId);
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
+    return sendSuccess(res, 'Profile photos retrieved successfully', photosData);
+  } catch (error: any) {
+    if (error instanceof ServiceError) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return sendError(res, 'Error fetching user photos', 500);
   }
 };
 

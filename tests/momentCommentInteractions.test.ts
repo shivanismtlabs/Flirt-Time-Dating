@@ -626,4 +626,151 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(res.body.message).toMatch(/privacy restrictions/i);
     });
   });
+
+  describe('5. Nested Sub-replies Hierarchy & "Sub Reply ke Reply" retrieval', () => {
+    it('should return all descendant replies (sub-replies and replies to sub-replies) when fetching comment replies', async () => {
+      // 1. Replier posts Reply 1 to Comment
+      const r1Res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({ reply: 'Reply 1 by Rohit' });
+      expect(r1Res.status).toBe(201);
+      const r1Id = r1Res.body.data.replyId;
+
+      // 2. Creator posts Sub-reply S1 to Reply 1
+      const s1Res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({ reply: 'Sub-reply S1 by Ananya to Rohit', parentReplyId: r1Id });
+      expect(s1Res.status).toBe(201);
+      const s1Id = s1Res.body.data.replyId;
+      expect(s1Res.body.data.replyToUsername).toBe(replierUser.username);
+
+      // 3. Commenter posts reply to Sub-reply S1 (Sub reply ke reply!)
+      const t1Res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ reply: 'Reply T1 by Kabir to Sub-reply S1', parentReplyId: s1Id });
+      expect(t1Res.status).toBe(201);
+      const t1Id = t1Res.body.data.replyId;
+      expect(t1Res.body.data.replyToUsername).toBe(creatorUser.username);
+
+      // 4. Replier posts reply to T1 passing T1 directly in the URL param
+      const u1Res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${t1Id}/replies`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({ reply: 'Reply U1 by Rohit to T1 via sub-reply URL' });
+      expect(u1Res.status).toBe(201);
+      const u1Id = u1Res.body.data.replyId;
+      expect(u1Res.body.data.parentCommentId).toBe(commentId);
+      expect(u1Res.body.data.parentReplyId).toBe(t1Id);
+      expect(u1Res.body.data.replyToUsername).toBe(commenterUser.username);
+
+      // 5. Fetch all replies for commentId via GET /api/v1/moments/:momentId/comments/:commentId/replies
+      const getRepliesRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      expect(getRepliesRes.status).toBe(200);
+      expect(getRepliesRes.body.success).toBe(true);
+      expect(getRepliesRes.body.data.totalReplies).toBe(4);
+      expect(getRepliesRes.body.data.replies).toHaveLength(4);
+
+      const returnedIds = getRepliesRes.body.data.replies.map((r: any) => r.id);
+      expect(returnedIds).toContain(r1Id);
+      expect(returnedIds).toContain(s1Id);
+      expect(returnedIds).toContain(t1Id);
+      expect(returnedIds).toContain(u1Id);
+
+      // Verify nested replies hierarchy on R1
+      const r1Item = getRepliesRes.body.data.replies.find((r: any) => r.id === r1Id);
+      expect(r1Item.replies).toHaveLength(1);
+      expect(r1Item.replies[0].id).toBe(s1Id);
+
+      const s1Item = r1Item.replies[0];
+      expect(s1Item.replies).toHaveLength(1);
+      expect(s1Item.replies[0].id).toBe(t1Id);
+
+      const t1Item = s1Item.replies[0];
+      expect(t1Item.replies).toHaveLength(1);
+      expect(t1Item.replies[0].id).toBe(u1Id);
+
+      // 6. Fetch top-level comments list via GET /api/v1/moments/:momentId/comments
+      const getCommentsRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      expect(getCommentsRes.status).toBe(200);
+      expect(getCommentsRes.body.data.comments).toHaveLength(1);
+      const commentData = getCommentsRes.body.data.comments[0];
+      expect(commentData.repliesCount).toBe(4);
+      expect(commentData.replies).toHaveLength(4);
+      expect(commentData.replies.map((r: any) => r.id)).toContain(t1Id);
+      expect(commentData.replies.map((r: any) => r.id)).toContain(u1Id);
+    });
+
+    it('should cascade delete all nested sub-replies when root comment is deleted', async () => {
+      // Create sub-replies chain
+      const r1 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({ reply: 'Reply 1' });
+      const s1 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({ reply: 'Sub-reply S1', parentReplyId: r1.body.data.replyId });
+      const t1 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${s1.body.data.replyId}/replies`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ reply: 'Sub-reply T1' });
+
+      // Delete root comment
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${momentId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+      expect(delRes.status).toBe(200);
+
+      // Verify all sub-replies deleted
+      expect(await ChatMessage.findByPk(r1.body.data.replyId)).toBeNull();
+      expect(await ChatMessage.findByPk(s1.body.data.replyId)).toBeNull();
+      expect(await ChatMessage.findByPk(t1.body.data.replyId)).toBeNull();
+    });
+
+    it('should like and unlike a sub-comment via dedicated sub-comment reply like endpoint', async () => {
+      // 1. Post a reply
+      const r1 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({ reply: 'Reply to like' });
+      const replyId = r1.body.data.replyId;
+
+      // 2. Like sub-comment via /moments/:momentId/comments/:commentId/replies/:replyId/like
+      const likeRes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments/${commentId}/replies/${replyId}/like`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send();
+      expect(likeRes.status).toBe(200);
+      expect(likeRes.body.success).toBe(true);
+      expect(likeRes.body.data.commentId).toBe(replyId);
+      expect(likeRes.body.data.isLiked).toBe(true);
+      expect(likeRes.body.data.likesCount).toBe(1);
+
+      // 3. Get likes for this sub-comment
+      const getLikesRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments/${commentId}/replies/${replyId}/likes`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+      expect(getLikesRes.status).toBe(200);
+      expect(getLikesRes.body.data.totalLikes).toBe(1);
+      expect(getLikesRes.body.data.users[0].id).toBe(creatorUser.id);
+
+      // 4. Unlike sub-comment via DELETE /moments/:momentId/comments/:commentId/replies/:replyId/like
+      const unlikeRes = await request(app)
+        .delete(`/api/v1/moments/${momentId}/comments/${commentId}/replies/${replyId}/like`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+      expect(unlikeRes.status).toBe(200);
+      expect(unlikeRes.body.data.isLiked).toBe(false);
+      expect(unlikeRes.body.data.likesCount).toBe(0);
+    });
+  });
 });
+

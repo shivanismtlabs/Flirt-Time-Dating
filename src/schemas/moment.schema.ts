@@ -258,10 +258,15 @@ export const deleteMomentCommentSchema = z.object({
 });
 
 export const likeMomentCommentSchema = z.object({
-  params: z.object({
-    momentId: z.string().uuid('Invalid moment ID format').optional(),
-    commentId: z.string().uuid('Invalid comment ID format'),
-  }),
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+      commentId: z.string().uuid('Invalid comment ID format').optional(),
+      replyId: z.string().uuid('Invalid reply ID format').optional(),
+    })
+    .refine((data) => !!(data.commentId || data.replyId), {
+      message: 'Either commentId or replyId is required',
+    }),
   body: z
     .object({
       like: z.boolean().optional(),
@@ -274,10 +279,15 @@ export const likeMomentCommentSchema = z.object({
 });
 
 export const getMomentCommentLikesSchema = z.object({
-  params: z.object({
-    momentId: z.string().uuid('Invalid moment ID format').optional(),
-    commentId: z.string().uuid('Invalid comment ID format'),
-  }),
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+      commentId: z.string().uuid('Invalid comment ID format').optional(),
+      replyId: z.string().uuid('Invalid reply ID format').optional(),
+    })
+    .refine((data) => !!(data.commentId || data.replyId), {
+      message: 'Either commentId or replyId is required',
+    }),
   query: z
     .object({
       page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),

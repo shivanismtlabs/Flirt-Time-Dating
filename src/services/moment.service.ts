@@ -1812,12 +1812,49 @@ export class MomentService {
     const commentIds = rows.map((c: any) => c.id);
     const likesCountMap = new Map<string, number>();
     const userLikedSet = new Set<string>();
-    const repliesCountMap = new Map<string, number>();
 
-    if (commentIds.length > 0) {
+    // Fetch all replies belonging to this moment
+    let allMomentReplies: any[] = [];
+    try {
+      allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
+            { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
+          ],
+          [Op.and]: [
+            {
+              [Op.or]: [
+                { metadata: { [Op.like]: '%"parentCommentId"%' } },
+                { metadata: { [Op.like]: '%"parentReplyId"%' } },
+              ],
+            },
+          ],
+        },
+        include: [
+          {
+            model: User,
+            as: 'sender',
+            attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          },
+        ],
+        order: [['createdAt', 'ASC']],
+      });
+    } catch {}
+
+    const replyMap = new Map<string, any>();
+    for (const r of allMomentReplies) {
+      replyMap.set(r.id, r);
+    }
+
+    const allReplyIds = allMomentReplies.map((r: any) => r.id);
+    const allTargetIds = [...commentIds, ...allReplyIds];
+
+    if (allTargetIds.length > 0) {
       try {
         const commentLikes = await MomentCommentLike.findAll({
-          where: { commentId: { [Op.in]: commentIds } },
+          where: { commentId: { [Op.in]: allTargetIds } },
           attributes: ['commentId', 'userId'],
         });
         for (const cl of commentLikes) {
@@ -1827,56 +1864,143 @@ export class MomentService {
           }
         }
       } catch {}
-
-      try {
-        const replyConditions = commentIds.flatMap((cid) => [
-          { metadata: { [Op.like]: `%"parentCommentId":"${cid}"%` } },
-          { metadata: { [Op.like]: `%"parentCommentId": "${cid}"%` } },
-        ]);
-        const replies = await ChatMessage.findAll({
-          where: {
-            messageType: 'moment_reply',
-            [Op.or]: replyConditions,
-          },
-          attributes: ['id', 'metadata'],
-        });
-        for (const rep of replies) {
-          if (rep.metadata) {
-            try {
-              const meta = typeof rep.metadata === 'string' ? JSON.parse(rep.metadata) : rep.metadata;
-              if (meta.parentCommentId && commentIds.includes(meta.parentCommentId)) {
-                repliesCountMap.set(meta.parentCommentId, (repliesCountMap.get(meta.parentCommentId) || 0) + 1);
-              }
-            } catch {}
-          }
-        }
-      } catch {}
     }
 
-    const comments = rows.map((c: any) => ({
-      id: c.id,
-      commentId: c.id,
-      replyId: c.id,
-      momentId,
-      comment: c.content,
-      message: c.content,
-      createdAt: c.createdAt,
-      timeAgo: formatTimeAgoShort(c.createdAt),
-      isMyComment: c.senderId === viewerId,
-      canDelete: c.senderId === viewerId || moment.userId === viewerId,
-      likesCount: likesCountMap.get(c.id) || 0,
-      isLiked: userLikedSet.has(c.id),
-      repliesCount: repliesCountMap.get(c.id) || 0,
-      user: {
-        id: c.sender?.id,
-        username: c.sender?.username || null,
-        name: c.sender?.fullName || c.sender?.nickName || 'User',
-        profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
-        avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
-        isVerified: !!c.sender?.isFaceVerified,
-        city: c.sender?.city || null,
-      },
-    }));
+    // Function to trace root comment ID for any reply
+    const findRootCommentId = (reply: any): string | null => {
+      let curr = reply;
+      const visited = new Set<string>();
+      while (curr && !visited.has(curr.id)) {
+        visited.add(curr.id);
+        let meta: any = null;
+        if (curr.metadata) {
+          try {
+            meta = typeof curr.metadata === 'string' ? JSON.parse(curr.metadata) : curr.metadata;
+          } catch {}
+        }
+        const pCommentId = meta?.parentCommentId;
+        if (!pCommentId) {
+          return curr.id;
+        }
+        if (replyMap.has(pCommentId)) {
+          curr = replyMap.get(pCommentId);
+        } else {
+          return pCommentId;
+        }
+      }
+      return null;
+    };
+
+    // Group replies by root comment ID
+    const commentRepliesMap = new Map<string, any[]>();
+    for (const r of allMomentReplies) {
+      const rootId = findRootCommentId(r);
+      if (rootId && commentIds.includes(rootId)) {
+        if (!commentRepliesMap.has(rootId)) {
+          commentRepliesMap.set(rootId, []);
+        }
+        commentRepliesMap.get(rootId)!.push(r);
+      }
+    }
+
+    const comments = rows.map((c: any) => {
+      const rawReplies = commentRepliesMap.get(c.id) || [];
+      const itemMap = new Map<string, any>();
+      const formattedList: any[] = [];
+
+      for (const r of rawReplies) {
+        let meta: any = {};
+        if (r.metadata) {
+          try {
+            meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+          } catch {}
+        }
+
+        const parentRepId =
+          meta?.parentReplyId ||
+          (meta?.parentCommentId && meta.parentCommentId !== c.id ? meta.parentCommentId : null) ||
+          null;
+
+        let replyToUName = meta?.replyToUsername || null;
+        let replyToUId = meta?.replyToUserId || null;
+        if (!replyToUName && parentRepId && replyMap.has(parentRepId)) {
+          const pr = replyMap.get(parentRepId);
+          replyToUName = pr.sender?.username || pr.sender?.fullName || null;
+          replyToUId = pr.senderId || null;
+        }
+
+        const formatted = {
+          id: r.id,
+          replyId: r.id,
+          commentId: r.id,
+          parentCommentId: c.id,
+          parentReplyId: parentRepId,
+          replyToUserId: replyToUId,
+          replyToUsername: replyToUName,
+          momentId,
+          reply: r.content,
+          comment: r.content,
+          message: r.content,
+          createdAt: r.createdAt,
+          timeAgo: formatTimeAgoShort(r.createdAt),
+          isMyComment: r.senderId === viewerId,
+          canDelete: r.senderId === viewerId || c.senderId === viewerId || moment.userId === viewerId,
+          likesCount: likesCountMap.get(r.id) || 0,
+          isLiked: userLikedSet.has(r.id),
+          user: {
+            id: r.sender?.id,
+            username: r.sender?.username || null,
+            name: r.sender?.fullName || r.sender?.nickName || 'User',
+            profilePhoto: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
+            avatar: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
+            isVerified: !!r.sender?.isFaceVerified,
+            city: r.sender?.city || null,
+          },
+          replies: [] as any[],
+        };
+        itemMap.set(formatted.id, formatted);
+        formattedList.push(formatted);
+      }
+
+      // Link nested sub-replies into parent reply's replies array
+      for (const item of formattedList) {
+        if (item.parentReplyId && itemMap.has(item.parentReplyId)) {
+          itemMap.get(item.parentReplyId).replies.push(item);
+        }
+      }
+
+      const directReplies = formattedList.filter(
+        (item) => !item.parentReplyId || item.parentReplyId === c.id || !itemMap.has(item.parentReplyId)
+      );
+
+      return {
+        id: c.id,
+        commentId: c.id,
+        replyId: c.id,
+        momentId,
+        comment: c.content,
+        message: c.content,
+        createdAt: c.createdAt,
+        timeAgo: formatTimeAgoShort(c.createdAt),
+        isMyComment: c.senderId === viewerId,
+        canDelete: c.senderId === viewerId || moment.userId === viewerId,
+        likesCount: likesCountMap.get(c.id) || 0,
+        isLiked: userLikedSet.has(c.id),
+        repliesCount: formattedList.length,
+        user: {
+          id: c.sender?.id,
+          username: c.sender?.username || null,
+          name: c.sender?.fullName || c.sender?.nickName || 'User',
+          profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
+          avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
+          isVerified: !!c.sender?.isFaceVerified,
+          city: c.sender?.city || null,
+        },
+        replies: formattedList,
+        allReplies: formattedList,
+        nestedReplies: directReplies,
+      };
+    });
 
     return {
       momentId,
@@ -2111,13 +2235,14 @@ export class MomentService {
 
     // 3. Verify parent comment belongs to this moment
     let commentMomentId: string | null = null;
+    let parentCommentMeta: any = null;
     if (parentComment.metadata) {
       try {
-        const parsed =
+        parentCommentMeta =
           typeof parentComment.metadata === 'string'
             ? JSON.parse(parentComment.metadata)
             : parentComment.metadata;
-        commentMomentId = parsed.momentId || null;
+        commentMomentId = parentCommentMeta.momentId || null;
       } catch {}
     }
     if (commentMomentId && commentMomentId !== momentId) {
@@ -2128,14 +2253,52 @@ export class MomentService {
       );
     }
 
-    // 4. Handle sub-reply validation if parentReplyId is provided
+    // Resolve thread root comment & effective parent reply
+    let rootComment = parentComment;
+    let rootCommentId = commentId;
+    let effectiveParentReplyId = options?.parentReplyId || null;
+
+    if (parentCommentMeta?.parentCommentId) {
+      // parentComment passed in URL is itself a reply to a comment
+      let curr: any = parentComment;
+      const visited = new Set<string>();
+      while (curr && !visited.has(curr.id)) {
+        visited.add(curr.id);
+        let m: any = null;
+        if (curr.metadata) {
+          try {
+            m = typeof curr.metadata === 'string' ? JSON.parse(curr.metadata) : curr.metadata;
+          } catch {}
+        }
+        if (m?.parentCommentId) {
+          rootCommentId = m.parentCommentId;
+          const ancestor = await ChatMessage.findByPk(rootCommentId, {
+            include: [{ model: User, as: 'sender', attributes: ['id', 'username', 'fullName', 'nickName'] }],
+          });
+          if (ancestor) {
+            rootComment = ancestor;
+            curr = ancestor;
+          } else {
+            break;
+          }
+        } else {
+          rootComment = curr;
+          rootCommentId = curr.id;
+          break;
+        }
+      }
+      if (!effectiveParentReplyId) {
+        effectiveParentReplyId = commentId;
+      }
+    }
+
+    // 4. Handle sub-reply validation if effectiveParentReplyId is set
     let targetRecipientId = parentComment.senderId;
     let targetRecipientUsername =
       parentComment.sender?.username || parentComment.sender?.fullName || null;
-    const parentReplyId = options?.parentReplyId || null;
 
-    if (parentReplyId) {
-      const parentReply = await ChatMessage.findByPk(parentReplyId, {
+    if (effectiveParentReplyId) {
+      const parentReply = await ChatMessage.findByPk(effectiveParentReplyId, {
         include: [
           {
             model: User,
@@ -2165,10 +2328,7 @@ export class MomentService {
         } catch {}
       }
 
-      if (
-        (replyMomentId && replyMomentId !== momentId) ||
-        (replyParentCommentId && replyParentCommentId !== commentId)
-      ) {
+      if (replyMomentId && replyMomentId !== momentId) {
         throw new MomentServiceError(
           'Parent reply does not belong to the specified comment or moment',
           404,
@@ -2176,14 +2336,47 @@ export class MomentService {
         );
       }
 
+      // Check if parentReply belongs to rootCommentId thread
+      if (replyParentCommentId && replyParentCommentId !== rootCommentId && replyParentCommentId !== commentId) {
+        let traceCurr: any = parentReply;
+        let belongsToThread = false;
+        const prVisited = new Set<string>();
+        while (traceCurr && !prVisited.has(traceCurr.id)) {
+          prVisited.add(traceCurr.id);
+          let m: any = null;
+          if (traceCurr.metadata) {
+            try {
+              m = typeof traceCurr.metadata === 'string' ? JSON.parse(traceCurr.metadata) : traceCurr.metadata;
+            } catch {}
+          }
+          if (m?.parentCommentId === rootCommentId || m?.parentCommentId === commentId) {
+            belongsToThread = true;
+            break;
+          }
+          if (m?.parentCommentId) {
+            const nextPr = await ChatMessage.findByPk(m.parentCommentId);
+            traceCurr = nextPr;
+          } else {
+            break;
+          }
+        }
+        if (!belongsToThread) {
+          throw new MomentServiceError(
+            'Parent reply does not belong to the specified comment or moment',
+            404,
+            'PARENT_REPLY_MISMATCH'
+          );
+        }
+      }
+
       targetRecipientId = parentReply.senderId;
       targetRecipientUsername =
         parentReply.sender?.username || parentReply.sender?.fullName || null;
     }
 
-    // 5. Privacy & Block checks: ensure sender is not blocked with moment creator, parent comment author, or reply recipient
+    // 5. Privacy & Block checks: ensure sender is not blocked with moment creator, root comment author, or reply recipient
     const blockedUserIdsToCheck = Array.from(
-      new Set([moment.userId, parentComment.senderId, targetRecipientId])
+      new Set([moment.userId, rootComment.senderId, targetRecipientId])
     );
     const blockRecord = await UserBlock.findOne({
       where: {
@@ -2221,9 +2414,9 @@ export class MomentService {
     const firstMedia = (moment.media || [])[0];
     const metadata = JSON.stringify({
       momentId: moment.id,
-      parentCommentId: commentId,
-      parentReplyId,
-      replyToCommentId: parentReplyId || commentId,
+      parentCommentId: rootCommentId,
+      parentReplyId: effectiveParentReplyId,
+      replyToCommentId: effectiveParentReplyId || rootCommentId,
       replyToUserId: targetRecipientId,
       replyToUsername: targetRecipientUsername,
       mediaUrl: firstMedia ? firstMedia.mediaUrl : null,
@@ -2291,8 +2484,11 @@ export class MomentService {
           entityId: chatMessage.id,
           data: {
             replyId: chatMessage.id,
-            commentId,
-            parentReplyId,
+            commentId: rootCommentId,
+            parentCommentId: rootCommentId,
+            parentReplyId: effectiveParentReplyId,
+            replyToUserId: targetRecipientId,
+            replyToUsername: targetRecipientUsername,
             momentId: moment.id,
             senderId,
             senderName: senderDisplayName,
@@ -2305,10 +2501,14 @@ export class MomentService {
     return {
       replyId: chatMessage.id,
       commentId: chatMessage.id,
-      parentCommentId: commentId,
-      parentReplyId,
+      parentCommentId: rootCommentId,
+      parentReplyId: effectiveParentReplyId,
+      replyToUserId: targetRecipientId,
+      replyToUsername: targetRecipientUsername,
       momentId: moment.id,
       reply: trimmedMessage,
+      comment: trimmedMessage,
+      message: trimmedMessage,
       createdAt: chatMessage.createdAt,
       timeAgo: formatTimeAgoShort(chatMessage.createdAt),
       likesCount: 0,
@@ -2321,9 +2521,13 @@ export class MomentService {
         profilePhoto: replierUser?.profilePicture
           ? formatThumbnailUrl(replierUser.profilePicture)
           : null,
+        avatar: replierUser?.profilePicture
+          ? formatThumbnailUrl(replierUser.profilePicture)
+          : null,
         isVerified: !!replierUser?.isFaceVerified,
         city: replierUser?.city || null,
       },
+      replies: [],
     };
   }
 
@@ -2378,37 +2582,71 @@ export class MomentService {
     const limit = Math.max(1, Math.min(100, options?.limit || 20));
     const offset = (page - 1) * limit;
 
-    const { count, rows } = await ChatMessage.findAndCountAll({
-      where: {
-        messageType: 'moment_reply',
-        [Op.and]: [
+    // Fetch all replies on this moment to accurately resolve full hierarchy / descendants
+    let allMomentReplies: any[] = [];
+    try {
+      allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
+            { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
+          ],
+          [Op.and]: [
+            {
+              [Op.or]: [
+                { metadata: { [Op.like]: '%"parentCommentId"%' } },
+                { metadata: { [Op.like]: '%"parentReplyId"%' } },
+              ],
+            },
+          ],
+        },
+        include: [
           {
-            [Op.or]: [
-              { metadata: { [Op.like]: `%"parentCommentId":"${commentId}"%` } },
-              { metadata: { [Op.like]: `%"parentCommentId": "${commentId}"%` } },
-            ],
-          },
-          {
-            [Op.or]: [
-              { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
-              { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
-            ],
+            model: User,
+            as: 'sender',
+            attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
           },
         ],
-      },
-      include: [
-        {
-          model: User,
-          as: 'sender',
-          attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
-        },
-      ],
-      order: [['createdAt', 'ASC']],
-      limit,
-      offset,
-    });
+        order: [['createdAt', 'ASC']],
+      });
+    } catch {}
 
-    const replyIds = rows.map((r: any) => r.id);
+    const replyMap = new Map<string, any>();
+    for (const r of allMomentReplies) {
+      replyMap.set(r.id, r);
+    }
+
+    // Find all descendants of commentId (direct replies, sub-replies, and replies to sub-replies)
+    const descendantIds = new Set<string>([commentId]);
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const r of allMomentReplies) {
+        if (!descendantIds.has(r.id)) {
+          let meta: any = null;
+          if (r.metadata) {
+            try {
+              meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+            } catch {}
+          }
+          if (
+            (meta?.parentCommentId && descendantIds.has(meta.parentCommentId)) ||
+            (meta?.parentReplyId && descendantIds.has(meta.parentReplyId))
+          ) {
+            descendantIds.add(r.id);
+            expanded = true;
+          }
+        }
+      }
+    }
+
+    // Filter matching replies (excluding the parent comment itself)
+    const matchingReplies = allMomentReplies.filter(
+      (r: any) => r.id !== commentId && descendantIds.has(r.id)
+    );
+
+    const replyIds = matchingReplies.map((r: any) => r.id);
     const likesCountMap = new Map<string, number>();
     const userLikedSet = new Set<string>();
 
@@ -2427,24 +2665,42 @@ export class MomentService {
       } catch {}
     }
 
-    const replies = rows.map((c: any) => {
-      let parentReplyId: string | null = null;
+    const itemMap = new Map<string, any>();
+    const formattedList: any[] = [];
+
+    for (const c of matchingReplies) {
+      let meta: any = {};
       if (c.metadata) {
         try {
-          const parsed =
-            typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata;
-          parentReplyId = parsed.parentReplyId || null;
+          meta = typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata;
         } catch {}
       }
 
-      return {
+      const parentReplyId =
+        meta?.parentReplyId ||
+        (meta?.parentCommentId && meta.parentCommentId !== commentId ? meta.parentCommentId : null) ||
+        null;
+
+      let replyToUName = meta?.replyToUsername || null;
+      let replyToUId = meta?.replyToUserId || null;
+      if (!replyToUName && parentReplyId && replyMap.has(parentReplyId)) {
+        const pr = replyMap.get(parentReplyId);
+        replyToUName = pr.sender?.username || pr.sender?.fullName || null;
+        replyToUId = pr.senderId || null;
+      }
+
+      const formatted = {
         id: c.id,
         replyId: c.id,
         commentId: c.id,
         parentCommentId: commentId,
         parentReplyId,
+        replyToUserId: replyToUId,
+        replyToUsername: replyToUName,
         momentId,
         reply: c.content,
+        comment: c.content,
+        message: c.content,
         createdAt: c.createdAt,
         timeAgo: formatTimeAgoShort(c.createdAt),
         isMyComment: c.senderId === viewerId,
@@ -2461,19 +2717,39 @@ export class MomentService {
           profilePhoto: c.sender?.profilePicture
             ? formatThumbnailUrl(c.sender.profilePicture)
             : null,
+          avatar: c.sender?.profilePicture
+            ? formatThumbnailUrl(c.sender.profilePicture)
+            : null,
           isVerified: !!c.sender?.isFaceVerified,
           city: c.sender?.city || null,
         },
+        replies: [] as any[],
       };
-    });
+      itemMap.set(formatted.id, formatted);
+      formattedList.push(formatted);
+    }
+
+    // Link nested sub-replies into parent reply's replies array
+    for (const item of formattedList) {
+      if (item.parentReplyId && itemMap.has(item.parentReplyId)) {
+        itemMap.get(item.parentReplyId).replies.push(item);
+      }
+    }
+
+    const directReplies = formattedList.filter(
+      (item) => !item.parentReplyId || item.parentReplyId === commentId || !itemMap.has(item.parentReplyId)
+    );
+
+    const totalReplies = formattedList.length;
+    const paginatedReplies = formattedList.slice(offset, offset + limit);
 
     return {
       commentId,
       momentId,
-      totalReplies: count,
+      totalReplies,
       page,
       limit,
-      totalPages: Math.ceil(count / limit),
+      totalPages: Math.ceil(totalReplies / limit),
       parentComment: {
         id: parentComment.id,
         comment: parentComment.content,
@@ -2485,11 +2761,16 @@ export class MomentService {
           profilePhoto: parentComment.sender?.profilePicture
             ? formatThumbnailUrl(parentComment.sender.profilePicture)
             : null,
+          avatar: parentComment.sender?.profilePicture
+            ? formatThumbnailUrl(parentComment.sender.profilePicture)
+            : null,
           isVerified: !!parentComment.sender?.isFaceVerified,
           city: parentComment.sender?.city || null,
         },
       },
-      replies,
+      replies: paginatedReplies,
+      allReplies: formattedList,
+      nestedReplies: directReplies,
     };
   }
 
@@ -2542,6 +2823,7 @@ export class MomentService {
 
     let replyMomentId: string | null = null;
     let replyParentCommentId: string | null = null;
+    let replyParentReplyId: string | null = null;
     if (reply.metadata) {
       try {
         const parsed =
@@ -2550,12 +2832,15 @@ export class MomentService {
             : reply.metadata;
         replyMomentId = parsed.momentId || null;
         replyParentCommentId = parsed.parentCommentId || null;
+        replyParentReplyId = parsed.parentReplyId || null;
       } catch {}
     }
 
     if (
       (replyMomentId && replyMomentId !== momentId) ||
-      (replyParentCommentId && replyParentCommentId !== commentId)
+      (replyParentCommentId &&
+        replyParentCommentId !== commentId &&
+        replyParentReplyId !== commentId)
     ) {
       throw new MomentServiceError(
         'Reply does not belong to the specified comment or moment',
@@ -2584,21 +2869,45 @@ export class MomentService {
       // Delete any likes on this reply
       await MomentCommentLike.destroy({ where: { commentId: replyId }, transaction: t });
 
-      // Cascade delete any sub-replies pointing to this reply
-      const subReplies = await ChatMessage.findAll({
+      // Find all descendant sub-replies pointing to this reply
+      const allMomentReplies = await ChatMessage.findAll({
         where: {
           messageType: 'moment_reply',
           [Op.or]: [
-            { metadata: { [Op.like]: `%"parentReplyId":"${replyId}"%` } },
-            { metadata: { [Op.like]: `%"parentReplyId": "${replyId}"%` } },
+            { metadata: { [Op.like]: '%"parentCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentReplyId"%' } },
           ],
         },
         transaction: t,
       });
 
-      for (const sub of subReplies) {
-        await MomentCommentLike.destroy({ where: { commentId: sub.id }, transaction: t });
-        await sub.destroy({ transaction: t });
+      const toDelete = new Set<string>([replyId]);
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const r of allMomentReplies) {
+          if (!toDelete.has(r.id)) {
+            let m: any = null;
+            if (r.metadata) {
+              try {
+                m = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+              } catch {}
+            }
+            if (
+              (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
+              (m?.parentReplyId && toDelete.has(m.parentReplyId))
+            ) {
+              toDelete.add(r.id);
+              expanded = true;
+            }
+          }
+        }
+      }
+      toDelete.delete(replyId);
+
+      for (const childId of toDelete) {
+        await MomentCommentLike.destroy({ where: { commentId: childId }, transaction: t });
+        await ChatMessage.destroy({ where: { id: childId }, transaction: t });
       }
 
       await reply.destroy({ transaction: t });
@@ -2692,18 +3001,44 @@ export class MomentService {
     // Cascade delete any child replies and comment likes
     try {
       await MomentCommentLike.destroy({ where: { commentId } });
-      const childReplies = await ChatMessage.findAll({
+
+      const allMomentReplies = await ChatMessage.findAll({
         where: {
           messageType: 'moment_reply',
           [Op.or]: [
-            { metadata: { [Op.like]: `%"parentCommentId":"${commentId}"%` } },
-            { metadata: { [Op.like]: `%"parentCommentId": "${commentId}"%` } },
+            { metadata: { [Op.like]: '%"parentCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentReplyId"%' } },
           ],
         },
       });
-      for (const child of childReplies) {
-        await MomentCommentLike.destroy({ where: { commentId: child.id } });
-        await child.destroy();
+
+      const toDelete = new Set<string>([commentId]);
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const r of allMomentReplies) {
+          if (!toDelete.has(r.id)) {
+            let m: any = null;
+            if (r.metadata) {
+              try {
+                m = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+              } catch {}
+            }
+            if (
+              (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
+              (m?.parentReplyId && toDelete.has(m.parentReplyId))
+            ) {
+              toDelete.add(r.id);
+              expanded = true;
+            }
+          }
+        }
+      }
+      toDelete.delete(commentId);
+
+      for (const childId of toDelete) {
+        await MomentCommentLike.destroy({ where: { commentId: childId } });
+        await ChatMessage.destroy({ where: { id: childId } });
       }
     } catch {}
 

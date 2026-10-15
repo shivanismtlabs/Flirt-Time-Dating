@@ -278,6 +278,37 @@ router.delete(
   deleteMomentCommentReplyHandler
 );
 
+// Sub-Comment / Reply Likes & Unlikes
+router.post(
+  '/:momentId/comments/:commentId/replies/:replyId/like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.post(
+  '/:momentId/comments/:commentId/replies/:replyId/toggle-like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.delete(
+  '/:momentId/comments/:commentId/replies/:replyId/like',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.post(
+  '/:momentId/comments/:commentId/replies/:replyId/unlike',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.get(
+  '/:momentId/comments/:commentId/replies/:replyId/likes',
+  validate(getMomentCommentLikesSchema),
+  getMomentCommentLikesHandler
+);
+
 // 6. Gifts on Moment (Send Gift & Gifts Catalog)
 router.get(
   '/:momentId/gifts',

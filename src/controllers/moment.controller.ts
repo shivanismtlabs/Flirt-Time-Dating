@@ -444,7 +444,7 @@ export const likeMomentCommentHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const commentId = req.params.commentId as string;
+    const commentId = (req.params.replyId || req.params.commentId) as string;
     const momentId = req.params.momentId as string | undefined;
 
     let action: 'like' | 'unlike' | 'toggle' | undefined;
@@ -493,7 +493,7 @@ export const unlikeMomentCommentHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const commentId = req.params.commentId as string;
+    const commentId = (req.params.replyId || req.params.commentId) as string;
     const momentId = req.params.momentId as string | undefined;
 
     const result = await momentService.toggleLikeMomentComment(
@@ -525,7 +525,7 @@ export const getMomentCommentLikesHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const commentId = req.params.commentId as string;
+    const commentId = (req.params.replyId || req.params.commentId) as string;
     const momentId = req.params.momentId as string | undefined;
     const { page, limit } = req.query as any;
 

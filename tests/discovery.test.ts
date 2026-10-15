@@ -144,7 +144,7 @@ describe('Discovery People API (GET /api/v1/discovery/people)', () => {
       expect(meeraProfile.isVerified).toBe(true);
       expect(meeraProfile.city).toBe('Mumbai');
       expect(meeraProfile.distanceKm).toBeGreaterThan(0);
-      expect(meeraProfile.profilePhoto).toBe('photos/meera/profile.jpg');
+      expect(meeraProfile.profilePhoto).toContain('thumbnails/photos/meera/profile.jpg');
 
       // Shared interests comparison
       // Current user has [Gaming, Photography], Meera has [Cooking, Gaming] -> Shared is ['Gaming']

@@ -32,7 +32,7 @@ uploads/
 storage/
 logs/
 
-test.sqlite
+test.sqlite*
 .tmp/
 
 # Secret Keys & Credentials

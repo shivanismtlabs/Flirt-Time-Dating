@@ -37,14 +37,87 @@ export const createMomentHandler = async (
       }
     }
 
-    const { caption, audience, locationLabel } = req.body || {};
+    const {
+      caption,
+      audience,
+      locationLabel,
+      location,
+      imageKey,
+      imageKeys,
+      mediaUrls,
+      mediaUrl,
+      images,
+    } = req.body || {};
+
+    // Resolve location label from string or location object (supports string, JSON string, or object)
+    let resolvedLocation: string | null = null;
+    if (typeof location === 'string' && location.trim()) {
+      const locStr = location.trim();
+      if (locStr.startsWith('{') && locStr.endsWith('}')) {
+        try {
+          const parsed = JSON.parse(locStr);
+          resolvedLocation = parsed.name || parsed.city || parsed.label || parsed.address || locStr;
+        } catch (_e) {
+          resolvedLocation = locStr;
+        }
+      } else {
+        resolvedLocation = locStr;
+      }
+    } else if (location && typeof location === 'object') {
+      resolvedLocation =
+        (location.name && String(location.name).trim()) ||
+        (location.city && String(location.city).trim()) ||
+        (location.label && String(location.label).trim()) ||
+        (location.address && String(location.address).trim()) ||
+        null;
+    } else if (typeof locationLabel === 'string' && locationLabel.trim()) {
+      resolvedLocation = locationLabel.trim();
+    }
+
+    // Collect pre-uploaded URLs or S3 keys
+    let preUploadedUrls: string[] = [];
+
+    if (typeof imageKey === 'string' && imageKey.trim()) {
+      preUploadedUrls.push(imageKey.trim());
+    }
+
+    if (Array.isArray(imageKeys)) {
+      preUploadedUrls = preUploadedUrls.concat(
+        imageKeys.filter((k) => typeof k === 'string' && k.trim())
+      );
+    } else if (typeof imageKeys === 'string' && imageKeys.trim()) {
+      preUploadedUrls.push(imageKeys.trim());
+    }
+
+    if (Array.isArray(mediaUrls)) {
+      preUploadedUrls = preUploadedUrls.concat(mediaUrls);
+    } else if (typeof mediaUrls === 'string' && mediaUrls.trim()) {
+      preUploadedUrls.push(mediaUrls.trim());
+    }
+
+    if (Array.isArray(images)) {
+      preUploadedUrls = preUploadedUrls.concat(
+        images.filter((img) => typeof img === 'string')
+      );
+    } else if (typeof images === 'string' && images.trim()) {
+      preUploadedUrls.push(images.trim());
+    }
+
+    if (
+      typeof mediaUrl === 'string' &&
+      mediaUrl.trim() &&
+      !preUploadedUrls.includes(mediaUrl.trim())
+    ) {
+      preUploadedUrls.push(mediaUrl.trim());
+    }
 
     const result = await momentService.createMoment({
       creatorId,
       caption,
       audience,
-      locationLabel,
+      locationLabel: resolvedLocation,
       files,
+      mediaUrls: preUploadedUrls,
     });
 
     return sendSuccess(res, 'Moment published successfully', result, 201);
@@ -200,7 +273,7 @@ export const reactMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { reaction } = req.body;
+    const reaction = req.body?.reaction || 'like';
 
     const result = await momentService.reactToMoment(
       viewerId,
@@ -218,8 +291,54 @@ export const reactMomentHandler = async (
 };
 
 /**
- * Controller to send a direct reply to a Moment
- * POST /api/v1/moments/:momentId/replies
+ * Controller to toggle Like / Unlike a Moment from a single endpoint
+ * POST /api/v1/moments/:momentId/like or POST /api/v1/moments/:momentId/toggle-like
+ */
+export const likeMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    let action: 'like' | 'unlike' | 'toggle' | undefined;
+
+    if (typeof req.body?.isLiked === 'boolean') {
+      action = req.body.isLiked ? 'like' : 'unlike';
+    } else if (typeof req.body?.like === 'boolean') {
+      action = req.body.like ? 'like' : 'unlike';
+    } else if (req.body?.action) {
+      action = req.body.action;
+    } else if (req.body?.type) {
+      action = req.body.type;
+    }
+
+    const result = await momentService.toggleLikeMoment(
+      viewerId,
+      momentId,
+      action
+    );
+
+    const message = result.isLiked
+      ? 'Moment liked successfully'
+      : 'Moment unliked successfully';
+
+    return sendSuccess(res, message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error processing like/unlike', 500);
+  }
+};
+
+/**
+ * Controller to send a comment or direct reply to a Moment
+ * POST /api/v1/moments/:momentId/replies or POST /api/v1/moments/:momentId/comments
  */
 export const replyMomentHandler = async (
   req: AuthenticatedRequest,
@@ -232,7 +351,7 @@ export const replyMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { message } = req.body;
+    const message = req.body.comment || req.body.message || req.body.text;
 
     const result = await momentService.replyToMoment(
       senderId,
@@ -240,12 +359,106 @@ export const replyMomentHandler = async (
       message
     );
 
-    return sendSuccess(res, 'Reply sent successfully', result, 200);
+    return sendSuccess(res, 'Comment posted successfully', result, 201);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
-    return sendError(res, error.message || 'Error replying to moment', 500);
+    return sendError(res, error.message || 'Error posting comment to moment', 500);
+  }
+};
+
+/**
+ * Controller to get all comments on a Moment
+ * GET /api/v1/moments/:momentId/comments or GET /api/v1/moments/:momentId/replies
+ */
+export const getMomentCommentsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentComments(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment comments fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching moment comments', 500);
+  }
+};
+
+/**
+ * Controller to delete a comment/reply on a Moment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId
+ */
+export const deleteMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = req.params.commentId as string;
+    const momentId = req.params.momentId as string | undefined;
+    const result = await momentService.deleteMomentComment(
+      userId,
+      commentId,
+      momentId
+    );
+
+    return sendSuccess(res, result.message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting comment', 500);
+  }
+};
+
+/**
+ * Controller to get all users who liked / reacted to a Moment
+ * GET /api/v1/moments/:momentId/likes or GET /api/v1/moments/:momentId/reactions
+ */
+export const getMomentLikesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit, reaction } = req.query as any;
+
+    const result = await momentService.getMomentLikes(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      reaction: reaction ? String(reaction) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment likes fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching moment likes', 500);
   }
 };
 
@@ -285,3 +498,147 @@ export const reportMomentHandler = async (
     );
   }
 };
+
+/**
+ * Controller to unlike or remove reaction from a Moment
+ * DELETE /api/v1/moments/:momentId/reactions or POST /api/v1/moments/:momentId/unlike
+ */
+export const unlikeMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const result = await momentService.unlikeMoment(viewerId, momentId);
+
+    return sendSuccess(res, 'Moment unliked successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error removing moment reaction', 500);
+  }
+};
+
+/**
+ * Controller to delete a Moment (Author only)
+ * DELETE /api/v1/moments/:momentId
+ */
+export const deleteMomentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const result = await momentService.deleteMoment(userId, momentId);
+
+    return sendSuccess(res, result.message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting moment', 500);
+  }
+};
+
+/**
+ * Controller to get available Gifts catalog and current user coin balance
+ * GET /api/v1/moments/gifts or GET /api/v1/moments/:momentId/gifts
+ */
+export const getMomentGiftsCatalogHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string | undefined;
+    const result = await momentService.getMomentGiftsCatalog(viewerId, momentId);
+
+    return sendSuccess(res, 'Gifts catalog fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching gifts catalog', 500);
+  }
+};
+
+/**
+ * Controller to send a gift on a Moment with full validation checks
+ * POST /api/v1/moments/:momentId/gifts
+ */
+export const sendMomentGiftHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const senderId = req.user?.id;
+    if (!senderId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { giftCode, giftId, gift, quantity, message } = req.body || {};
+
+    const result = await momentService.sendMomentGift(senderId, momentId, {
+      giftCode,
+      giftId,
+      gift,
+      quantity,
+      message,
+    });
+
+    return sendSuccess(res, 'Gift sent successfully! 🎁', result, 201);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.data || error.errorCode);
+    }
+    return sendError(res, error.message || 'Error sending gift to moment', 500);
+  }
+};
+
+/**
+ * Controller to get list of gifts received on a Moment
+ * GET /api/v1/moments/:momentId/gifts/received
+ */
+export const getMomentGiftsReceivedHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentGiftsReceived(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    return sendSuccess(res, 'Moment gifts fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching received gifts', 500);
+  }
+};
+

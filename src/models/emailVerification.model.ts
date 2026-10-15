@@ -1,9 +1,19 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export const OTP_PURPOSES = {
+  AUTH: 'auth',
+  PROFILE_EMAIL_CHANGE: 'profile_email_change',
+  PROFILE_PHONE_CHANGE: 'profile_phone_change',
+} as const;
+
+export type OtpPurpose = typeof OTP_PURPOSES[keyof typeof OTP_PURPOSES] | string;
+
 export interface EmailVerificationAttributes {
   id: string;
+  userId?: string | null;
   email: string;
+  purpose?: string;
   otpHash: string;
   expiresAt: Date;
   isConsumed: boolean;
@@ -22,6 +32,8 @@ export interface EmailVerificationCreationAttributes
   extends Optional<
     EmailVerificationAttributes,
     | 'id'
+    | 'userId'
+    | 'purpose'
     | 'isConsumed'
     | 'isVerified'
     | 'attempts'
@@ -37,7 +49,9 @@ export class EmailVerification
   implements EmailVerificationAttributes
 {
   declare public id: string;
+  declare public userId: string | null;
   declare public email: string;
+  declare public purpose: string;
   declare public otpHash: string;
   declare public expiresAt: Date;
   declare public isConsumed: boolean;
@@ -67,9 +81,18 @@ EmailVerification.init(
       defaultValue: DataTypes.UUIDV4,
       primaryKey: true,
     },
+    userId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
     email: {
       type: DataTypes.STRING(100),
       allowNull: false,
+    },
+    purpose: {
+      type: DataTypes.STRING(50),
+      allowNull: false,
+      defaultValue: 'auth',
     },
     otpHash: {
       type: DataTypes.STRING(255),
@@ -125,6 +148,12 @@ EmailVerification.init(
     indexes: [
       {
         fields: ['email'],
+      },
+      {
+        fields: ['userId'],
+      },
+      {
+        fields: ['purpose'],
       },
       {
         fields: ['expiresAt'],

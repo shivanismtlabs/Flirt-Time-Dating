@@ -36,7 +36,10 @@ export const normalizePhone = (phone: string): string => {
 export const combineAndNormalizePhone = (countryCode: string, phone: string): string => {
   if (typeof countryCode !== 'string' || typeof phone !== 'string') return '';
   const cleanCountry = countryCode.trim().replace(/^\+/, '').replace(/\D/g, '');
-  const cleanPhone = phone.trim().replace(/\D/g, '');
+  let cleanPhone = phone.trim().replace(/\D/g, '');
+  if (cleanCountry && cleanPhone.startsWith(cleanCountry) && cleanPhone.length > cleanCountry.length) {
+    cleanPhone = cleanPhone.slice(cleanCountry.length);
+  }
   if (!cleanCountry || !cleanPhone) return '';
   return `+${cleanCountry}${cleanPhone}`;
 };

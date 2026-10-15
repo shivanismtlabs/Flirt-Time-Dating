@@ -1,7 +1,8 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
-import { onboardingService, OnboardingServiceError } from '../services/onboarding.service';
+import { OnboardingService, onboardingService, OnboardingServiceError } from '../services/onboarding.service';
+import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
 
 const getUserIdOrThrow = (req: AuthenticatedRequest, res: Response): string | null => {
   const userId = req.user?.id;
@@ -100,7 +101,10 @@ export const updateUserInterests = async (req: AuthenticatedRequest, res: Respon
   try {
     const userId = getUserIdOrThrow(req, res);
     if (!userId) return;
-    const { interestIds } = req.body;
+    const rawList = req.body.interestIds || req.body.interests || [];
+    const interestIds: string[] = rawList.map((item: any) =>
+      typeof item === 'object' && item?.id ? String(item.id) : String(item)
+    );
     const result = await onboardingService.updateUserInterests(userId, interestIds);
     return sendSuccess(res, 'User interests saved successfully', result);
   } catch (err: any) {
@@ -125,15 +129,119 @@ export const uploadPhoto = async (req: AuthenticatedRequest, res: Response) => {
     const userId = getUserIdOrThrow(req, res);
     if (!userId) return;
 
-    const files = req.files as { [fieldname: string]: Express.Multer.File[] } | undefined;
-    const photoFile = files?.['photo']?.[0] || files?.['image']?.[0] || req.file;
-
-    if (!photoFile || !photoFile.buffer) {
-      return sendError(res, 'No photo file provided. Attach image in "photo" or "image" field', 400, 'MISSING_FILE');
+    // 1. Extract all uploaded files across supported fields
+    const fileList: Express.Multer.File[] = [];
+    if (req.files) {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const field of ['photos', 'images', 'photo', 'image', 'files']) {
+        if (Array.isArray(filesObj[field])) {
+          fileList.push(...filesObj[field]);
+        }
+      }
+    }
+    if (req.file) {
+      fileList.push(req.file);
     }
 
-    const photo = await onboardingService.addPhoto(userId, photoFile.buffer, photoFile.mimetype);
-    return sendSuccess(res, 'Photo uploaded successfully', { photo }, 201);
+    // 2. Extract pre-uploaded keys, image URLs or existing photo IDs from req.body
+    const preUploadedKeys: string[] = [];
+    const bodySource =
+      req.body?.imageKeys ??
+      req.body?.photos ??
+      req.body?.images ??
+      req.body?.imageUrls ??
+      req.body?.keys;
+
+    if (bodySource !== undefined && bodySource !== null) {
+      if (Array.isArray(bodySource)) {
+        for (const item of bodySource) {
+          if (typeof item === 'string' && item.trim()) {
+            preUploadedKeys.push(item.trim());
+          } else if (item && typeof item === 'object') {
+            const val = item.key || item.imageKey || item.url || item.imageUrl || item.id;
+            if (val && typeof val === 'string' && val.trim()) {
+              preUploadedKeys.push(val.trim());
+            }
+          }
+        }
+      } else if (typeof bodySource === 'string' && bodySource.trim()) {
+        try {
+          const parsed = JSON.parse(bodySource);
+          if (Array.isArray(parsed)) {
+            for (const item of parsed) {
+              if (typeof item === 'string' && item.trim()) {
+                preUploadedKeys.push(item.trim());
+              } else if (item && typeof item === 'object') {
+                const val = item.key || item.imageKey || item.url || item.imageUrl || item.id;
+                if (val && typeof val === 'string' && val.trim()) {
+                  preUploadedKeys.push(val.trim());
+                }
+              }
+            }
+          } else {
+            preUploadedKeys.push(bodySource.trim());
+          }
+        } catch {
+          if (bodySource.includes(',')) {
+            preUploadedKeys.push(
+              ...bodySource
+                .split(',')
+                .map((s: string) => s.trim())
+                .filter(Boolean)
+            );
+          } else {
+            preUploadedKeys.push(bodySource.trim());
+          }
+        }
+      }
+    }
+
+    // Single key fallbacks
+    const singleKey = req.body?.imageKey || req.body?.imageUrl;
+    if (singleKey && typeof singleKey === 'string' && singleKey.trim()) {
+      if (!preUploadedKeys.includes(singleKey.trim())) {
+        preUploadedKeys.push(singleKey.trim());
+      }
+    }
+
+    const totalCount = fileList.length + preUploadedKeys.length;
+    if (totalCount === 0) {
+      return sendError(
+        res,
+        `No photos provided. You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed).`,
+        400,
+        'MIN_PHOTOS_REQUIRED'
+      );
+    }
+
+    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
+      return sendError(
+        res,
+        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        400,
+        'MIN_PHOTOS_REQUIRED'
+      );
+    }
+
+    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
+      return sendError(
+        res,
+        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        400,
+        'MAX_PHOTOS_EXCEEDED'
+      );
+    }
+
+    const result = await onboardingService.savePhotos(userId, {
+      files: fileList,
+      preUploadedKeys,
+      primaryIndex:
+        req.body?.primaryIndex !== undefined && req.body?.primaryIndex !== null && String(req.body.primaryIndex).trim() !== ''
+          ? Number(req.body.primaryIndex)
+          : undefined,
+    });
+
+    return sendSuccess(res, 'Profile photos saved successfully', result, 201);
   } catch (err: any) {
     return handleControllerError(res, err);
   }
@@ -156,10 +264,16 @@ export const uploadProfilePhoto = async (req: AuthenticatedRequest, res: Respons
       files?.['image']?.[0] ||
       req.file;
 
-    if (!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) {
+    const { imageKey, imageUrl } = req.body || {};
+    const preUploadedKey = imageKey || imageUrl;
+
+    if (
+      (!photoFile || !photoFile.buffer || photoFile.buffer.length === 0) &&
+      !preUploadedKey
+    ) {
       return sendError(
         res,
-        'profilePhoto is required. Attach image in "profilePhoto" field',
+        'profilePhoto is required. Attach image in "profilePhoto" field or pass "imageKey"',
         400,
         'MISSING_FILE'
       );
@@ -167,8 +281,9 @@ export const uploadProfilePhoto = async (req: AuthenticatedRequest, res: Respons
 
     const result = await onboardingService.uploadProfilePhoto(
       userId,
-      photoFile.buffer,
-      photoFile.mimetype
+      photoFile?.buffer,
+      photoFile?.mimetype,
+      preUploadedKey
     );
 
     return sendSuccess(res, 'Profile photo uploaded successfully', result, 201);
@@ -195,7 +310,21 @@ export const setPrimaryPhoto = async (req: AuthenticatedRequest, res: Response) 
     if (!userId) return;
     const photoId = req.params.photoId as string;
     const photo = await onboardingService.setPrimaryPhoto(userId, photoId);
-    return sendSuccess(res, 'Primary photo updated successfully', { photo }, 200);
+    const profilePhotoUrl = formatMediaUrl(photo.imageUrl);
+    const profileThumbnail = formatThumbnailUrl(photo.imageUrl);
+    return sendSuccess(
+      res,
+      'Primary photo updated successfully',
+      {
+        photo,
+        profilePhoto: profilePhotoUrl,
+        profilePicture: photo.imageUrl,
+        profileThumbnail,
+        imageUrl: profilePhotoUrl,
+        thumbnailUrl: profileThumbnail,
+      },
+      200
+    );
   } catch (err: any) {
     return handleControllerError(res, err);
   }
@@ -214,7 +343,22 @@ export const uploadAudio = async (req: AuthenticatedRequest, res: Response) => {
       return sendError(res, 'No audio file provided. Attach recording in "audio" or "voicePrompt" field', 400, 'MISSING_FILE');
     }
 
-    const durationSeconds = req.body?.durationSeconds ? parseInt(req.body.durationSeconds, 10) : undefined;
+    // Support 'duration', 'durationSeconds', 'duration_seconds', 'audioDuration'
+    const rawDuration =
+      req.body?.duration ??
+      req.body?.durationSeconds ??
+      req.body?.duration_seconds ??
+      req.body?.audioDuration ??
+      req.body?.voiceDuration;
+
+    let durationSeconds: number | undefined = undefined;
+    if (rawDuration !== undefined && rawDuration !== null && String(rawDuration).trim() !== '') {
+      const num = parseFloat(String(rawDuration));
+      if (!isNaN(num) && num > 0) {
+        durationSeconds = Math.round(num);
+      }
+    }
+
     const result = await onboardingService.uploadAudio(userId, audioFile.buffer, audioFile.mimetype, durationSeconds);
     return sendSuccess(res, 'Voice prompt uploaded successfully', result, 201);
   } catch (err: any) {

@@ -1,6 +1,12 @@
 import { Op } from 'sequelize';
 import { sequelize, User, Interest, UserInterest, UserPhoto } from '../models';
-import { s3Service } from './s3.service';
+import {
+  s3Service,
+  formatMediaUrl,
+  formatThumbnailUrl,
+  extractS3Key,
+} from './s3.service';
+import { extractAudioDuration } from '../utils/audioDuration';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -16,7 +22,8 @@ export class OnboardingServiceError extends Error {
 }
 
 export class OnboardingService {
-  private static readonly MAX_PHOTOS_COUNT = 6;
+  public static readonly MIN_PHOTOS_COUNT = 3;
+  public static readonly MAX_PHOTOS_COUNT = 5;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60; // 60s max voice prompt
 
   /**
@@ -166,49 +173,228 @@ export class OnboardingService {
       order: [['displayOrder', 'ASC']],
     });
     return {
-      photos,
+      photos: photos.map((p) => ({
+        ...p.toJSON(),
+        imageUrl: formatMediaUrl(p.imageUrl),
+        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
+      })),
     };
   }
 
-  public async addPhoto(userId: string, buffer: Buffer, mimeType: string) {
+  public async savePhotos(
+    userId: string,
+    input: {
+      files?: Array<{ buffer: Buffer; mimetype?: string; originalname?: string; size?: number }>;
+      preUploadedKeys?: string[];
+      primaryIndex?: number;
+    }
+  ) {
     const user = await this.getUserOrThrow(userId);
 
-    const existingCount = await UserPhoto.count({ where: { userId } });
-    if (existingCount >= OnboardingService.MAX_PHOTOS_COUNT) {
+    const files = input.files || [];
+    const rawKeys = input.preUploadedKeys || [];
+
+    // Filter valid non-empty pre-uploaded keys / strings
+    const validKeys = rawKeys
+      .map((k) => (typeof k === 'string' ? k.trim() : ''))
+      .filter(Boolean);
+
+    const totalCount = files.length + validKeys.length;
+
+    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
       throw new OnboardingServiceError(
-        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} profile photos allowed`,
+        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        400,
+        'MIN_PHOTOS_REQUIRED'
+      );
+    }
+
+    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
+      throw new OnboardingServiceError(
+        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
         400,
         'MAX_PHOTOS_EXCEEDED'
       );
     }
 
-    // Upload photo to S3
-    const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'photos');
+    // 1. Validate file buffers
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.buffer || file.buffer.length === 0) {
+        throw new OnboardingServiceError(
+          `Image ${i + 1} is empty or missing data`,
+          400,
+          'MISSING_FILE'
+        );
+      }
+      const sig = OnboardingService.validateImageSignature(file.buffer);
+      if (!sig.isValid) {
+        throw new OnboardingServiceError(
+          `Image ${i + 1} content is corrupted or in an unsupported format (JPEG, PNG, WebP).`,
+          400,
+          'INVALID_IMAGE_CONTENT'
+        );
+      }
+    }
 
-    const isFirstPhoto = existingCount === 0;
+    // 2. Fetch user's current photos to recognize any existing retained photos
+    const existingPhotos = await UserPhoto.findAll({
+      where: { userId },
+      order: [['displayOrder', 'ASC']],
+    });
+    const existingPhotoMap = new Map<string, UserPhoto>();
+    for (const ep of existingPhotos) {
+      existingPhotoMap.set(ep.id, ep);
+      existingPhotoMap.set(ep.imageUrl, ep);
+      const cleanEpKey = extractS3Key(ep.imageUrl);
+      if (cleanEpKey) {
+        existingPhotoMap.set(cleanEpKey, ep);
+      }
+    }
 
-    const photo = await sequelize.transaction(async (transaction) => {
-      const createdPhoto = await UserPhoto.create(
-        {
-          userId,
-          imageUrl: s3Key,
-          isPrimary: isFirstPhoto,
-          displayOrder: existingCount,
-          status: 'approved',
-        },
-        { transaction }
-      );
-
-      // If it's the first photo, also update user's main profilePicture
-      if (isFirstPhoto && !user.profilePicture) {
-        user.profilePicture = s3Key;
-        await user.save({ transaction });
+    // 3. Validate and verify pre-uploaded keys
+    for (const keyOrId of validKeys) {
+      if (existingPhotoMap.has(keyOrId)) {
+        continue;
+      }
+      const cleanKey = extractS3Key(keyOrId);
+      if (existingPhotoMap.has(cleanKey)) {
+        continue;
       }
 
-      return createdPhoto;
-    });
+      if (!cleanKey.startsWith(`${userId}/`) && !cleanKey.includes(`/${userId}/`)) {
+        throw new OnboardingServiceError(
+          'You are not authorized to use this image key',
+          403,
+          'UNAUTHORIZED_IMAGE_KEY'
+        );
+      }
 
-    return photo;
+      const existsMeta = await s3Service.checkObjectExists(cleanKey);
+      if (!existsMeta.exists) {
+        throw new OnboardingServiceError(
+          'Uploaded image not found in storage',
+          400,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+    }
+
+    // 4. Upload any new files to S3
+    const newlyUploadedKeys: string[] = [];
+    const orderedImageKeys: string[] = [];
+
+    try {
+      for (const keyOrId of validKeys) {
+        const existing = existingPhotoMap.get(keyOrId) || existingPhotoMap.get(extractS3Key(keyOrId));
+        if (existing) {
+          orderedImageKeys.push(existing.imageUrl);
+        } else {
+          orderedImageKeys.push(extractS3Key(keyOrId));
+        }
+      }
+
+      for (const file of files) {
+        const s3Key = await s3Service.uploadMedia(
+          file.buffer,
+          userId,
+          file.mimetype || 'image/jpeg',
+          'photos'
+        );
+        newlyUploadedKeys.push(s3Key);
+        orderedImageKeys.push(s3Key);
+      }
+
+      // 5. Database transaction to update UserPhoto records
+      const retainedKeys = new Set(orderedImageKeys);
+      const obsoletePhotos = existingPhotos.filter(
+        (ep) => !retainedKeys.has(ep.imageUrl) && !retainedKeys.has(extractS3Key(ep.imageUrl))
+      );
+
+      const savedPhotos = await sequelize.transaction(async (transaction) => {
+        // Delete obsolete photos from db
+        if (obsoletePhotos.length > 0) {
+          await UserPhoto.destroy({
+            where: {
+              id: obsoletePhotos.map((p) => p.id),
+              userId,
+            },
+            transaction,
+          });
+        }
+
+        // Remove and recreate all current photos in the submitted order
+        await UserPhoto.destroy({
+          where: { userId },
+          transaction,
+        });
+
+        const createdList: UserPhoto[] = [];
+        for (let i = 0; i < orderedImageKeys.length; i++) {
+          const key = orderedImageKeys[i];
+          const isPrimary =
+            (input.primaryIndex !== undefined && input.primaryIndex === i) ||
+            (input.primaryIndex === undefined && i === 0);
+
+          const created = await UserPhoto.create(
+            {
+              userId,
+              imageUrl: key,
+              isPrimary,
+              displayOrder: i,
+              status: 'approved',
+            },
+            { transaction }
+          );
+          createdList.push(created);
+        }
+
+        // Update user.profilePicture to primary photo
+        const primaryPhoto = createdList.find((p) => p.isPrimary) || createdList[0];
+        user.profilePicture = primaryPhoto ? primaryPhoto.imageUrl : null;
+        await user.save({ transaction });
+
+        return createdList;
+      });
+
+      // 6. Asynchronously clean up old deleted S3 assets
+      for (const oldPhoto of obsoletePhotos) {
+        s3Service.deleteObject(oldPhoto.imageUrl).catch((err) => {
+          console.error(`[S3 Cleanup Error] Failed to delete obsolete photo ${oldPhoto.imageUrl}:`, err.message);
+        });
+      }
+
+      const formatted = savedPhotos.map((p) => ({
+        id: p.id,
+        imageUrl: formatMediaUrl(p.imageUrl),
+        thumbnailUrl: formatThumbnailUrl(p.imageUrl),
+        isPrimary: p.isPrimary,
+        displayOrder: p.displayOrder,
+        status: p.status,
+      }));
+
+      return {
+        photos: formatted,
+        photo: formatted[0],
+        totalPhotos: formatted.length,
+      };
+    } catch (err) {
+      for (const newKey of newlyUploadedKeys) {
+        await s3Service.deleteObject(newKey).catch(() => {});
+      }
+      throw err;
+    }
+  }
+
+  public async addPhoto(
+    userId: string,
+    buffer?: Buffer,
+    mimeType?: string,
+    preUploadedKey?: string
+  ) {
+    const files = buffer && buffer.length > 0 ? [{ buffer, mimetype: mimeType }] : [];
+    const preUploadedKeys = preUploadedKey ? [preUploadedKey] : [];
+    return this.savePhotos(userId, { files, preUploadedKeys });
   }
 
   /**
@@ -261,29 +447,59 @@ export class OnboardingService {
    * demotes any previous primary photo, and saves as UserPhoto (isPrimary: true).
    * Safely cleans up orphaned S3 object if database persistence fails.
    */
-  public async uploadProfilePhoto(userId: string, buffer: Buffer, mimeType: string) {
+  public async uploadProfilePhoto(
+    userId: string,
+    buffer?: Buffer,
+    mimeType?: string,
+    preUploadedKey?: string
+  ) {
     const user = await this.getUserOrThrow(userId);
 
-    if (!buffer || buffer.length === 0) {
+    let s3Key: string;
+    let isDirectUpload = false;
+
+    if (buffer && buffer.length > 0) {
+      // Validate image format using magic bytes
+      const signature = OnboardingService.validateImageSignature(buffer);
+      if (!signature.isValid) {
+        throw new OnboardingServiceError(
+          'Invalid or corrupted image content. File signature does not match supported image format (JPEG, PNG, WebP).',
+          400,
+          'INVALID_IMAGE_CONTENT'
+        );
+      }
+      s3Key = await s3Service.uploadMedia(
+        buffer,
+        userId,
+        mimeType || 'image/jpeg',
+        'photos'
+      );
+      isDirectUpload = true;
+    } else if (preUploadedKey) {
+      const cleanKey = extractS3Key(preUploadedKey);
+      if (!cleanKey.startsWith(`${userId}/`) && !cleanKey.includes(`/${userId}/`)) {
+        throw new OnboardingServiceError(
+          'You are not authorized to use this image key',
+          403,
+          'UNAUTHORIZED_IMAGE_KEY'
+        );
+      }
+      const existsMeta = await s3Service.checkObjectExists(cleanKey);
+      if (!existsMeta.exists) {
+        throw new OnboardingServiceError(
+          'Uploaded image not found in storage',
+          400,
+          'S3_OBJECT_NOT_FOUND'
+        );
+      }
+      s3Key = cleanKey;
+    } else {
       throw new OnboardingServiceError(
-        'Profile photo file is empty or missing',
+        'profilePhoto is required. Attach image in "profilePhoto" field or pass "imageKey"',
         400,
         'MISSING_FILE'
       );
     }
-
-    // Validate image format using magic bytes
-    const signature = OnboardingService.validateImageSignature(buffer);
-    if (!signature.isValid) {
-      throw new OnboardingServiceError(
-        'Invalid or corrupted image content. File signature does not match supported image format (JPEG, PNG, WebP).',
-        400,
-        'INVALID_IMAGE_CONTENT'
-      );
-    }
-
-    // Upload photo to S3
-    const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'photos');
 
     try {
       const result = await sequelize.transaction(async (transaction) => {
@@ -314,21 +530,35 @@ export class OnboardingService {
 
         return {
           photoId: photo.id,
+          imageKey: photo.imageUrl,
           profilePhoto: photo.imageUrl,
+          profileThumbnail: formatThumbnailUrl(photo.imageUrl),
+          imageUrl: formatMediaUrl(photo.imageUrl),
+          thumbnailUrl: formatThumbnailUrl(photo.imageUrl),
           isPrimary: photo.isPrimary,
         };
       });
 
       return result;
     } catch (dbError) {
-      // Safe cleanup of orphaned S3 object
-      await s3Service.deleteObject(s3Key);
+      if (isDirectUpload) {
+        await s3Service.deleteObject(s3Key);
+      }
       throw dbError;
     }
   }
 
   public async deletePhoto(userId: string, photoId: string) {
     const user = await this.getUserOrThrow(userId);
+
+    const currentCount = await UserPhoto.count({ where: { userId } });
+    if (currentCount <= OnboardingService.MIN_PHOTOS_COUNT) {
+      throw new OnboardingServiceError(
+        `Minimum ${OnboardingService.MIN_PHOTOS_COUNT} profile photos required. You cannot delete this photo unless you have more than ${OnboardingService.MIN_PHOTOS_COUNT} photos.`,
+        400,
+        'MIN_PHOTOS_REQUIRED'
+      );
+    }
 
     const photo = await UserPhoto.findOne({
       where: { id: photoId, userId },
@@ -410,6 +640,14 @@ export class OnboardingService {
   ) {
     const user = await this.getUserOrThrow(userId);
 
+    // If duration was not provided in request or is non-positive, extract from audio buffer
+    if (durationSeconds === undefined || durationSeconds <= 0) {
+      const extracted = extractAudioDuration(buffer, mimeType);
+      if (extracted !== null && extracted > 0) {
+        durationSeconds = extracted;
+      }
+    }
+
     if (durationSeconds !== undefined && durationSeconds > OnboardingService.MAX_AUDIO_DURATION_SECONDS) {
       throw new OnboardingServiceError(
         `Voice recording duration cannot exceed ${OnboardingService.MAX_AUDIO_DURATION_SECONDS} seconds`,
@@ -426,12 +664,13 @@ export class OnboardingService {
     const s3Key = await s3Service.uploadMedia(buffer, userId, mimeType, 'voice_prompts');
 
     user.voicePromptUrl = s3Key;
-    user.voicePromptDuration = durationSeconds || 30; // default 30s if not specified
+    user.voicePromptDuration = (durationSeconds && durationSeconds > 0) ? durationSeconds : 30;
     await user.save();
 
     return {
       voicePromptUrl: user.voicePromptUrl,
       durationSeconds: user.voicePromptDuration,
+      duration: user.voicePromptDuration,
     };
   }
 
@@ -440,6 +679,7 @@ export class OnboardingService {
     return {
       voicePromptUrl: user.voicePromptUrl || null,
       durationSeconds: user.voicePromptDuration || null,
+      duration: user.voicePromptDuration || null,
     };
   }
 
@@ -474,7 +714,7 @@ export class OnboardingService {
       genderPreference: !!user.genderPreference,
       religion: user.religion !== undefined, // Optional/can be skipped
       interests: interestCount >= 1,
-      photos: photoCount >= 1 || !!user.profilePicture,
+      photos: photoCount >= OnboardingService.MIN_PHOTOS_COUNT,
       audio: !!user.voicePromptUrl, // Optional
       faceVerification: !!user.isFaceVerified,
     };

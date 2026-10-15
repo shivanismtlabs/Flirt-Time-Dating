@@ -1,6 +1,12 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
-import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto } from '../models';
+import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto, UserReport } from '../models';
+import { formatThumbnailUrl } from './s3.service';
+import { momentService } from './moment.service';
+import { quickMomentService } from './quickMoment.service';
+import { calculateInterestMatchPercentage } from '../utils/compatibility';
+
+export { calculateInterestMatchPercentage };
 
 export interface DiscoveryQueryInput {
   currentUserId: string;
@@ -10,8 +16,10 @@ export interface DiscoveryQueryInput {
 }
 
 export interface DiscoveryUserProfile {
+  id: string;
   userId: string;
   name: string;
+  username: string;
   age: number | null;
   profilePhoto: string | null;
   isVerified: boolean;
@@ -20,6 +28,11 @@ export interface DiscoveryUserProfile {
   vibeScore: number | null;
   sharedInterests: string[];
   interestTags: string[];
+  momentCount: number;
+  compatibility: {
+    interestMatchPercentage: number;
+  };
+  hasViewedQuickMoment: boolean;
 }
 
 export interface DiscoveryResponseData {
@@ -59,6 +72,7 @@ export interface GetDiscoveryInterestsOutput {
 export interface InterestUserCard {
   id: string;
   name: string;
+  username: string;
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
@@ -189,12 +203,15 @@ export const resolveProfilePhoto = (
   userProfilePicture?: string | null,
   photos?: any[] | null
 ): string | null => {
-  if (userProfilePicture) return userProfilePicture;
-  if (!photos || photos.length === 0) return null;
-  const approvedPhotos = photos.filter((p) => p.status === 'approved');
-  if (approvedPhotos.length === 0) return null;
-  const primary = approvedPhotos.find((p) => p.isPrimary);
-  return primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+  let photo = userProfilePicture || null;
+  if (!photo && photos && photos.length > 0) {
+    const approvedPhotos = photos.filter((p) => p.status === 'approved');
+    if (approvedPhotos.length > 0) {
+      const primary = approvedPhotos.find((p) => p.isPrimary);
+      photo = primary ? primary.imageUrl : approvedPhotos[0].imageUrl;
+    }
+  }
+  return photo ? formatThumbnailUrl(photo) : null;
 };
 
 /**
@@ -211,10 +228,10 @@ export const resolveDisplayName = (user: any): string => {
 
 export class DiscoveryService {
   /**
-   * Retrieves excluded user IDs for the current user (self, swiped, blocked)
+   * Retrieves excluded user IDs for the current user (self, swiped, blocked, reported)
    */
   public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
-    const [existingSwipes, blocks] = await Promise.all([
+    const [existingSwipes, blocks, reports] = await Promise.all([
       SwipeAction.findAll({
         where: { userId: currentUserId },
         attributes: ['targetUserId'],
@@ -228,14 +245,27 @@ export class DiscoveryService {
         },
         attributes: ['userId', 'blockedUserId'],
       }),
+      UserReport.findAll({
+        where: {
+          reporterId: currentUserId,
+          status: { [Op.ne]: 'dismissed' },
+          momentId: null,
+        } as any,
+        attributes: ['targetUserId'],
+      }),
     ]);
 
     const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
     const blockedUserIds = blocks.map((b) =>
       b.userId === currentUserId ? b.blockedUserId : b.userId
     );
+    const reportedUserIds = reports
+      .map((r) => r.targetUserId)
+      .filter((id): id is string => Boolean(id));
 
-    return Array.from(new Set([currentUserId, ...swipedUserIds, ...blockedUserIds]));
+    return Array.from(
+      new Set([currentUserId, ...swipedUserIds, ...blockedUserIds, ...reportedUserIds])
+    );
   }
 
   /**
@@ -265,6 +295,13 @@ export class DiscoveryService {
 
     const currentUserInterests = (currentUser.interests || []) as Interest[];
     const currentUserInterestNames = new Set(currentUserInterests.map((i) => i.name.toLowerCase()));
+    const currentUserInterestIds = Array.from(
+      new Set(
+        currentUserInterests
+          .filter((i) => i.isActive !== false)
+          .map((i) => i.id)
+      )
+    );
 
     // 2. Validate optional interestId filter if supplied
     let filterInterest: Interest | null = null;
@@ -323,27 +360,43 @@ export class DiscoveryService {
       ],
     });
 
-    // 5. For each target user, fetch their complete saved interests for tag display & shared vibe
+    // 5. For each target user, fetch their complete saved interests, eligible moment counts, and quick moment viewed status in parallel batches
     const targetUserIds = targetUsers.map((u) => u.id);
     let allTargetUserInterests: Map<string, Interest[]> = new Map();
+    let allTargetUserPhotos: Map<string, UserPhoto[]> = new Map();
+    let momentCountsMap: Map<string, number> = new Map();
+    let quickMomentViewedMap: Map<string, boolean> = new Map();
 
     if (targetUserIds.length > 0) {
-      const fullUsersWithInterests = await User.findAll({
-        where: { id: { [Op.in]: targetUserIds } },
-        include: [
-          {
-            model: Interest,
-            as: 'interests',
-            through: { attributes: [] },
-            where: { isActive: true },
-            required: false,
-          },
-        ],
-      });
+      const [fullUsersWithInterests, momentCounts, quickMomentViewed] = await Promise.all([
+        User.findAll({
+          where: { id: { [Op.in]: targetUserIds } },
+          include: [
+            {
+              model: Interest,
+              as: 'interests',
+              through: { attributes: [] },
+              where: { isActive: true },
+              required: false,
+            },
+            {
+              model: UserPhoto,
+              as: 'photos',
+              where: { status: 'approved' },
+              required: false,
+            },
+          ],
+        }),
+        momentService.getEligibleMomentCountsByUserIds(currentUserId, targetUserIds),
+        quickMomentService.getViewedStatusByUserIds(currentUserId, targetUserIds),
+      ]);
 
       for (const u of fullUsersWithInterests) {
         allTargetUserInterests.set(u.id, (u.interests || []) as Interest[]);
+        allTargetUserPhotos.set(u.id, (u.photos || []) as UserPhoto[]);
       }
+      momentCountsMap = momentCounts;
+      quickMomentViewedMap = quickMomentViewed;
     }
 
     // 6. Map and transform discovery profiles
@@ -377,17 +430,50 @@ export class DiscoveryService {
         user.isProfileComplete
       );
 
+      // Candidate unique active interest IDs
+      const candidateInterestIds = Array.from(
+        new Set(
+          userInterests
+            .filter((i) => i.isActive !== false)
+            .map((i) => i.id)
+        )
+      );
+
+      const interestMatchPercentage = calculateInterestMatchPercentage(
+        currentUserInterestIds,
+        candidateInterestIds
+      );
+
+      const momentCount = momentCountsMap.get(user.id) || 0;
+      const hasViewedQuickMoment = quickMomentViewedMap.get(user.id) || false;
+
+      const userPhotos = allTargetUserPhotos.get(user.id) || [];
+      const primaryPhotoRecord = userPhotos.find((p) => p.isPrimary);
+      const primaryPhotoKey =
+        primaryPhotoRecord?.imageUrl ||
+        user.profilePicture ||
+        (userPhotos[0]?.imageUrl) ||
+        null;
+      const photoVersion = primaryPhotoRecord?.updatedAt || user.updatedAt;
+
       return {
+        id: user.id,
         userId: user.id,
         name: resolveDisplayName(user),
+        username: user.username,
         age: calculateAge(user.dateOfBirth),
-        profilePhoto: user.profilePicture || null,
+        profilePhoto: primaryPhotoKey ? formatThumbnailUrl(primaryPhotoKey, photoVersion) : null,
         isVerified: !!user.isFaceVerified,
         city: user.city || 'Mumbai',
         distanceKm,
         vibeScore,
         sharedInterests,
         interestTags,
+        momentCount,
+        compatibility: {
+          interestMatchPercentage,
+        },
+        hasViewedQuickMoment,
       };
     });
 
@@ -636,6 +722,7 @@ export class DiscoveryService {
       return {
         id: user.id,
         name: resolveDisplayName(user),
+        username: user.username,
         age: calculateAge(user.dateOfBirth),
         profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
         isVerified: Boolean(user.isFaceVerified),
@@ -784,6 +871,7 @@ export class DiscoveryService {
           return {
             id: user.id,
             name: resolveDisplayName(user),
+            username: user.username,
             age: calculateAge(user.dateOfBirth),
             profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
             isVerified: Boolean(user.isFaceVerified),

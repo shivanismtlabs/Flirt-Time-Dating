@@ -2,6 +2,7 @@ import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
 export type MomentReactionType =
+  | 'like'
   | 'heart'
   | 'love_eyes'
   | 'fire'

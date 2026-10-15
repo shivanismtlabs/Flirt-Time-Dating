@@ -10,11 +10,11 @@ export const momentAudienceEnum = z.enum(
 );
 
 export const momentReactionEnum = z.enum(
-  ['heart', 'love_eyes', 'fire', 'laugh', 'surprised', 'clap'],
+  ['like', 'heart', 'love_eyes', 'fire', 'laugh', 'surprised', 'clap'],
   {
     errorMap: () => ({
       message:
-        'Invalid reaction type. Allowed values: heart, love_eyes, fire, laugh, surprised, clap',
+        'Invalid reaction type. Allowed values: like, heart, love_eyes, fire, laugh, surprised, clap',
     }),
   }
 );
@@ -34,6 +34,40 @@ export const createMomentSchema = z.object({
       .max(100, 'Location label must not exceed 100 characters')
       .optional()
       .nullable(),
+    location: z
+      .union([
+        z.string().trim().max(100),
+        z.object({
+          name: z.string().trim().max(100).optional(),
+          city: z.string().trim().max(100).optional(),
+          label: z.string().trim().max(100).optional(),
+          address: z.string().trim().max(100).optional(),
+          latitude: z.number().optional(),
+          longitude: z.number().optional(),
+        }),
+      ])
+      .optional()
+      .nullable(),
+    imageKey: z.string().min(1).optional(),
+    imageKeys: z
+      .union([
+        z.array(z.string().min(1)),
+        z.string().min(1).transform((s) => [s]),
+      ])
+      .optional(),
+    mediaUrls: z
+      .union([
+        z.array(z.string().min(1)),
+        z.string().min(1).transform((s) => [s]),
+      ])
+      .optional(),
+    mediaUrl: z.string().min(1).optional(),
+    images: z
+      .union([
+        z.array(z.string().min(1)),
+        z.string().min(1).transform((s) => [s]),
+      ])
+      .optional(),
   }),
 });
 
@@ -59,22 +93,93 @@ export const reactMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
   }),
-  body: z.object({
-    reaction: momentReactionEnum,
-  }),
+  body: z
+    .object({
+      reaction: momentReactionEnum.optional().default('like'),
+    })
+    .optional()
+    .default({ reaction: 'like' }),
 });
 
 export const replyMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
   }),
-  body: z.object({
-    message: z
-      .string({ required_error: 'Reply message is required' })
-      .trim()
-      .min(1, 'Reply message cannot be empty')
-      .max(1000, 'Reply message must not exceed 1000 characters'),
+  body: z
+    .object({
+      message: z.string().trim().min(1).max(1000).optional(),
+      comment: z.string().trim().min(1).max(1000).optional(),
+      text: z.string().trim().min(1).max(1000).optional(),
+    })
+    .refine((data) => Boolean(data.message || data.comment || data.text), {
+      message: 'Comment or reply message cannot be empty',
+    }),
+});
+
+export const getMomentCommentsSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
   }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
+});
+
+export const getMomentLikesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+      reaction: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const sendMomentGiftSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  body: z
+    .object({
+      giftCode: z.string().trim().min(1).optional(),
+      giftId: z.string().trim().min(1).optional(),
+      gift: z.string().trim().min(1).optional(),
+      quantity: z
+        .union([z.number().int().positive().max(100), z.string().regex(/^\d+$/).transform(Number)])
+        .optional()
+        .default(1),
+      message: z.string().trim().max(500, 'Message cannot exceed 500 characters').optional(),
+    })
+    .refine((data) => Boolean(data.giftCode || data.giftId || data.gift), {
+      message:
+        'Gift identifier is required (e.g. rose, heart, chocolate, teddy, bouquet, ring, crown, sports_car)',
+    }),
+});
+
+export const getMomentGiftsCatalogSchema = z.object({
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+    })
+    .optional(),
+});
+
+export const getMomentGiftsReceivedSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
 });
 
 export const getAllMomentsSchema = z.object({
@@ -117,4 +222,39 @@ export const reportMomentSchema = z.object({
       .nullable(),
   }),
 });
+
+export const deleteMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+});
+
+export const likeMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+  body: z
+    .object({
+      like: z.boolean().optional(),
+      isLiked: z.boolean().optional(),
+      action: z.enum(['like', 'unlike', 'toggle']).optional(),
+      type: z.enum(['like', 'unlike', 'toggle']).optional(),
+      reaction: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const unlikeMomentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+  }),
+});
+
+export const deleteMomentCommentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+});
+
 

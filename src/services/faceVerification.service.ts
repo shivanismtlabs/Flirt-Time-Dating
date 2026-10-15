@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
 import { User } from '../models/user.model';
+import { UserPhoto } from '../models/userPhoto.model';
 import { FaceVerification, FaceVerificationStatus } from '../models/faceVerification.model';
 import { s3Service, S3ServiceError } from './s3.service';
 import { rekognitionService, RekognitionServiceError } from './rekognition.service';
@@ -123,30 +124,20 @@ export class FaceVerificationService {
         );
       }
 
-      // 4. Retrieve Primary Reference Profile Photo (Optional for first-time registration)
+      // 4. Reference photo comparison logic
+      // Note: For gesture verification (camera selfie upload), do NOT compare against the user's primary/uploaded profile photo,
+      // as users can upload creative, stylized, or arbitrary profile photos. Verification validates the live camera selfie itself.
       let targetImageBuffer: Buffer | null = null;
       let hasReferencePhoto = false;
 
-      if (referenceImageBuffer && Buffer.isBuffer(referenceImageBuffer) && referenceImageBuffer.length > 0) {
+      if (
+        verificationType === 'compare' &&
+        referenceImageBuffer &&
+        Buffer.isBuffer(referenceImageBuffer) &&
+        referenceImageBuffer.length > 0
+      ) {
         targetImageBuffer = referenceImageBuffer;
         hasReferencePhoto = true;
-      } else if (user.profilePicture && typeof user.profilePicture === 'string' && user.profilePicture.trim()) {
-        try {
-          targetImageBuffer = await s3Service.getObjectBuffer(user.profilePicture.trim());
-          hasReferencePhoto = true;
-        } catch (s3Err: any) {
-          if (s3Err instanceof S3ServiceError && s3Err.statusCode === 404) {
-            console.warn('[Profile Photo Fetch Warning] Primary profile photo not found in storage:', user.profilePicture);
-            hasReferencePhoto = false;
-          } else {
-            console.error('[Profile Photo Fetch Error]:', s3Err.message);
-            throw new FaceVerificationServiceError(
-              'Failed to retrieve primary profile photo from secure storage.',
-              503,
-              'STORAGE_UNAVAILABLE'
-            );
-          }
-        }
       }
 
       // 5. Upload Selfie to Private S3 Bucket
@@ -263,16 +254,85 @@ export class FaceVerificationService {
         };
       }
 
-      // 8. Face Comparison or First-Time Face Registration Approval
+      // 7b. Quality Validation on Camera Selfie (Sharpness, Brightness, Confidence)
+      let qualityIssueReason: string | null = null;
+      let qualityIssueMessage: string | null = null;
+
+      if (primaryFace) {
+        if (primaryFace.confidence < 70) {
+          qualityIssueReason = 'LOW_FACE_CONFIDENCE';
+          qualityIssueMessage = 'Could not clearly recognize facial features. Please ensure your face is clearly visible and well-lit.';
+        } else if (primaryFace.sharpness !== undefined && primaryFace.sharpness < 15) {
+          qualityIssueReason = 'IMAGE_TOO_BLURRY';
+          qualityIssueMessage = 'The selfie is too blurry. Please hold the camera steady and take another photo.';
+        } else if (primaryFace.brightness !== undefined && (primaryFace.brightness < 15 || primaryFace.brightness > 98)) {
+          qualityIssueReason = 'POOR_LIGHTING';
+          qualityIssueMessage = 'Lighting is too dark or overexposed. Please take a selfie with balanced lighting.';
+        }
+      }
+
+      if (qualityIssueReason) {
+        const record = await sequelize.transaction(async (transaction) => {
+          await FaceVerification.update(
+            { isLatest: false },
+            { where: { userId: user.id, isLatest: true }, transaction }
+          );
+
+          return await FaceVerification.create(
+            {
+              userId: user.id,
+              status: 'action_required',
+              verificationType,
+              sourceImage: s3Key,
+              faceDetected: true,
+              faceCount: 1,
+              qualityScore: primaryFace?.confidence || null,
+              brightnessScore: primaryFace?.brightness || null,
+              similarityScore: null,
+              identityMatched: false,
+              livenessStatus: 'unavailable_single_frame',
+              reasonCode: qualityIssueReason!,
+              reasonMessage: qualityIssueMessage!,
+              rejectionReason: qualityIssueReason,
+              attempts: currentAttemptNo,
+              attemptNo: currentAttemptNo,
+              isLatest: true,
+              metadata: safeMetadata,
+            },
+            { transaction }
+          );
+        });
+
+        return {
+          verificationId: record.id,
+          status: 'action_required',
+          verificationType,
+          similarity: null,
+          attemptNo: currentAttemptNo,
+          isLatest: true,
+          faceDetected: true,
+          faceCount: 1,
+          quality: qualityInfo,
+          rejectionReason: qualityIssueReason,
+          reasonCode: qualityIssueReason,
+          reasonMessage: qualityIssueMessage,
+          liveness: {
+            status: 'unavailable_single_frame',
+            message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
+          },
+        };
+      }
+
+      // 8. Face Approval (Camera selfie validation or explicit reference comparison)
       let isApproved = false;
       let similarityScore: number | null = null;
       let finalStatus: FaceVerificationStatus = 'rejected';
       let finalReasonCode = 'IDENTITY_MISMATCH';
-      let finalReasonMessage = 'The selfie did not match the primary profile photo';
+      let finalReasonMessage = 'The selfie did not match the reference photo';
       let rejectionReason: string | null = null;
 
       if (hasReferencePhoto && targetImageBuffer) {
-        // Compare against existing profile photo via AWS Rekognition
+        // Explicit reference comparison (e.g. verificationType === 'compare')
         let compareResult;
         try {
           compareResult = await rekognitionService.compareFaces(
@@ -284,7 +344,7 @@ export class FaceVerificationService {
           if (compErr instanceof RekognitionServiceError) {
             if (compErr.errorCode === 'INVALID_IMAGE_FORMAT') {
               console.warn(
-                '[Face Compare Warning] Target profile photo could not be parsed by Rekognition, falling back to primary selfie verification'
+                '[Face Compare Warning] Target profile photo could not be parsed by Rekognition, falling back to camera selfie verification'
               );
               hasReferencePhoto = false;
             } else {
@@ -310,7 +370,7 @@ export class FaceVerificationService {
           finalReasonCode = isApproved ? 'VERIFICATION_SUCCESSFUL' : 'IDENTITY_MISMATCH';
           finalReasonMessage = isApproved
             ? 'Identity verification completed successfully'
-            : 'The selfie did not match the primary profile photo';
+            : 'The selfie did not match the reference photo';
           rejectionReason = isApproved ? null : 'IDENTITY_MISMATCH';
         } else {
           isApproved = true;
@@ -321,7 +381,7 @@ export class FaceVerificationService {
           rejectionReason = null;
         }
       } else {
-        // First-time face verification: Exactly 1 valid face detected in front of the camera
+        // Camera selfie verification: Exactly 1 valid face with verified quality detected from camera
         isApproved = true;
         similarityScore = 100;
         finalStatus = 'approved';
@@ -380,6 +440,32 @@ export class FaceVerificationService {
 
         return createdRecord;
       });
+
+      // Dispatch verification notification post-commit
+      try {
+        const { notificationService } = await import('./notification.service');
+        if (finalStatus === 'approved') {
+          await notificationService.dispatchNotification(user.id, {
+            type: 'profile_verified',
+            title: 'Profile Verified! ✅',
+            body: 'Congratulations, your selfie verification was approved! You now have a verified badge.',
+            entityId: record.id,
+            navigation: { type: 'profile_verified', targetId: record.id },
+            data: { status: 'approved', verificationId: record.id },
+          });
+        } else if (finalStatus === 'rejected') {
+          await notificationService.dispatchNotification(user.id, {
+            type: 'profile_verified',
+            title: 'Verification Failed',
+            body: `Your face verification was not approved: ${finalReasonMessage}`,
+            entityId: record.id,
+            navigation: { type: 'profile_verified', targetId: record.id },
+            data: { status: 'rejected', verificationId: record.id, reason: finalReasonMessage },
+          });
+        }
+      } catch (_vNotifErr) {
+        // Safe to ignore
+      }
 
       return {
         verificationId: record.id,

@@ -22,12 +22,17 @@ export class ConnectionServiceError extends Error {
   }
 }
 
+import { CONNECTION_REASONS } from '../schemas/connection.schema';
+
 export interface CreateConnectionRequestResult {
   requestId: string;
   targetUserId: string;
   status: 'pending' | 'accepted';
   isMatched: boolean;
   matchId?: string | null;
+  reason?: string | null;
+  message?: string | null;
+  momentId?: string | null;
   notification: PushNotificationResult;
 }
 
@@ -38,8 +43,27 @@ export class ConnectionService {
    */
   public async createConnectionRequest(
     requesterId: string,
-    targetUserId: string
+    targetUserId: string,
+    options?: {
+      reason?: string | null;
+      message?: string | null;
+      momentId?: string | null;
+    }
   ): Promise<CreateConnectionRequestResult> {
+    const rawReason = options?.reason?.trim() || null;
+    const rawMessage = options?.message?.trim() || null;
+    const momentId = options?.momentId || null;
+
+    // Normalize reason (support both ID like 'love_their_vibe' and full label like 'Love their vibe')
+    const matchedReason = rawReason
+      ? CONNECTION_REASONS.find(
+          (r) =>
+            r.id === rawReason.toLowerCase() ||
+            r.label.toLowerCase() === rawReason.toLowerCase()
+        )
+      : null;
+    const finalReason = matchedReason ? matchedReason.label : rawReason;
+    const finalMessage = rawMessage || finalReason || null;
     // 1. Prevent self-connection
     if (requesterId === targetUserId) {
       throw new ConnectionServiceError(
@@ -174,8 +198,40 @@ export class ConnectionService {
             requesterId,
             requesterName,
             requestId: reversePendingRequest.id,
+            reason: finalReason,
           }
         );
+
+        // Also notify both users of the mutual match
+        try {
+          const targetUserDisplayName =
+            targetUser.nickName ||
+            targetUser.firstName ||
+            targetUser.fullName ||
+            'Someone';
+
+          await notificationService.dispatchNotification(targetUserId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${requesterName} connected! Say hi!`,
+            senderId: requesterId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: requesterName },
+          });
+
+          await notificationService.dispatchNotification(requesterId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${targetUserDisplayName} connected! Say hi!`,
+            senderId: targetUserId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: targetUserDisplayName },
+          });
+        } catch (_mErr) {
+          // Safe to ignore
+        }
 
         return {
           requestId: reversePendingRequest.id,
@@ -183,6 +239,9 @@ export class ConnectionService {
           status: 'accepted',
           isMatched: true,
           matchId: match.id,
+          reason: finalReason,
+          message: finalMessage,
+          momentId,
           notification: pushResult,
         };
       } catch (err: any) {
@@ -200,6 +259,9 @@ export class ConnectionService {
           requesterId,
           targetUserId,
           status: 'pending',
+          reason: finalReason,
+          message: finalMessage,
+          momentId,
         },
         { transaction: t }
       );
@@ -223,6 +285,7 @@ export class ConnectionService {
         requesterId,
         requesterName,
         requestId: savedRequest.id,
+        reason: finalReason,
       }
     );
 
@@ -232,6 +295,9 @@ export class ConnectionService {
       status: 'pending',
       isMatched: false,
       matchId: null,
+      reason: finalReason,
+      message: finalMessage,
+      momentId,
       notification: pushResult,
     };
   }

@@ -1,5 +1,6 @@
 import { Op } from 'sequelize';
 import { sequelize, User, SwipeAction, Match, UserBlock } from '../models';
+import { notificationService } from './notification.service';
 
 export interface RecordActionResult {
   targetUserId: string;
@@ -170,6 +171,46 @@ export class DiscoveryActionService {
 
         await t.commit();
         isCommitted = true;
+
+        // Post-commit notification dispatch for mutual match
+        try {
+          const currentUser = await User.findByPk(currentUserId, {
+            attributes: ['id', 'firstName', 'fullName', 'nickName'],
+          });
+          const currentName =
+            currentUser?.firstName ||
+            currentUser?.nickName ||
+            (currentUser?.fullName ? currentUser.fullName.split(' ')[0] : 'Someone');
+          const targetName =
+            targetUser.firstName ||
+            targetUser.nickName ||
+            (targetUser.fullName ? targetUser.fullName.split(' ')[0] : 'Someone');
+
+          // Notify target user
+          await notificationService.dispatchNotification(targetUserId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${currentName} liked each other. Say hi!`,
+            senderId: currentUserId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: currentName },
+          });
+
+          // Notify current user
+          await notificationService.dispatchNotification(currentUserId, {
+            type: 'match',
+            title: "It's a match!",
+            body: `You and ${targetName} liked each other. Say hi!`,
+            senderId: targetUserId,
+            entityId: match.id,
+            navigation: { type: 'match', targetId: match.id },
+            data: { matchId: match.id, partnerName: targetName },
+          });
+        } catch (_notifErr) {
+          // Safe to ignore notification error
+        }
+
         return {
           targetUserId,
           action,
@@ -181,6 +222,31 @@ export class DiscoveryActionService {
       // No reciprocal like yet
       await t.commit();
       isCommitted = true;
+
+      // Post-commit notification for like / super_like
+      try {
+        const currentUser = await User.findByPk(currentUserId, {
+          attributes: ['id', 'firstName', 'fullName', 'nickName'],
+        });
+        const currentName =
+          currentUser?.firstName ||
+          currentUser?.nickName ||
+          (currentUser?.fullName ? currentUser.fullName.split(' ')[0] : 'Someone');
+        const isSuper = action === 'super_like';
+
+        await notificationService.dispatchNotification(targetUserId, {
+          type: isSuper ? 'super_like' : 'like',
+          title: isSuper ? 'New Super Like!' : 'New Like',
+          body: `${currentName} ${isSuper ? 'super liked' : 'liked'} your profile!`,
+          senderId: currentUserId,
+          entityId: currentUserId,
+          navigation: { type: isSuper ? 'super_like' : 'like', targetId: currentUserId },
+          data: { action, senderName: currentName },
+        });
+      } catch (_likeNotifErr) {
+        // Safe to ignore notification error
+      }
+
       return {
         targetUserId,
         action,

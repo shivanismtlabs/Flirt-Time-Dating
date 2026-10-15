@@ -39,9 +39,16 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
   const upload = uploadSelfie.fields([
     { name: 'selfie_image', maxCount: 1 },
     { name: 'image', maxCount: 1 },
+    { name: 'selfie', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
+    { name: 'gesture', maxCount: 1 },
+    { name: 'gesture_image', maxCount: 1 },
+    { name: 'avatar', maxCount: 1 },
     { name: 'referenceImage', maxCount: 1 },
     { name: 'reference_image', maxCount: 1 },
     { name: 'profile_image', maxCount: 1 },
+    { name: 'profile_photo', maxCount: 1 },
   ]);
 
   upload(req, res, (err: any) => {
@@ -58,7 +65,7 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
         if (err.code === 'LIMIT_UNEXPECTED_FILE') {
           return sendError(
             res,
-            `Unexpected field '${err.field}'. Use 'selfie_image' or 'image' for the selfie file.`,
+            `Unexpected field '${err.field}'. Use 'selfie_image', 'image', 'selfie', or 'file' for the selfie file.`,
             400,
             'UNEXPECTED_FIELD'
           );
@@ -72,13 +79,13 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
 };
 
 /**
- * Middleware for gallery profile photo uploads (Max 5MB, JPEG/PNG/WebP)
+ * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP, up to 5 images)
  */
 export const uploadPhoto = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB
-    files: 1,
+    fileSize: 5 * 1024 * 1024, // 5 MB per photo
+    files: 5,
   },
   fileFilter: (_req, file, cb) => {
     if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
@@ -91,15 +98,31 @@ export const uploadPhoto = multer({
 
 export const handleUploadPhoto = (req: Request, res: Response, next: NextFunction) => {
   const upload = uploadPhoto.fields([
-    { name: 'photo', maxCount: 1 },
-    { name: 'image', maxCount: 1 },
+    { name: 'photos', maxCount: 5 },
+    { name: 'images', maxCount: 5 },
+    { name: 'photo', maxCount: 5 },
+    { name: 'image', maxCount: 5 },
+    { name: 'files', maxCount: 5 },
   ]);
 
   upload(req, res, (err: any) => {
     if (err) {
       if (err instanceof multer.MulterError) {
         if (err.code === 'LIMIT_FILE_SIZE') {
-          return sendError(res, 'Photo size exceeds 5MB limit. Please upload a smaller image.', 400, 'FILE_TOO_LARGE');
+          return sendError(
+            res,
+            'Photo size exceeds 5MB limit. Please upload a smaller image.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
+          return sendError(
+            res,
+            'Maximum 5 photos allowed. Please upload between 3 and 5 images.',
+            400,
+            'MAX_PHOTOS_EXCEEDED'
+          );
         }
         return sendError(res, err.message, 400, err.code);
       }
@@ -115,6 +138,7 @@ export const handleUploadPhoto = (req: Request, res: Response, next: NextFunctio
 const allowedAudioMimeTypes = [
   'audio/mpeg',
   'audio/mp3',
+  'audio/mp4',
   'audio/m4a',
   'audio/x-m4a',
   'audio/wav',
@@ -123,6 +147,7 @@ const allowedAudioMimeTypes = [
   'audio/ogg',
   'audio/webm',
   'video/webm',
+  'video/mp4',
 ];
 
 export const uploadAudio = multer({
@@ -132,7 +157,11 @@ export const uploadAudio = multer({
     files: 1,
   },
   fileFilter: (_req, file, cb) => {
-    if (allowedAudioMimeTypes.includes(file.mimetype.toLowerCase())) {
+    const mime = file.mimetype.toLowerCase();
+    const isAllowedMime = allowedAudioMimeTypes.includes(mime);
+    const hasAudioExt = /\.(mp3|m4a|wav|aac|ogg|webm|mp4)$/i.test(file.originalname);
+
+    if (isAllowedMime || hasAudioExt) {
       cb(null, true);
     } else {
       cb(new Error(`Unsupported audio format (${file.mimetype}). Please upload an MP3, M4A, WAV, AAC, or OGG recording.`));
@@ -203,6 +232,64 @@ export const handleUploadProfilePhoto = (req: Request, res: Response, next: Next
           return sendError(
             res,
             `Unexpected field '${err.field}'. Use 'profilePhoto' for the image file.`,
+            400,
+            'UNEXPECTED_FIELD'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(res, err.message || 'File upload error', 400, 'UPLOAD_ERROR');
+    }
+    return next();
+  });
+};
+
+/**
+ * Middleware for dedicated cover photo upload (Max 10MB, JPEG/PNG/WebP)
+ * Supported fields: 'coverPhoto', 'coverPicture', 'cover_photo', 'cover_picture', 'cover', 'photo', 'image', 'file'
+ */
+export const uploadCoverPhoto = multer({
+  storage,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10 MB
+    files: 1,
+  },
+  fileFilter: (_req, file, cb) => {
+    if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported image format (${file.mimetype}). Please upload a JPEG, PNG, or WebP image.`));
+    }
+  },
+});
+
+export const handleUploadCoverPhoto = (req: Request, res: Response, next: NextFunction) => {
+  const upload = uploadCoverPhoto.fields([
+    { name: 'coverPhoto', maxCount: 1 },
+    { name: 'coverPicture', maxCount: 1 },
+    { name: 'cover_photo', maxCount: 1 },
+    { name: 'cover_picture', maxCount: 1 },
+    { name: 'cover', maxCount: 1 },
+    { name: 'photo', maxCount: 1 },
+    { name: 'image', maxCount: 1 },
+    { name: 'file', maxCount: 1 },
+  ]);
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'File size exceeds 10MB limit. Please upload a smaller cover image.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_UNEXPECTED_FILE') {
+          return sendError(
+            res,
+            `Unexpected field '${err.field}'. Use 'coverPhoto' or 'coverPicture' for the cover image.`,
             400,
             'UNEXPECTED_FIELD'
           );

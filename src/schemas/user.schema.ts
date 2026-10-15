@@ -50,34 +50,107 @@ export const dateOfBirthSchema = z
     }
   });
 
+export const locationInputSchema = z
+  .union([
+    z.string().trim().max(100),
+    z.object({
+      city: z.string().trim().max(100).optional().nullable(),
+      state: z.string().trim().max(100).optional().nullable(),
+      name: z.string().trim().max(100).optional().nullable(),
+      label: z.string().trim().max(100).optional().nullable(),
+      address: z.string().trim().max(255).optional().nullable(),
+      latitude: z.number().optional().nullable(),
+      longitude: z.number().optional().nullable(),
+    }),
+  ])
+  .optional()
+  .nullable();
+
 export const updateProfileSchema = z.object({
   body: z.object({
     fullName: z
-      .string({ required_error: 'fullName is required' })
+      .string()
       .trim()
       .min(1, 'fullName cannot be empty')
-      .max(100, 'fullName must not exceed 100 characters'),
-
+      .max(100, 'fullName must not exceed 100 characters')
+      .optional(),
+    firstName: z
+      .string()
+      .trim()
+      .min(1, 'firstName cannot be empty')
+      .max(50, 'firstName must not exceed 50 characters')
+      .optional()
+      .nullable(),
+    lastName: z
+      .string()
+      .trim()
+      .max(50, 'lastName must not exceed 50 characters')
+      .optional()
+      .nullable(),
     nickName: z
-      .string({ required_error: 'nickName is required' })
+      .string()
       .trim()
       .min(1, 'nickName cannot be empty')
-      .max(50, 'nickName must not exceed 50 characters'),
-    dateOfBirth: dateOfBirthSchema,
+      .max(50, 'nickName must not exceed 50 characters')
+      .optional(),
+    dateOfBirth: dateOfBirthSchema.optional(),
+    location: locationInputSchema,
+    city: z.string().trim().max(100).optional().nullable(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
     gender: z
-      .string({ required_error: 'gender is required' })
+      .string()
       .trim()
       .min(1, 'gender cannot be empty')
       .transform((val) => val.toLowerCase())
       .refine((val) => ['male', 'female', 'non-binary', 'other'].includes(val), {
         message: 'Invalid gender. Allowed values: male, female, non-binary, other',
-      }),
+      })
+      .optional(),
     about: z
       .string()
       .trim()
       .max(500, 'About text must not exceed 500 characters')
       .optional()
       .nullable(),
+    // More About Me fields
+    drinking: z.string().trim().max(100).optional().nullable(),
+    education: z.string().trim().max(100).optional().nullable(),
+    height: z.string().trim().max(50).optional().nullable(),
+    religion: z.string().trim().max(50).optional().nullable(),
+    sexuality: z.string().trim().max(50).optional().nullable(),
+    smoking: z.string().trim().max(50).optional().nullable(),
+    weight: z.string().trim().max(50).optional().nullable(),
+    eyeColor: z.string().trim().max(50).optional().nullable(),
+    eyecolor: z.string().trim().max(50).optional().nullable(),
+    hairColor: z.string().trim().max(50).optional().nullable(),
+    haircolor: z.string().trim().max(50).optional().nullable(),
+    living: z.string().trim().max(100).optional().nullable(),
+    relationship: z.string().trim().max(50).optional().nullable(),
+    children: z.string().trim().max(100).optional().nullable(),
+    coverPicture: z.string().trim().max(500).optional().nullable(),
+    coverPhoto: z.string().trim().max(500).optional().nullable(),
+    moreAboutMe: z.record(z.any()).optional().nullable(),
+  }),
+});
+
+export const updateMoreAboutMeSchema = z.object({
+  body: z.object({
+    drinking: z.string().trim().max(100).optional().nullable(),
+    education: z.string().trim().max(100).optional().nullable(),
+    height: z.string().trim().max(50).optional().nullable(),
+    religion: z.string().trim().max(50).optional().nullable(),
+    sexuality: z.string().trim().max(50).optional().nullable(),
+    smoking: z.string().trim().max(50).optional().nullable(),
+    weight: z.string().trim().max(50).optional().nullable(),
+    eyeColor: z.string().trim().max(50).optional().nullable(),
+    eyecolor: z.string().trim().max(50).optional().nullable(),
+    hairColor: z.string().trim().max(50).optional().nullable(),
+    haircolor: z.string().trim().max(50).optional().nullable(),
+    living: z.string().trim().max(100).optional().nullable(),
+    relationship: z.string().trim().max(50).optional().nullable(),
+    children: z.string().trim().max(100).optional().nullable(),
+    moreAboutMe: z.record(z.any()).optional().nullable(),
   }),
 });
 
@@ -151,6 +224,179 @@ export const reportUserSchema = z.object({
       .optional()
       .nullable(),
   }),
+});
+
+export const getBlockedUsersSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+    })
+    .optional(),
+});
+
+export const unblockUserSchema = z.object({
+  params: z.object({
+    userId: z.string().uuid('Invalid user ID format'),
+  }),
+});
+
+export const getUserReportsSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+      status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved']).optional(),
+      targetType: z.enum(['user', 'moment']).optional(),
+    })
+    .optional(),
+});
+
+export const getAllReportsSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+      status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved']).optional(),
+      targetType: z.enum(['user', 'moment']).optional(),
+      search: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const updateReportStatusSchema = z.object({
+  params: z.object({
+    reportId: z.string().uuid('Invalid report ID format'),
+  }),
+  body: z.object({
+    status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved'], {
+      errorMap: () => ({
+        message: 'Invalid status. Allowed: pending, reviewed, dismissed, resolved',
+      }),
+    }),
+    reviewNotes: z.string().trim().max(1000).optional().nullable(),
+  }),
+});
+
+// Profile Email OTP Schemas
+export const requestProfileEmailOtpSchema = z.object({
+  body: z.object({
+    email: z
+      .string({ required_error: 'email is required' })
+      .trim()
+      .min(1, 'email cannot be empty')
+      .email('Invalid email address format'),
+  }),
+});
+
+export const verifyProfileEmailOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      email: z.string().trim().email('Invalid email address format').optional(),
+      otp: z
+        .string({ required_error: 'otp is required' })
+        .regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+    })
+    .refine((data) => data.verificationId || data.email, {
+      message: 'Either verificationId or email must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+export const resendProfileEmailOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      email: z.string().trim().email('Invalid email address format').optional(),
+    })
+    .refine((data) => data.verificationId || data.email, {
+      message: 'Either verificationId or email must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+// Profile Phone OTP Schemas
+export const requestProfilePhoneOtpSchema = z.object({
+  body: z.object({
+    countryCode: z
+      .string()
+      .trim()
+      .regex(/^\+?[1-9]\d{0,3}$/, 'Invalid country code format (e.g. +91, +1)')
+      .optional(),
+    phone: z
+      .string({ required_error: 'phone is required' })
+      .trim()
+      .min(1, 'phone cannot be empty')
+      .refine(
+        (val) => {
+          const digits = val.replace(/\D/g, '');
+          return digits.length >= 4 && digits.length <= 15;
+        },
+        {
+          message: 'Invalid phone number format (must contain 4-15 digits)',
+        }
+      ),
+  }),
+});
+
+export const verifyProfilePhoneOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      phone: z.string().trim().optional(),
+      countryCode: z.string().trim().optional(),
+      otp: z
+        .string({ required_error: 'otp is required' })
+        .regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+    })
+    .refine((data) => data.verificationId || data.phone, {
+      message: 'Either verificationId or phone must be provided',
+      path: ['verificationId'],
+    }),
+});
+
+export const resendProfilePhoneOtpSchema = z.object({
+  body: z
+    .object({
+      verificationId: z.string().trim().optional(),
+      phone: z.string().trim().optional(),
+      countryCode: z.string().trim().optional(),
+    })
+    .refine((data) => data.verificationId || data.phone, {
+      message: 'Either verificationId or phone must be provided',
+      path: ['verificationId'],
+    }),
 });
 
 

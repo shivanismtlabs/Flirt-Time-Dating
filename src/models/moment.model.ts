@@ -81,6 +81,7 @@ Moment.init(
     expiresAt: {
       type: DataTypes.DATE,
       allowNull: true,
+      defaultValue: null,
     },
     locationLabel: {
       type: DataTypes.STRING(100),

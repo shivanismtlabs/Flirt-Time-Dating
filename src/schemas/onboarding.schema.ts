@@ -36,11 +36,27 @@ export const updateReligionSchema = z.object({
 });
 
 export const updateInterestsSchema = z.object({
-  body: z.object({
-    interestIds: z
-      .array(z.string().uuid('Each interestId must be a valid UUID'), {
-        required_error: 'interestIds is required',
-      })
-      .min(1, 'Please select at least 1 interest'),
-  }),
+  body: z
+    .object({
+      interestIds: z
+        .array(z.string().uuid('Each interestId must be a valid UUID'))
+        .optional(),
+      interests: z
+        .array(
+          z.union([
+            z.string().uuid('Each interest must be a valid UUID'),
+            z.object({ id: z.string().uuid('Each interest object must have a valid UUID id') }),
+          ])
+        )
+        .optional(),
+    })
+    .refine(
+      (data) =>
+        (Array.isArray(data.interestIds) && data.interestIds.length > 0) ||
+        (Array.isArray(data.interests) && data.interests.length > 0),
+      {
+        message: 'Please provide at least 1 interest in interestIds or interests',
+        path: ['interestIds'],
+      }
+    ),
 });

@@ -15,7 +15,51 @@ import {
   getFeaturedInterestsSchema,
 } from '../schemas/discovery.schema';
 
+import {
+  getDiscoveryFilterOptions,
+  getDiscoveryFilters,
+  updateDiscoveryFilters,
+  resetDiscoveryFilters,
+  searchDiscoveryProfiles,
+} from '../controllers/discoveryFilter.controller';
+import {
+  updateDiscoveryFiltersSchema,
+  discoverySearchSchema,
+} from '../schemas/discoveryFilter.schema';
+
 const router = Router();
+
+// ==========================================
+// DISCOVERY FILTERS & SEARCH ENDPOINTS
+// ==========================================
+
+// GET /api/v1/discovery/filters/options (and /api/discovery/filters/options)
+router.get('/filters/options', authenticate, getDiscoveryFilterOptions);
+
+// GET /api/v1/discovery/filters (and /api/discovery/filters)
+router.get('/filters', authenticate, getDiscoveryFilters);
+
+// PUT /api/v1/discovery/filters (and /api/discovery/filters)
+router.put(
+  '/filters',
+  authenticate,
+  validate(updateDiscoveryFiltersSchema),
+  updateDiscoveryFilters
+);
+
+// POST /api/v1/discovery/filters/reset (and /api/discovery/filters/reset)
+router.post('/filters/reset', authenticate, resetDiscoveryFilters);
+
+// POST /api/v1/discovery/search (and /api/discovery/search)
+router.post(
+  '/search',
+  authenticate,
+  validate(discoverySearchSchema),
+  searchDiscoveryProfiles
+);
+
+// GET /api/v1/discovery/search (optional query support)
+router.get('/search', authenticate, searchDiscoveryProfiles);
 
 // POST /api/v1/discovery/seed-dummy-data (Seeds 50 dummy discovery users)
 router.post('/seed-dummy-data', seedDummyUsersHandler);

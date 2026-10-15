@@ -3,13 +3,20 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import routes from './routes';
+import webLinkRoutes from './routes/webLink.routes';
 import { notFoundHandler, errorHandler } from './middlewares/error.middleware';
 import { sequelize } from './config/database';
+import { authenticate } from './middlewares/auth.middleware';
+import { handleUploadSelfie } from './middlewares/upload.middleware';
+import {
+  uploadFaceVerification,
+  getGestureVerificationInfo,
+} from './controllers/faceVerification.controller';
 
 const app: Application = express();
 
 // Security and utility middlewares
-app.use(helmet());
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -36,9 +43,16 @@ app.get(['/health', '/api/health', '/api/v1/health'], async (_req, res) => {
   });
 });
 
+// Public short link redirection (/l/:code) & mobile app verification (.well-known)
+app.use('/', webLinkRoutes);
+
 // API Routes (supports /api and /api/v1)
 app.use('/api', routes);
 app.use('/api/v1', routes);
+
+// Direct root aliases for gesture endpoints (backward compatibility with legacy clients)
+app.get(['/gesture-upload', '/gesture'], authenticate, getGestureVerificationInfo);
+app.post(['/gesture-upload', '/gesture'], authenticate, handleUploadSelfie, uploadFaceVerification);
 
 // Error Handling Middlewares
 app.use(notFoundHandler);

@@ -9,7 +9,7 @@ export const sequelize = isTestEnv
       storage: './test.sqlite',
       logging: false,
       pool: {
-        max: 10,
+        max: 1,
         min: 0,
         idle: 1000,
         acquire: 30000,

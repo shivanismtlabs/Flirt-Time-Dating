@@ -27,18 +27,28 @@ export const getFirebaseApp = (): App => {
     return firebaseApp;
   }
 
-  // 1. Service Account JSON file path
-  if (env.FIREBASE_SERVICE_ACCOUNT_PATH) {
-    const fullPath = path.isAbsolute(env.FIREBASE_SERVICE_ACCOUNT_PATH)
-      ? env.FIREBASE_SERVICE_ACCOUNT_PATH
-      : path.resolve(process.cwd(), env.FIREBASE_SERVICE_ACCOUNT_PATH);
+  // 1. Service Account JSON file path (configured or default candidate locations)
+  const candidatePaths = [
+    env.FIREBASE_SERVICE_ACCOUNT_PATH,
+    'firebase-service-account.json',
+    path.resolve(process.cwd(), 'firebase-service-account.json'),
+    path.resolve(__dirname, '../../firebase-service-account.json'),
+    path.resolve(__dirname, '../../../firebase-service-account.json'),
+  ].filter(Boolean) as string[];
+
+  for (const candidate of candidatePaths) {
+    const fullPath = path.isAbsolute(candidate)
+      ? candidate
+      : path.resolve(process.cwd(), candidate);
 
     if (fs.existsSync(fullPath)) {
       try {
         const serviceAccount = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         firebaseApp = initializeApp({
           credential: cert(serviceAccount),
+          projectId: serviceAccount.project_id || env.FIREBASE_PROJECT_ID,
         });
+        console.log(`[Firebase] Initialized Admin SDK with credentials from ${fullPath}`);
         return firebaseApp;
       } catch (err: any) {
         console.error(`[Firebase] Failed to load service account file at ${fullPath}:`, err.message);
@@ -61,7 +71,7 @@ export const getFirebaseApp = (): App => {
   // 3. Fallback to default project configuration
   try {
     firebaseApp = initializeApp({
-      projectId: env.FIREBASE_PROJECT_ID || 'flirttime-app',
+      projectId: env.FIREBASE_PROJECT_ID || 'flirttime',
     });
     return firebaseApp;
   } catch (err: any) {

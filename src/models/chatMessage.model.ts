@@ -7,7 +7,7 @@ export interface ChatMessageAttributes {
   senderId: string;
   recipientId: string;
   content: string;
-  messageType: 'text' | 'moment_reply';
+  messageType: 'text' | 'moment_reply' | 'moment_gift';
   metadata?: string | null;
   isRead: boolean;
   createdAt?: Date;
@@ -28,7 +28,7 @@ export class ChatMessage
   declare public senderId: string;
   declare public recipientId: string;
   declare public content: string;
-  declare public messageType: 'text' | 'moment_reply';
+  declare public messageType: 'text' | 'moment_reply' | 'moment_gift';
   declare public metadata: string | null;
   declare public isRead: boolean;
 

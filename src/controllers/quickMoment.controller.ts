@@ -22,6 +22,9 @@ export const getTrayHandler = async (
     }
 
     const result = await quickMomentService.getTray(viewerId);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return sendSuccess(res, 'Quick moments tray fetched successfully', result, 200);
   } catch (error: any) {
     if (error instanceof QuickMomentServiceError) {
@@ -46,6 +49,9 @@ export const getMyQuickMomentsHandler = async (
     }
 
     const result = await quickMomentService.getMyQuickMoments(viewerId);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return sendSuccess(res, 'My quick moments fetched successfully', result, 200);
   } catch (error: any) {
     if (error instanceof QuickMomentServiceError) {
@@ -74,10 +80,16 @@ export const getUserQuickMomentsHandler = async (
 
     if (targetUserId === viewerId) {
       const result = await quickMomentService.getMyQuickMoments(viewerId);
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
       return sendSuccess(res, 'My quick moments fetched successfully', result, 200);
     }
 
     const result = await quickMomentService.getUserQuickMoments(viewerId, targetUserId);
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return sendSuccess(res, 'User quick moments fetched successfully', result, 200);
   } catch (error: any) {
     if (error instanceof QuickMomentServiceError) {
@@ -115,6 +127,9 @@ export const getQuickMomentReactionsHandler = async (
       }
     );
 
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     return sendSuccess(res, 'Quick moment reactions fetched successfully', result, 200);
   } catch (error: any) {
     if (error instanceof QuickMomentServiceError) {

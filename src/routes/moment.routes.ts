@@ -2,12 +2,21 @@ import { Router } from 'express';
 import {
   createMomentHandler,
   getMomentDetailHandler,
+  likeMomentHandler,
   reactMomentHandler,
   replyMomentHandler,
   getUserMomentsHandler,
   getAllMomentsHandler,
   getMyMomentsHandler,
   reportMomentHandler,
+  deleteMomentHandler,
+  unlikeMomentHandler,
+  getMomentCommentsHandler,
+  deleteMomentCommentHandler,
+  getMomentLikesHandler,
+  getMomentGiftsCatalogHandler,
+  sendMomentGiftHandler,
+  getMomentGiftsReceivedHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -16,10 +25,19 @@ import {
   createMomentSchema,
   getMomentDetailSchema,
   getUserMomentsSchema,
+  likeMomentSchema,
   reactMomentSchema,
   replyMomentSchema,
   getAllMomentsSchema,
   reportMomentSchema,
+  deleteMomentSchema,
+  unlikeMomentSchema,
+  getMomentCommentsSchema,
+  deleteMomentCommentSchema,
+  getMomentLikesSchema,
+  sendMomentGiftSchema,
+  getMomentGiftsCatalogSchema,
+  getMomentGiftsReceivedSchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -78,6 +96,13 @@ router.get(
   getUserMomentsHandler
 );
 
+// General Gifts Catalog & User Coins Balance (GET /api/v1/moments/gifts)
+router.get(
+  '/gifts',
+  validate(getMomentGiftsCatalogSchema),
+  getMomentGiftsCatalogHandler
+);
+
 // 7. Full-screen Moment detail
 router.get(
   '/:momentId',
@@ -85,18 +110,112 @@ router.get(
   getMomentDetailHandler
 );
 
-// 4. React to Moment
+// 4. Like / Unlike Toggle Moment (Single API)
+router.post(
+  '/:momentId/like',
+  validate(likeMomentSchema),
+  likeMomentHandler
+);
+
+router.post(
+  '/:momentId/toggle-like',
+  validate(likeMomentSchema),
+  likeMomentHandler
+);
+
+// Reaction endpoint (supports specific emoji reactions like fire, laugh, clap, etc.)
 router.post(
   '/:momentId/reactions',
   validate(reactMomentSchema),
   reactMomentHandler
 );
 
-// 5. Reply to Moment
+// Get Likes / Reactions List for a Moment
+router.get(
+  '/:momentId/likes',
+  validate(getMomentLikesSchema),
+  getMomentLikesHandler
+);
+
+router.get(
+  '/:momentId/reactions',
+  validate(getMomentLikesSchema),
+  getMomentLikesHandler
+);
+
+// 5. Comments & Replies to Moment
+router.post(
+  '/:momentId/comments',
+  validate(replyMomentSchema),
+  replyMomentHandler
+);
+
 router.post(
   '/:momentId/replies',
   validate(replyMomentSchema),
   replyMomentHandler
+);
+
+router.get(
+  '/:momentId/comments',
+  validate(getMomentCommentsSchema),
+  getMomentCommentsHandler
+);
+
+router.get(
+  '/:momentId/replies',
+  validate(getMomentCommentsSchema),
+  getMomentCommentsHandler
+);
+
+// Delete Comment / Reply
+router.delete(
+  '/:momentId/comments/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
+);
+
+router.delete(
+  '/:momentId/replies/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
+);
+
+router.delete(
+  '/comments/:commentId',
+  validate(deleteMomentCommentSchema),
+  deleteMomentCommentHandler
+);
+
+// 6. Gifts on Moment (Send Gift & Gifts Catalog)
+router.get(
+  '/:momentId/gifts',
+  validate(getMomentGiftsCatalogSchema),
+  getMomentGiftsCatalogHandler
+);
+
+router.post(
+  '/:momentId/gifts',
+  validate(sendMomentGiftSchema),
+  sendMomentGiftHandler
+);
+
+router.post(
+  '/:momentId/send-gift',
+  validate(sendMomentGiftSchema),
+  sendMomentGiftHandler
+);
+
+router.get(
+  '/:momentId/gifts/received',
+  validate(getMomentGiftsReceivedSchema),
+  getMomentGiftsReceivedHandler
+);
+
+router.get(
+  '/:momentId/gifts/list',
+  validate(getMomentGiftsReceivedSchema),
+  getMomentGiftsReceivedHandler
 );
 
 // 6. Report Moment
@@ -106,4 +225,31 @@ router.post(
   reportMomentHandler
 );
 
+// 7. Delete Moment (Author only)
+router.delete(
+  '/:momentId',
+  validate(deleteMomentSchema),
+  deleteMomentHandler
+);
+
+// 8. Unlike Moment / Remove Reaction
+router.delete(
+  '/:momentId/reactions',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
+router.delete(
+  '/:momentId/like',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
+router.post(
+  '/:momentId/unlike',
+  validate(unlikeMomentSchema),
+  unlikeMomentHandler
+);
+
 export default router;
+

@@ -71,6 +71,14 @@ export const verifyPhoneOtp = async (req: Request, res: Response) => {
         };
       }
 
+      // Cross-purpose check: Must be for signup/login auth
+      if (verificationRecord.purpose && verificationRecord.purpose !== 'auth') {
+        return {
+          statusCode: 400,
+          error: 'Invalid verification session for authentication',
+        };
+      }
+
       // 8: Check that it is not already consumed
       if (verificationRecord.isConsumed) {
         return {

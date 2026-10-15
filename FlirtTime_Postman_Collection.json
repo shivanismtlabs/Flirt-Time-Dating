@@ -380,7 +380,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Mike\",\n  \"lastName\": \"Hussey\",\n  \"nickName\": \"Mikey\",\n  \"dateOfBirth\": \"1996-10-09\",\n  \"gender\": \"male\",\n  \"about\": \"Creative mind with a love for Design. Looking for someone who appreciates deep thinking and empathy:)\"\n}"
+              "raw": "{\n  \"firstName\": \"Mike\",\n  \"lastName\": \"Hussey\",\n  \"nickName\": \"Mikey\",\n  \"dateOfBirth\": \"1996-10-09\",\n  \"gender\": \"male\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"about\": \"Creative mind with a love for Design. Looking for someone who appreciates deep thinking and empathy:)\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
@@ -394,6 +394,232 @@
                 "profile"
               ]
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Edit Profile - Email Verification",
+      "item": [
+        {
+          "name": "Request Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new_email@example.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/request-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "request-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: requests a 6-digit OTP to change email in edit profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "verify-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: verifies OTP and updates user's email only after successful verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Profile Email OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/email/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "email",
+                "resend-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: resends OTP for edit profile email change."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Edit Profile - Phone Verification",
+      "item": [
+        {
+          "name": "Request Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"countryCode\": \"+91\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/request-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "request-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: requests a 6-digit OTP to change phone number in edit profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Verify Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/verify-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "verify-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: verifies OTP, updates user's phone, and sets isPhoneVerified = true."
+          },
+          "response": []
+        },
+        {
+          "name": "Resend Profile Phone OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"verificationId\": \"<YOUR_VERIFICATION_ID>\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile/phone/resend-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile",
+                "phone",
+                "resend-otp"
+              ]
+            },
+            "description": "Authenticated endpoint: resends OTP for edit profile phone number change."
           },
           "response": []
         }
@@ -425,6 +651,123 @@
               ]
             },
             "description": "Retrieves the authenticated user's profile details including profile image."
+          },
+          "response": [
+            {
+              "name": "200 OK - Profile Screen Fetched Successfully (Clean)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/profile",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    "profile"
+                  ]
+                },
+                "description": "Retrieves the authenticated user's profile details including profile image."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Profile fetched successfully\",\n  \"data\": {\n    \"id\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"profile\": {\n      \"id\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n      \"displayName\": \"Alex\",\n      \"firstName\": \"Alex\",\n      \"lastName\": \"Turner\",\n      \"dateOfBirth\": \"1998-05-15\",\n      \"age\": 28,\n      \"gender\": \"male\",\n      \"bio\": \"Lead vocalist, music producer, and weekend explorer.\",\n      \"location\": {\n        \"city\": \"Indore\",\n        \"state\": \"Madhya Pradesh\"\n      },\n      \"profilePhoto\": {\n        \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_primary.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_primary.jpg\"\n      },\n      \"coverPhoto\": {\n        \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_cover.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_cover.jpg\"\n      },\n      \"photos\": [\n        {\n          \"id\": \"c138fd90-1c52-4753-b09e-7164ec397451\",\n          \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/alex_primary.jpg\",\n          \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/alex_primary.jpg\",\n          \"isPrimary\": true,\n          \"displayOrder\": 1\n        }\n      ],\n      \"isVerified\": true,\n      \"completionPercentage\": 100\n    },\n    \"interests\": [\n      {\n        \"id\": \"a12bc34d-e56f-789a-bcde-f0123456789a\",\n        \"name\": \"Art & Design\",\n        \"icon\": \"🎨\",\n        \"displayOrder\": 1\n      },\n      {\n        \"id\": \"b23cd45e-f67a-890b-cdef-0123456789ab\",\n        \"name\": \"Indie Rock\",\n        \"icon\": \"🎸\",\n        \"displayOrder\": 2\n      }\n    ],\n    \"moments\": [\n      {\n        \"id\": \"d45ef67a-890b-cdef-0123-456789abcdef\",\n        \"caption\": \"Live performance in Mumbai!\",\n        \"createdAt\": \"2026-10-14T08:30:00.000Z\",\n        \"firstImageUrl\": \"https://flirttime-media.s3.amazonaws.com/moments/live1.jpg\",\n        \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/moments/live1.jpg\",\n        \"imageCount\": 1,\n        \"likeCount\": 142,\n        \"commentCount\": 18,\n        \"isLiked\": false,\n        \"hasMultipleImages\": false\n      }\n    ],\n    \"voiceIntro\": {\n      \"id\": \"voice-e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n      \"playbackUrl\": \"https://flirttime-media.s3.amazonaws.com/voice_prompts/alex_intro.mp3\",\n      \"duration\": 24,\n      \"status\": \"ready\"\n    },\n    \"quickMoments\": {\n      \"items\": [],\n      \"canAdd\": true\n    }\n  }\n}"
+            }
+          ],
+          "description": "Retrieves the currently authenticated user complete Profile screen details including: profile (name, calculated age, bio, city/state, completion %, verified badge, primary and cover photos, drinking, education, height, religion, sexuality, smoking, weight, eyecolor, haircolor, living, relationship), moreAboutMe (labels, icons, and values for all 11 attributes), selected interests, max 4 permanent moments, voice intro, and 24h quick moments tray summary."
+        },
+        {
+          "name": "Upload Profile Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"imageKey\": \"photos/{{userId}}/new_primary_photo.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/profile-photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "profile-photo"
+              ]
+            },
+            "description": "Uploads or attaches a primary profile photo for authenticated user. Supports both JSON body with presigned S3 imageKey/imageUrl, and multipart/form-data image binary."
+          },
+          "response": []
+        },
+        {
+          "name": "Get User Moments (See All / Paginated)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/moments?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "moments"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "me",
+                  "description": "Target user ID or me for self"
+                }
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Max items per page (default: 20, max: 50)"
+                }
+              ]
+            },
+            "description": "Retrieves paginated permanent moments for any visible user or authenticated user (\"me\"). Enforces audience visibility, exclusions of deleted moments, and block rules."
           },
           "response": []
         },
@@ -458,7 +801,268 @@
                 "profile"
               ]
             },
-            "description": "Updates introduce-yourself onboarding profile details."
+            "description": "Updates introduce-yourself onboarding profile details including optional More About Me fields (drinking, education, height, etc.)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get More About Me",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/more-about-me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "more-about-me"
+              ]
+            },
+            "description": "Retrieves the authenticated user's More About Me details: drinking, education, height, religion, sexuality, smoking, weight, eyecolor, haircolor, living, relationship with UI-ready label and icon items."
+          },
+          "response": []
+        },
+        {
+          "name": "Update More About Me",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drinking\": \"Social Drinker\",\n  \"education\": \"Bachelor's\",\n  \"height\": \"5.9 Feet\",\n  \"religion\": \"Hindu\",\n  \"sexuality\": \"Straight\",\n  \"smoking\": \"No\",\n  \"weight\": \"65 kg\",\n  \"eyeColor\": \"Brown\",\n  \"hairColor\": \"Black\",\n  \"living\": \"Alone\",\n  \"relationship\": \"Single\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/more-about-me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "more-about-me"
+              ]
+            },
+            "description": "Updates More About Me attributes for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Other User Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "profile"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<USER_ID>",
+                  "description": "UUID of the target user to view"
+                }
+              ]
+            },
+            "description": "Retrieves another user's full profile details (photos, moments, mutual compatibility vibe score, distance, interests, voice note, match/swipe status) respecting privacy and blocking rules."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Blocked Users List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/blocked?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "blocked"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Retrieves paginated list of users blocked by the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Unblock User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "block"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "<USER_ID>",
+                  "description": "UUID of the user to unblock"
+                }
+              ]
+            },
+            "description": "Unblocks a previously blocked user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Reports List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/reports?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "reports"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Retrieves reports filed by the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Report Reasons Catalog",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports/reasons",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports",
+                "reasons"
+              ]
+            },
+            "description": "Retrieves catalog of report reasons for users and moments with labels and descriptions."
+          },
+          "response": []
+        },
+        {
+          "name": "Get All Moderation Reports (Admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/reports?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "reports"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Admin endpoint to retrieve all reports with counts and status filters."
           },
           "response": []
         },
@@ -783,6 +1387,138 @@
           "response": []
         },
         {
+          "name": "Get Discovery Interests (Cards with People Count)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Optional search filter by interest name"
+                },
+                {
+                  "key": "selectedInterestId",
+                  "value": "",
+                  "description": "Optional selected interest UUID"
+                }
+              ]
+            },
+            "description": "Returns all discovery interest cards with real peopleCount (number of active users who have selected this interest)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Users for Selected Interest (Click Interest -> People Come)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests/:interestId/users?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests",
+                ":interestId",
+                "users"
+              ],
+              "variable": [
+                {
+                  "key": "interestId",
+                  "value": "<INTEREST_ID>",
+                  "description": "UUID of clicked interest"
+                }
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "gender",
+                  "value": "",
+                  "description": "Optional filter: men / women"
+                },
+                {
+                  "key": "minAge",
+                  "value": "",
+                  "description": "Optional min age"
+                },
+                {
+                  "key": "maxAge",
+                  "value": "",
+                  "description": "Optional max age"
+                }
+              ]
+            },
+            "description": "Fetches users who have selected this interest when user clicks on an interest badge/card. Returns user cards with name, age, profile photo, verified badge, distance."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Featured Interests Preview",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/interests/featured?userLimit=3",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "interests",
+                "featured"
+              ],
+              "query": [
+                {
+                  "key": "userLimit",
+                  "value": "3",
+                  "description": "Number of preview users per interest (default: 3)"
+                }
+              ]
+            },
+            "description": "Fetches featured interests with preview user avatars."
+          },
+          "response": []
+        },
+        {
           "name": "Discovery Action: Like (Interested)",
           "request": {
             "method": "POST",
@@ -914,7 +1650,7 @@
                 }
               ]
             },
-            "description": "Retrieves the target user's full profile detail screen (e.g. Meera, 26) including profile photo, verified status, city, distance, Why This Vibe? score and explanation, bio, voice intro audio, moments gallery, interests, shared interests, and bottom action state (myAction, isMatched, canConnect)."
+            "description": "Retrieves the target user's full profile detail screen (e.g. Meera, 26) including profile photo, verified status, city, distance, Why This Vibe? score and explanation, bio, voice intro audio, moments gallery, interests, shared interests, and bottom action state (action, myAction, isMatched, canConnect)."
           },
           "response": []
         },
@@ -1001,6 +1737,359 @@
             "description": "Reports target user for policy violations. Supported reasons: fake_profile, harassment, inappropriate_content, spam, scam, underage, other."
           },
           "response": []
+        },
+        {
+          "name": "Discovery Filters: Get Supported Options",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters/options",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters",
+                "options"
+              ]
+            },
+            "description": "Returns authoritative discovery filter options sourced from backend configuration: supported genders (women, men, non_binary, everyone), min/max age boundaries (18-70), distance range (1-100 km, null for Anywhere), looking-for values, 20 canonical UI interests with icons, verification options, and online presence freshness rules. Dual route: also accessible at /api/discovery/filters/options."
+          },
+          "response": [
+            {
+              "name": "200 OK - Supported Filter Options Fetched Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filter options fetched successfully\",\n  \"data\": {\n    \"genders\": [\n      {\n        \"value\": \"women\",\n        \"label\": \"Women\"\n      },\n      {\n        \"value\": \"men\",\n        \"label\": \"Men\"\n      },\n      {\n        \"value\": \"non_binary\",\n        \"label\": \"Non-binary\"\n      },\n      {\n        \"value\": \"everyone\",\n        \"label\": \"Everyone\"\n      }\n    ],\n    \"age\": {\n      \"minAllowed\": 18,\n      \"maxAllowed\": 70,\n      \"defaultMin\": 18,\n      \"defaultMax\": 35\n    },\n    \"distance\": {\n      \"minKm\": 1,\n      \"maxKm\": 100,\n      \"defaultKm\": 50,\n      \"anywhereValue\": null,\n      \"anywhereLabel\": \"Anywhere\"\n    },\n    \"lookingFor\": [\n      {\n        \"value\": \"long_term\",\n        \"label\": \"Long-term\"\n      },\n      {\n        \"value\": \"casual\",\n        \"label\": \"Something casual\"\n      },\n      {\n        \"value\": \"not_sure\",\n        \"label\": \"Not sure yet\"\n      }\n    ],\n    \"interests\": [\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000001\",\n        \"name\": \"Cinema\",\n        \"icon\": \"🎬\",\n        \"displayOrder\": 1\n      },\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000002\",\n        \"name\": \"Cooking\",\n        \"icon\": \"🍳\",\n        \"displayOrder\": 2\n      },\n      {\n        \"id\": \"11111111-0000-0000-0000-000000000003\",\n        \"name\": \"Dance\",\n        \"icon\": \"💃\",\n        \"displayOrder\": 3\n      }\n    ],\n    \"verification\": [\n      {\n        \"value\": \"verified_only\",\n        \"label\": \"Verified only\",\n        \"description\": \"Show only photo-verified profiles\"\n      }\n    ],\n    \"online\": [\n      {\n        \"value\": \"online_now\",\n        \"label\": \"Online now\",\n        \"freshnessThresholdMinutes\": 15,\n        \"description\": \"Show only currently active users\"\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Get Saved Preferences (or Documented Defaults)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters"
+              ]
+            },
+            "description": "Returns the authenticated user's saved discovery filter preferences. If no preferences have been saved yet, returns documented defaults (women, 18-35, 50km, all looking-for, empty interests, verifiedOnly: false, onlineOnly: false) without creating duplicate DB records on read. Dual route: /api/discovery/filters."
+          },
+          "response": [
+            {
+              "name": "200 OK - Saved Preferences or Documented Defaults",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filter preferences fetched successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 18,\n    \"ageMax\": 35,\n    \"maxDistanceKm\": 50,\n    \"isAnywhere\": false,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\",\n      \"not_sure\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": false,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:00:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Invalid Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid or expired token\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Update Preferences",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"genders\": [\n    \"women\",\n    \"non_binary\"\n  ],\n  \"ageMin\": 21,\n  \"ageMax\": 32,\n  \"maxDistanceKm\": null,\n  \"lookingFor\": [\n    \"long_term\",\n    \"casual\"\n  ],\n  \"interestIds\": [\n    \"11111111-0000-0000-0000-000000000001\"\n  ],\n  \"verifiedOnly\": true,\n  \"onlineOnly\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters"
+              ]
+            },
+            "description": "Validates and saves the authenticated user's filter preferences atomically using transactions. Strict schema validation rejects unknown fields, prevents ageMin > ageMax, deduplicates interest IDs and gender selections, validates interest UUIDs, and treats maxDistanceKm: null explicitly as Anywhere. Dual route: /api/discovery/filters."
+          },
+          "response": [
+            {
+              "name": "200 OK - Preferences Updated Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filters updated successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\",\n      \"non_binary\"\n    ],\n    \"ageMin\": 21,\n    \"ageMax\": 32,\n    \"maxDistanceKm\": null,\n    \"isAnywhere\": true,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\"\n    ],\n    \"interestIds\": [\n      \"11111111-0000-0000-0000-000000000001\"\n    ],\n    \"verifiedOnly\": true,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:05:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Validation Error (e.g. ageMin > ageMax)",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid discovery filter payload\",\n  \"errors\": [\n    {\n      \"field\": \"ageMin\",\n      \"message\": \"ageMin (40) cannot be greater than ageMax (25)\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "400 Bad Request - Unsupported Interest ID",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid discovery filter payload\",\n  \"errors\": [\n    {\n      \"field\": \"interestIds\",\n      \"message\": \"Interest with ID \\\"00000000-0000-0000-0000-000000000000\\\" not found or inactive\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "401 Unauthorized - Token Missing",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Reset Preferences to Defaults",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/filters/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "filters",
+                "reset"
+              ]
+            },
+            "description": "Atomically resets the authenticated user's saved filter preferences to default values (women, 18-35, 50km, all looking-for, empty interests, verifiedOnly: false, onlineOnly: false). Never deletes profile, matches, likes, messages, or moments. Dual route: /api/discovery/filters/reset."
+          },
+          "response": [
+            {
+              "name": "200 OK - Preferences Reset Successfully",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery filters reset to defaults successfully\",\n  \"data\": {\n    \"userId\": \"e6a2b890-482a-4318-8f81-58c0c05a1e22\",\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 18,\n    \"ageMax\": 35,\n    \"maxDistanceKm\": 50,\n    \"isAnywhere\": false,\n    \"lookingFor\": [\n      \"long_term\",\n      \"casual\",\n      \"not_sure\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": false,\n    \"onlineOnly\": false,\n    \"updatedAt\": \"2026-10-15T12:10:00.000Z\"\n  }\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Discovery Filters: Search Profiles & Calculate Match Count",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"filters\": {\n    \"genders\": [\n      \"women\"\n    ],\n    \"ageMin\": 20,\n    \"ageMax\": 30,\n    \"maxDistanceKm\": 50,\n    \"lookingFor\": [\n      \"long_term\"\n    ],\n    \"interestIds\": [],\n    \"verifiedOnly\": true,\n    \"onlineOnly\": false\n  },\n  \"page\": 1,\n  \"limit\": 10,\n  \"countOnly\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/discovery/search",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "discovery",
+                "search"
+              ]
+            },
+            "description": "Applies filter parameters (or falls back to user's saved preferences) to return eligible dating profile cards with pagination. Strictly excludes authenticated user, blocked users, previously swiped profiles, and inactive profiles. Supports countOnly: true for fast real-time UI match counter without returning profile cards. Dual route: /api/discovery/search."
+          },
+          "response": [
+            {
+              "name": "200 OK - Search Results with Profiles",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery search completed successfully\",\n  \"data\": {\n    \"profiles\": [\n      {\n        \"id\": \"c138fd90-1c52-4753-b09e-7164ec397451\",\n        \"name\": \"Sophia\",\n        \"age\": 24,\n        \"gender\": \"female\",\n        \"bio\": \"Art enthusiast, yoga lover, and weekend traveler.\",\n        \"isFaceVerified\": true,\n        \"isOnline\": true,\n        \"lastActiveAt\": \"2026-10-15T12:00:00.000Z\",\n        \"distanceKm\": 12,\n        \"city\": \"Mumbai\",\n        \"state\": \"Maharashtra\",\n        \"lookingFor\": \"long_term\",\n        \"primaryPhotoUrl\": \"https://flirttime-media.s3.amazonaws.com/photos/sophia_primary.jpg\",\n        \"photos\": [\n          {\n            \"id\": \"p1\",\n            \"url\": \"https://flirttime-media.s3.amazonaws.com/photos/sophia_primary.jpg\",\n            \"thumbnailUrl\": \"https://flirttime-media.s3.amazonaws.com/thumbnails/photos/sophia_primary.jpg\",\n            \"isPrimary\": true,\n            \"displayOrder\": 1\n          }\n        ],\n        \"interests\": [\n          {\n            \"id\": \"11111111-0000-0000-0000-000000000001\",\n            \"name\": \"Cinema\",\n            \"icon\": \"🎬\",\n            \"displayOrder\": 1\n          }\n        ],\n        \"quickMomentCount\": 2,\n        \"hasViewedQuickMoment\": false\n      }\n    ],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 1,\n      \"totalPages\": 1,\n      \"hasMore\": false\n    },\n    \"totalCount\": 1,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"women\"\n      ],\n      \"ageMin\": 20,\n      \"ageMax\": 30,\n      \"maxDistanceKm\": 50,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": true,\n      \"onlineOnly\": false\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK - Match Count Only (countOnly: true)",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Discovery match count retrieved successfully\",\n  \"data\": {\n    \"profiles\": [],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 42,\n      \"totalPages\": 5,\n      \"hasMore\": false\n    },\n    \"totalCount\": 42,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"women\"\n      ],\n      \"ageMin\": 18,\n      \"ageMax\": 35,\n      \"maxDistanceKm\": 50,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\",\n        \"casual\",\n        \"not_sure\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": false,\n      \"onlineOnly\": false\n    }\n  }\n}"
+            },
+            {
+              "name": "200 OK - Empty Results",
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"No profiles match your filter criteria\",\n  \"data\": {\n    \"profiles\": [],\n    \"pagination\": {\n      \"page\": 1,\n      \"limit\": 10,\n      \"totalCount\": 0,\n      \"totalPages\": 0,\n      \"hasMore\": false\n    },\n    \"totalCount\": 0,\n    \"appliedFilters\": {\n      \"genders\": [\n        \"men\"\n      ],\n      \"ageMin\": 65,\n      \"ageMax\": 70,\n      \"maxDistanceKm\": 5,\n      \"isAnywhere\": false,\n      \"lookingFor\": [\n        \"long_term\"\n      ],\n      \"interestIds\": [],\n      \"verifiedOnly\": true,\n      \"onlineOnly\": true\n    }\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Invalid Search Parameters",
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid search parameters\",\n  \"errors\": [\n    {\n      \"field\": \"limit\",\n      \"message\": \"Limit must be at most 50\"\n    }\n  ],\n  \"data\": null\n}"
+            },
+            {
+              "name": "401 Unauthorized - Missing Token",
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
+            }
+          ]
         }
       ]
     },
@@ -1308,7 +2397,40 @@
       "name": "Connections & Push Notifications",
       "item": [
         {
-          "name": "Send Connect Request (Connect Button)",
+          "name": "Get Connection Reasons (Connect because... Modal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections/reasons?targetUserId=<TARGET_USER_ID>",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "connections",
+                "reasons"
+              ],
+              "query": [
+                {
+                  "key": "targetUserId",
+                  "value": "<TARGET_USER_ID>",
+                  "description": "Optional UUID of target user to personalize modal subtitle (e.g. 'Optional: let Nisha know what caught your eye.')"
+                }
+              ]
+            },
+            "description": "Powers the 'Connect because...' modal. Returns modal title, personalized subtitle with recipient's name, and 5 predefined options: 'Love their vibe', 'Same interests', 'Liked their Moment', 'Great energy', 'Want to chat'."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Connection Request (With Reason)",
           "request": {
             "method": "POST",
             "header": [
@@ -1323,7 +2445,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\"\n}"
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"Love their vibe\",\n  \"message\": \"\",\n  \"momentId\": \"<OPTIONAL_MOMENT_ID>\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/connections/request",
@@ -1337,7 +2459,40 @@
                 "request"
               ]
             },
-            "description": "Triggered when user taps the Connect (+) button on a profile detail screen. Creates a connection request, in-app notification, and dispatches a Firebase Cloud Messaging (FCM) push notification to the recipient's active devices."
+            "description": "Triggered when user selects a reason from the 'Connect because...' modal and taps '❤️ Send Connection'. Supports optional reason ('Love their vibe', 'Same interests', 'Liked their Moment', 'Great energy', 'Want to chat'), custom message, and momentId. Creates connection request, in-app notification with reason, and sends FCM push notification. Automatically matches if target user already sent a pending request."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Connection Request (REST Alias POST /api/v1/connections)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"love_their_vibe\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/connections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "connections"
+              ]
+            },
+            "description": "Standard RESTful alias for sending connection requests with reason key ('love_their_vibe', 'same_interests', 'liked_their_moment', 'great_energy', 'want_to_chat')."
           },
           "response": []
         },
@@ -1372,6 +2527,139 @@
               ]
             },
             "description": "Registers or refreshes the authenticated user's FCM device token for receiving push notifications. Platforms: 'ios' | 'android' | 'web'."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Test Push Notification",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"YOUR_DEVICE_FCM_REGISTRATION_TOKEN\",\n  \"title\": \"FlirtTime Test Alert\",\n  \"body\": \"Firebase push notification is working perfectly!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/test-push",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "test-push"
+              ]
+            },
+            "description": "Dispatches a test push notification to verify FCM setup on a mobile device immediately."
+          },
+          "response": []
+        },
+        {
+          "name": "Get In-App Notifications",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "unreadOnly",
+                  "value": "false"
+                }
+              ]
+            },
+            "description": "Fetches paginated list of in-app notifications and unread count for current user."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_ID>",
+                  "description": "Notification UUID"
+                }
+              ]
+            },
+            "description": "Marks an in-app notification as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark All Notifications as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Marks all in-app notifications as read for current user."
           },
           "response": []
         }
@@ -1700,7 +2988,7 @@
           "response": []
         },
         {
-          "name": "Screen 25: Upload Photo to Gallery",
+          "name": "Screen 25: Upload Photos to Gallery (Min 3, Max 5)",
           "request": {
             "method": "POST",
             "header": [
@@ -1713,15 +3001,22 @@
               "mode": "formdata",
               "formdata": [
                 {
-                  "key": "photo",
+                  "key": "photos",
                   "type": "file",
                   "src": [],
-                  "description": "Image file (JPEG, PNG, WebP <= 5MB)"
+                  "description": "Image file 1 (JPEG, PNG, WebP <= 5MB) - Minimum 3, Maximum 5 photos required"
                 },
                 {
-                  "key": "isPrimary",
-                  "value": "false",
-                  "type": "text"
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 2 (JPEG, PNG, WebP <= 5MB)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 3 (JPEG, PNG, WebP <= 5MB)"
                 }
               ]
             },
@@ -1736,7 +3031,57 @@
                 "onboarding",
                 "photos"
               ]
-            }
+            },
+            "description": "Upload gallery profile photos (Screen 25 & Edit Profile). Strictly enforces minimum 3 and maximum 5 images in every request. Also supported under POST /api/v1/users/photos."
+          },
+          "response": []
+        },
+        {
+          "name": "Screen 25: Edit Profile Photos (PUT /api/v1/users/photos - Min 3, Max 5)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 1 (Min 3, Max 5)"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 2"
+                },
+                {
+                  "key": "photos",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file 3"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/photos",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "photos"
+              ]
+            },
+            "description": "Edit or replace profile photos gallery. Strictly requires min 3 and max 5 photos. Also supported under PUT /api/v1/onboarding/photos."
           },
           "response": []
         },
@@ -2102,6 +3447,12 @@
                   "description": "everyone | matches_only | close_friends"
                 },
                 {
+                  "key": "location",
+                  "value": "Bandra, Mumbai",
+                  "type": "text",
+                  "description": "Location name or city (e.g. Bandra, Mumbai or Goa, India)"
+                },
+                {
                   "key": "locationLabel",
                   "value": "Bandra, Mumbai",
                   "type": "text"
@@ -2321,6 +3672,397 @@
             "description": "Reports an inappropriate Moment for admin moderation."
           },
           "response": []
+        },
+        {
+          "name": "Like / Unlike Toggle Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isLiked\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/like",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "like"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Single toggle endpoint to like or unlike a moment (accepts empty body for auto-toggle, or { isLiked: true/false } or { action: 'like'/'unlike' })."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Likes List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/likes?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "likes"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Returns paginated list of users who liked this moment with names, avatars, verification, and timestamps."
+          },
+          "response": []
+        },
+        {
+          "name": "Post Comment to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"comment\": \"Super cool vibes! 🌸\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Posts a public comment on a Moment (supports own moment commenting and personal replies)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Comments List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Fetches paginated comments on a Moment with commenter profile photo, city, isVerified, and isMyComment indicator."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Moment Comment",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Comment UUID to delete"
+                }
+              ]
+            },
+            "description": "Deletes a comment/reply on a Moment. Allowed for either the comment author OR the creator of the moment (canDelete: true). Returns 403 Forbidden if an unauthorized user attempts to delete."
+          },
+          "response": []
+        },
+        {
+          "name": "Get General Gifts Catalog & User Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "gifts"
+              ]
+            },
+            "description": "Returns the complete 8-item FlirtTime gifts catalog (rose, heart, chocolate, teddy, bouquet, ring, crown, sports_car) along with the authenticated user's current coin balance."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Gifts Catalog & Balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID (or omit for general /api/v1/moments/gifts)"
+                }
+              ]
+            },
+            "description": "Powers the 'Send a gift to [Creator]' modal. Returns user's coin balance (e.g. 500 coins) and the 8 available gift options (Rose, Heart, Chocolate, Teddy, Bouquet, Ring, Crown, Sports car)."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Gift to Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"giftCode\": \"rose\",\n  \"quantity\": 1,\n  \"message\": \"Loved your moment! 🌹\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Sends a gift on a Moment with full validation (coin balance check, self-gift check, block check, active moment check). Deducts sender coins and credits recipient."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Gifts Received on Moment",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/gifts/received?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "gifts",
+                "received"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                }
+              ]
+            },
+            "description": "Returns paginated list of gifts sent to this moment with sender details and timestamps."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Moment (Author Only)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID to delete (Must be owned by authenticated user)"
+                }
+              ]
+            },
+            "description": "Permanently deletes or soft-deletes a Moment. Only the author/creator can delete their own moments. Returns 403 Forbidden if non-author attempts to delete."
+          },
+          "response": []
         }
       ]
     },
@@ -2339,8 +4081,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "tray"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "tray"
+              ]
             },
             "description": "Screen 1: Horizontal story bar. Returns own avatar bubble (with red + or active story count) and other users' active stories with unread state, preview, time, and reaction badges (e.g. '😍 5', '🔥 3')."
           },
@@ -2358,8 +4107,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/me",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "me"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "me"
+              ]
             },
             "description": "Screen 2: View our own active story slides with author header, progress bars, text or media content, reaction summary badge ('😍🔥 3 · 💬 2 replies'), replies count, and up-drawer data."
           },
@@ -2377,8 +4133,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "user", ":userId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "user",
+                ":userId"
+              ],
               "variable": [
                 {
                   "key": "userId",
@@ -2403,12 +4167,30 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions?page=1&limit=20",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reactions"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reactions"
+              ],
               "query": [
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "20" },
-                { "key": "emoji", "value": "😍", "disabled": true }
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "emoji",
+                  "value": "😍",
+                  "disabled": true
+                }
               ],
               "variable": [
                 {
@@ -2442,8 +4224,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "react"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "react"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2476,8 +4266,16 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "reply"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reply"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2502,8 +4300,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "view"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "view"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2528,8 +4334,16 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/viewers",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId", "viewers"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "viewers"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2562,8 +4376,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
             },
             "description": "Creates a 24-hour text story like Alex's slide in Image 2."
           },
@@ -2602,8 +4422,14 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
             },
             "description": "Creates a 24-hour image story like Cindy's slide in Image 3."
           },
@@ -2629,8 +4455,15 @@
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/upload-url",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", "upload-url"]
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "upload-url"
+              ]
             },
             "description": "Generates a direct S3 PUT presigned URL for uploading stories directly from mobile devices."
           },
@@ -2648,8 +4481,15 @@
             ],
             "url": {
               "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId",
-              "host": ["{{baseUrl}}"],
-              "path": ["api", "v1", "quick-moments", ":momentId"],
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId"
+              ],
               "variable": [
                 {
                   "key": "momentId",
@@ -2659,6 +4499,1383 @@
               ]
             },
             "description": "Deletes own quick moment before 24h expiration."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Media & S3 Presigned Uploads",
+      "item": [
+        {
+          "name": "1. Generate Presigned Upload URL (S3 & Lambda Thumbnails)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"folder\": \"uploads\",\n  \"mimeType\": \"image/jpeg\",\n  \"expiresInSeconds\": 900\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/media/presigned-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "media",
+                "presigned-url"
+              ]
+            },
+            "description": "Generates direct S3 presigned PUT URL with publicUrl and AWS Lambda-compatible thumbnailUrl."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Generate Upload URL (Alias)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"folder\": \"photos\",\n  \"mimeType\": \"image/png\",\n  \"expiresInSeconds\": 900\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/media/upload-url",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "media",
+                "upload-url"
+              ]
+            },
+            "description": "Alias endpoint for generating presigned upload URLs for profile photos, moments, etc."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Quick Moments (24-Hour Stories)",
+      "item": [
+        {
+          "name": "Get Quick Moments Story Tray",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/tray",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "tray"
+              ]
+            },
+            "description": "Screen 1: Horizontal active story avatars tray with unread rings, reaction badges, and own status."
+          },
+          "response": []
+        },
+        {
+          "name": "Get My Active Quick Moments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "me"
+              ]
+            },
+            "description": "Screen 2: View authenticated user's own active slides, reaction summary badge, and viewers list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Other User Quick Moments",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/user/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                "user",
+                ":userId"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "",
+                  "description": "Target user ID"
+                }
+              ]
+            },
+            "description": "Screen 3: View other user's active story slides with media, caption, location, and reaction emojis."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Quick Moment (Text or Media)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"text\",\n  \"text\": \"Heading out for the evening ✨\",\n  \"backgroundColor\": \"#2d0b1e\",\n  \"textColor\": \"#ffffff\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments"
+              ]
+            },
+            "description": "Publishes a new 24-hour Quick Moment story (text or pre-uploaded image)."
+          },
+          "response": []
+        },
+        {
+          "name": "React to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emoji\": \"😍\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/react",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "react"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Reacts with emoji (😍, 🔥, 😂, 😮, 👏, ❤️). Toggle behavior removes reaction if same emoji sent again."
+          },
+          "response": []
+        },
+        {
+          "name": "Reply to Quick Moment",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Looking stunning!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reply"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Sends a private DM reply to the story author."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Quick Moment as Viewed",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/view",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "view"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Records story view/seen status and adds viewer to story viewers list."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Quick Moment Reactions List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/quick-moments/:momentId/reactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "quick-moments",
+                ":momentId",
+                "reactions"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "",
+                  "description": "Target quick moment ID"
+                }
+              ]
+            },
+            "description": "Screen 1 reaction list popup: Returns who gave reactions to this quick moment with user info, emoji, and timestamps."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Deep Links & Content Sharing",
+      "item": [
+        {
+          "name": "Create Deep Link (Permanent Moment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"moment\",\n  \"contentId\": \"b25ea3df-3d44-4f0e-b7e8-5b123456789a\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
+            },
+            "description": "Generates an unguessable, secure share link for a permanent Moment. Reuses active links to avoid duplicates."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Deep Link (Quick Moment 24h Story)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"quick_moment\",\n  \"contentId\": \"c36fb4ea-4e55-5f1f-c8f9-6c234567890b\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
+            },
+            "description": "Generates a share link for a Quick Moment. The link strictly inherits the 24-hour story expiration."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Deep Link (User Profile)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contentType\": \"profile\",\n  \"contentId\": \"a14da2ce-2c33-3e0d-a6d7-4a0123456789\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links"
+              ]
+            },
+            "description": "Generates a share link for a public user profile."
+          },
+          "response": []
+        },
+        {
+          "name": "Resolve Deep Link",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Optional: provides viewer authorization to evaluate mutual matches or blocked status"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Resolves link code and returns target navigation identifier, current availability status, and safe display metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Share Preview Metadata (Open Graph)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code/preview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code",
+                "preview"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Public Open Graph link preview endpoint for social media crawlers and share sheets."
+          },
+          "response": []
+        },
+        {
+          "name": "Track Deep Link Event",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event\": \"app_opened\",\n  \"platform\": \"ios\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/deep-links/:code/track",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "deep-links",
+                ":code",
+                "track"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Records deep link conversion events (app_opened, content_viewed, share_clicked)."
+          },
+          "response": []
+        },
+        {
+          "name": "Web Landing Page (Fallback)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/l/:code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "l",
+                ":code"
+              ],
+              "variable": [
+                {
+                  "key": "code",
+                  "value": "",
+                  "description": "Opaque deep link code"
+                }
+              ]
+            },
+            "description": "Universal Link fallback HTML page with Open Graph meta tags, iOS smart app banner, and native app redirect script."
+          },
+          "response": []
+        },
+        {
+          "name": "Apple App Site Association",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/apple-app-site-association",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "apple-app-site-association"
+              ]
+            },
+            "description": "Apple App Site Association JSON file for iOS Universal Links verification."
+          },
+          "response": []
+        },
+        {
+          "name": "Android Asset Links",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/.well-known/assetlinks.json",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ".well-known",
+                "assetlinks.json"
+              ]
+            },
+            "description": "Android Digital Asset Links JSON file for verified App Links."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Interactions (Likes, You Liked, Matches, Compliments)",
+      "item": [
+        {
+          "name": "Get Interactions - Likes Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=likes&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "likes",
+                  "description": "Tab type: likes, you_liked, matches, or compliments"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch incoming likes who swiped right on current user. Excludes blocked users, inactive accounts, mutual matches, and users current user already acted upon. Returns standardized user cards."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - You Liked Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=you_liked&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "you_liked",
+                  "description": "Tab type: you_liked"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch outgoing likes sent by current user, indicating whether they have converted into mutual matches."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - Matches Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=matches&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "matches",
+                  "description": "Tab type: matches"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch mutual active matches with counterpart profile data, distance, age, and match timestamp."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions - Compliments Tab",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions?type=compliments&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "compliments",
+                  "description": "Tab type: compliments"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (1-50, default 20)"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Opaque cursor string for keyset pagination"
+                }
+              ]
+            },
+            "description": "Fetch received connection requests / compliments with category badge (Love their vibe, Liked their Moment, etc.), message text, moment preview, and read state."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Interactions Badge Counts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions",
+                "counts"
+              ]
+            },
+            "description": "Real-time badge counts for all 4 tabs: likes, youLiked, matches, compliments, and total unread/actionable items."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Interaction Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/interactions/:interactionId/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "interactions",
+                ":interactionId",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "interactionId",
+                  "value": "<INTERACTION_UUID>",
+                  "description": "UUID of the interaction / compliment to mark as read"
+                }
+              ]
+            },
+            "description": "Marks a received interaction/compliment as read. Recipient authorization is strictly enforced."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Notifications & Device Registration",
+      "item": [
+        {
+          "name": "Register Device Token (FCM)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\",\n  \"platform\": \"android\",\n  \"appVersion\": \"1.0.0\",\n  \"deviceModel\": \"Pixel 7\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "devices",
+                "register"
+              ]
+            },
+            "description": "Registers an FCM device token for push notifications. Handles token rotation/reassignment gracefully."
+          },
+          "response": []
+        },
+        {
+          "name": "Unregister Device Token",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/devices/unregister",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "devices",
+                "unregister"
+              ]
+            },
+            "description": "Deactivates an FCM device token upon user logout."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Notifications (Date Grouped)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications?limit=20&tz=Asia/Kolkata",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Number of notifications to fetch (1-50, default 20)"
+                },
+                {
+                  "key": "tz",
+                  "value": "Asia/Kolkata",
+                  "description": "IANA timezone for calendar-accurate Today, Yesterday, Earlier grouping"
+                },
+                {
+                  "key": "cursor",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Base64url cursor for keyset pagination"
+                }
+              ]
+            },
+            "description": "Returns notifications grouped into Today, Yesterday, and Earlier sections, with unread badge count and pagination metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Notifications Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/counts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "counts"
+              ]
+            },
+            "description": "Returns unread count for top app bar / tab bar badge."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark Notification Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_UUID>",
+                  "description": "UUID of notification"
+                }
+              ]
+            },
+            "description": "Marks a single notification as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Mark All Notifications Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Marks all unread notifications of the user as read."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Notification",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/notifications/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "notifications",
+                ":id"
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "<NOTIFICATION_UUID>",
+                  "description": "UUID of notification to delete"
+                }
+              ]
+            },
+            "description": "Permanently deletes a notification belonging to the authenticated user."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Coin Packages",
+      "item": [
+        {
+          "name": "Get Coin Packages (Default - Public/Active Packages)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ]
+            },
+            "description": "Fetches all active coin packages in Laravel-compatible order (sort_order ASC, id ASC). Public endpoint (authentication optional)."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Dual Route /api/coin-packages)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/coin-packages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "coin-packages"
+              ]
+            },
+            "description": "Alias route for legacy clients without /v1 prefix."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Paginated page=1&limit=5)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?page=1&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (min 1, default 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "5",
+                  "description": "Items per page (1-50, default 10)"
+                }
+              ]
+            },
+            "description": "Paginated list with database-calculated metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Sort by Price ASC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?sortBy=price&sortOrder=asc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "price"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "asc"
+                }
+              ]
+            },
+            "description": "Sort active packages by price ascending with id ASC tie-breaker."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Sort by Coins DESC)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?sortBy=coins&sortOrder=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "sortBy",
+                  "value": "coins"
+                },
+                {
+                  "key": "sortOrder",
+                  "value": "desc"
+                }
+              ]
+            },
+            "description": "Sort active packages by coin balance descending."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Filter by Price Range)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?minPrice=49&maxPrice=249",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "minPrice",
+                  "value": "49"
+                },
+                {
+                  "key": "maxPrice",
+                  "value": "249"
+                }
+              ]
+            },
+            "description": "Filter packages between minPrice and maxPrice with decimal safety."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Coin Packages (Filter by Coins Range)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/coin-packages?minCoins=100&maxCoins=600",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "coin-packages"
+              ],
+              "query": [
+                {
+                  "key": "minCoins",
+                  "value": "100"
+                },
+                {
+                  "key": "maxCoins",
+                  "value": "600"
+                }
+              ]
+            },
+            "description": "Filter packages between minCoins and maxCoins."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Subscriptions",
+      "item": [
+        {
+          "name": "Get Subscriptions (Default - /api/v1/subscriptions)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions"
+              ]
+            },
+            "description": "Fetches all active subscription plans ordered by sort_order ASC, id ASC with full feature arrays and S3 media URLs. Matches exact Laravel response contract ({ status: true, img_base_url, message, data: [...] }). Public access allowed, optional Bearer token."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Subscriptions (Dual Route - /api/subscriptions)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "subscriptions"
+              ]
+            },
+            "description": "Alias route for clients requesting /api/subscriptions without the /v1 prefix."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Subscriptions (Authenticated with Bearer Token)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "subscriptions"
+              ]
+            },
+            "description": "Fetches subscription plans with authenticated user context attached."
           },
           "response": []
         }

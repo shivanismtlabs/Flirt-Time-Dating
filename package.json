@@ -9,7 +9,9 @@
     "start": "node dist/index.js",
     "clean": "rimraf dist",
     "test": "jest --runInBand",
-    "seed:discovery": "ts-node src/scripts/seedDiscovery.ts"
+    "seed:discovery": "ts-node src/scripts/seedDiscovery.ts",
+    "seed:coin-packages": "ts-node src/scripts/seedCoinPackages.ts",
+    "seed:subscriptions": "ts-node src/scripts/seedSubscriptions.ts"
   },
   "keywords": [
     "nodejs",
@@ -26,6 +28,7 @@
     "@aws-sdk/client-rekognition": "^3.1148.0",
     "@aws-sdk/client-s3": "^3.1148.0",
     "@types/nodemailer": "^8.0.2",
+    "axios": "^1.20.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

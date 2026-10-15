@@ -6,6 +6,7 @@ import {
   Moment,
   MomentMedia,
   MomentReaction,
+  MomentGift,
   Conversation,
   ChatMessage,
   Match,
@@ -51,6 +52,7 @@ describe('Permanent Moments Feature APIs', () => {
 
   beforeEach(async () => {
     // Clear all tables
+    await MomentGift.destroy({ where: {} });
     await ChatMessage.destroy({ where: {} });
     await Conversation.destroy({ where: {} });
     await MomentReaction.destroy({ where: {} });
@@ -139,6 +141,25 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.data.media).toHaveLength(1);
       expect(res.body.data.media[0].displayOrder).toBe(0);
       expect(res.body.data.expiresAt).toBeNull();
+      expect(res.body.data.locationLabel).toBe('Bandra, Mumbai');
+      expect(res.body.data.location).toEqual({ name: 'Bandra, Mumbai' });
+    });
+
+    it('should successfully create a moment with location string field (alias for locationLabel)', async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Sunset at the beach 🌅')
+        .field('audience', 'everyone')
+        .field('location', 'Goa Beach')
+        .attach('images', validJpegBuffer, 'sunset.jpg');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Sunset at the beach 🌅');
+      expect(res.body.data.locationLabel).toBe('Goa Beach');
+      expect(res.body.data.location).toEqual({ name: 'Goa Beach' });
     });
 
     it('should successfully create a moment with 5 images and preserve ordering', async () => {
@@ -156,6 +177,193 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.data.media).toHaveLength(5);
       const orders = res.body.data.media.map((m: any) => m.displayOrder);
       expect(orders).toEqual([0, 1, 2, 3, 4]);
+    });
+
+    it('should successfully generate presigned upload URL with imageKey for moments', async () => {
+      const res = await request(app)
+        .post('/api/v1/media/presigned-url')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          folder: 'moments',
+          mimeType: 'image/jpeg',
+          expiresInSeconds: 900,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.uploadUrl).toBeDefined();
+      expect(res.body.data.imageKey).toBeDefined();
+      expect(res.body.data.key).toBeDefined();
+      expect(res.body.data.imageKey).toBe(res.body.data.key);
+      expect(res.body.data.imageKey).toMatch(new RegExp(`^moments/${creatorUser.id}/`));
+      expect(res.body.data.publicUrl).toBeDefined();
+      expect(res.body.data.thumbnailUrl).toBeDefined();
+    });
+
+    it('should successfully create a moment with imageKey, caption, and location object', async () => {
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_unique1.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: testKey,
+          caption: 'Enjoying my evening',
+          location: {
+            name: 'Indore',
+            latitude: 22.7196,
+            longitude: 75.8577,
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Enjoying my evening');
+      expect(res.body.data.locationLabel).toBe('Indore');
+      expect(res.body.data.location).toEqual({ name: 'Indore' });
+      expect(res.body.data.media).toHaveLength(1);
+      expect(res.body.data.media[0].imageKey).toBe(testKey);
+      expect(res.body.data.media[0].mediaUrl).toContain(testKey);
+      expect(res.body.data.media[0].thumbnailUrl).toContain('thumbnails');
+
+      // Verify PostgreSQL database persistence
+      const savedMoment = await Moment.findByPk(res.body.data.momentId);
+      expect(savedMoment).not.toBeNull();
+      expect(savedMoment?.userId).toBe(creatorUser.id);
+      expect(savedMoment?.caption).toBe('Enjoying my evening');
+      expect(savedMoment?.locationLabel).toBe('Indore');
+
+      const savedMedia = await MomentMedia.findAll({
+        where: { momentId: res.body.data.momentId },
+      });
+      expect(savedMedia).toHaveLength(1);
+      expect(savedMedia[0].mediaUrl).toBe(testKey);
+    });
+
+    it('should successfully create a moment with pre-uploaded S3 mediaUrls in JSON body', async () => {
+      const testKey1 = `moments/${creatorUser.id}/${Date.now()}_pic1.jpg`;
+      const testKey2 = `moments/${creatorUser.id}/${Date.now()}_pic2.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          caption: 'Direct S3 uploaded moment',
+          audience: 'everyone',
+          locationLabel: 'Goa Beach',
+          mediaUrls: [
+            `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey1}`,
+            `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey2}`,
+          ],
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBeDefined();
+      expect(res.body.data.caption).toBe('Direct S3 uploaded moment');
+      expect(res.body.data.media).toHaveLength(2);
+      expect(res.body.data.media[0].displayOrder).toBe(0);
+      expect(res.body.data.media[0].imageKey).toBe(testKey1);
+      expect(res.body.data.media[1].displayOrder).toBe(1);
+      expect(res.body.data.media[1].imageKey).toBe(testKey2);
+    });
+
+    it('should successfully create a moment with single mediaUrl in JSON body', async () => {
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_single.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          caption: 'Single photo moment',
+          mediaUrl: `https://flirttime.s3.ap-south-1.amazonaws.com/${testKey}`,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.media).toHaveLength(1);
+      expect(res.body.data.media[0].imageKey).toBe(testKey);
+    });
+
+    it('should reject attaching unauthorized S3 uploads belonging to another user with 403', async () => {
+      const foreignKey = `moments/${viewerUser.id}/${Date.now()}_foreign.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: foreignKey,
+          caption: 'Trying to steal someone else upload',
+        });
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not authorized/i);
+    });
+
+    it('should reject duplicate submission of the same imageKey with 409', async () => {
+      const uniqueKey = `moments/${creatorUser.id}/${Date.now()}_first_submit.jpg`;
+
+      // 1. Submit first time
+      const res1 = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: uniqueKey,
+          caption: 'Original post',
+        });
+      expect(res1.status).toBe(201);
+
+      // 2. Submit same key second time
+      const res2 = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: uniqueKey,
+          caption: 'Duplicate attempt',
+        });
+      expect(res2.status).toBe(409);
+      expect(res2.body.success).toBe(false);
+      expect(res2.body.message).toMatch(/already been submitted/i);
+    });
+
+    it('should reject creation when S3 object does not exist in storage with 400', async () => {
+      const missingKey = `moments/${creatorUser.id}/${Date.now()}_missing.jpg`;
+      jest.spyOn(s3Service, 'checkObjectExists').mockResolvedValueOnce({ exists: false });
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: missingKey,
+          caption: 'Missing upload test',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/not found in storage/i);
+    });
+
+    it('should reject creation when S3 object exceeds 5MB size limit with 400', async () => {
+      const oversizedKey = `moments/${creatorUser.id}/${Date.now()}_big.jpg`;
+      jest.spyOn(s3Service, 'checkObjectExists').mockResolvedValueOnce({
+        exists: true,
+        contentLength: 6 * 1024 * 1024, // 6MB
+        contentType: 'image/jpeg',
+      });
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: oversizedKey,
+          caption: 'Oversized upload test',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/exceeds the 5MB size limit/i);
     });
   });
 
@@ -357,8 +565,93 @@ describe('Permanent Moments Feature APIs', () => {
         .set('Authorization', `Bearer ${viewerToken}`)
         .send({ message: 'Nice!' });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(201);
       expect(res.body.success).toBe(true);
+    });
+
+    it('should successfully post a comment via POST /api/v1/moments/:momentId/comments and retrieve via GET /api/v1/moments/:momentId/comments', async () => {
+      // Post comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Stunning capture! 🔥' });
+
+      expect(postRes.status).toBe(201);
+      expect(postRes.body.success).toBe(true);
+      expect(postRes.body.data.comment).toBe('Stunning capture! 🔥');
+
+      // Get comments list
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.success).toBe(true);
+      expect(getRes.body.data.totalComments).toBeGreaterThanOrEqual(1);
+      expect(getRes.body.data.comments[0].comment).toBe('Stunning capture! 🔥');
+      expect(getRes.body.data.comments[0].user).toBeDefined();
+
+      const createdCommentId = postRes.body.data.commentId;
+
+      // Viewer deletes their own comment -> 200 OK
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${createdCommentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(delRes.status).toBe(200);
+      expect(delRes.body.success).toBe(true);
+      expect(delRes.body.message).toMatch(/deleted successfully/i);
+
+      // Verify comment is gone
+      const getAfterDel = await request(app)
+        .get(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const found = getAfterDel.body.data.comments.find((c: any) => c.commentId === createdCommentId);
+      expect(found).toBeUndefined();
+    });
+
+    it('should allow moment creator to delete someone elses comment on their moment', async () => {
+      // 1. Viewer posts comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Comment by viewer' });
+      const commentId = postRes.body.data.commentId;
+
+      // 2. Creator deletes viewer's comment -> 200 OK
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(delRes.status).toBe(200);
+      expect(delRes.body.success).toBe(true);
+    });
+
+    it('should reject unauthorized user from deleting someone elses comment with 403', async () => {
+      // 1. Viewer posts comment
+      const postRes = await request(app)
+        .post(`/api/v1/moments/${pastMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Private thought' });
+      const commentId = postRes.body.data.commentId;
+
+      // 2. BlockedUser (neither author nor moment creator) tries to delete -> 403
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${commentId}`)
+        .set('Authorization', `Bearer ${blockedToken}`);
+
+      expect(delRes.status).toBe(403);
+      expect(delRes.body.success).toBe(false);
+    });
+
+    it('should return 404 when deleting a non-existent comment', async () => {
+      const nonexistentId = '00000000-0000-4000-8000-000000000000';
+      const delRes = await request(app)
+        .delete(`/api/v1/moments/${pastMomentId}/comments/${nonexistentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(delRes.status).toBe(404);
+      expect(delRes.body.success).toBe(false);
     });
   });
 
@@ -449,4 +742,193 @@ describe('Permanent Moments Feature APIs', () => {
       expect(res.body.message).toMatch(/privacy restrictions/i);
     });
   });
+
+  describe('7. Delete Moment and Unlike APIs', () => {
+    let momentId: string;
+
+    beforeEach(async () => {
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Moment to test delete and unlike')
+        .attach('images', validJpegBuffer, 'delete_test.jpg');
+      momentId = res.body.data.momentId;
+    });
+
+    it('should successfully unlike / remove reaction via DELETE /api/v1/moments/:momentId/reactions', async () => {
+      // First, like the moment
+      await request(app)
+        .post(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ reaction: 'heart' });
+
+      // Then unlike the moment
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.unliked).toBe(true);
+      expect(res.body.data.isLiked).toBe(false);
+      expect(res.body.data.totalReactions).toBe(0);
+    });
+
+    it('should successfully unlike via POST /api/v1/moments/:momentId/unlike', async () => {
+      // First, like the moment
+      await request(app)
+        .post(`/api/v1/moments/${momentId}/reactions`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ reaction: 'fire' });
+
+      // Then unlike
+      const res = await request(app)
+        .post(`/api/v1/moments/${momentId}/unlike`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.unliked).toBe(true);
+    });
+
+    it('should allow author to delete their own moment via DELETE /api/v1/moments/:momentId', async () => {
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toMatch(/deleted successfully/i);
+
+      // Verify moment is no longer available
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(getRes.status).toBe(404);
+    });
+
+    it('should reject non-author from deleting another user moment with 403', async () => {
+      const res = await request(app)
+        .delete(`/api/v1/moments/${momentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+    });
+  });
+
+  describe('8. Gifts Count in Moments Feed and User Profiles', () => {
+    it('should accurately calculate and return giftsCount in feed and user moments after gifts are sent', async () => {
+      // 1. Create a moment
+      const createRes = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Gift test moment')
+        .attach('images', validJpegBuffer, 'gift_test.jpg');
+
+      expect(createRes.status).toBe(201);
+      const testMomentId = createRes.body.data.momentId;
+
+      // 2. Initial feed check: giftsCount should be 0
+      const feedRes1 = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInFeed1 = feedRes1.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInFeed1).toBeDefined();
+      expect(momentInFeed1.giftsCount).toBe(0);
+
+      // 3. Send 3 gifts (rose qty 1, chocolate qty 2)
+      await MomentGift.create({
+        momentId: testMomentId,
+        senderId: viewerUser.id,
+        recipientId: creatorUser.id,
+        giftCode: 'rose',
+        giftName: 'Rose',
+        icon: '🌹',
+        coins: 1,
+        quantity: 1,
+        totalCoins: 1,
+      });
+
+      await MomentGift.create({
+        momentId: testMomentId,
+        senderId: viewerUser.id,
+        recipientId: creatorUser.id,
+        giftCode: 'chocolate',
+        giftName: 'Chocolate',
+        icon: '🍫',
+        coins: 10,
+        quantity: 2,
+        totalCoins: 20,
+      });
+
+      // 4. Feed check: giftsCount should now be 3 (1 + 2)
+      const feedRes2 = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInFeed2 = feedRes2.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInFeed2).toBeDefined();
+      expect(momentInFeed2.giftsCount).toBe(3);
+
+      // 5. User moments check: giftsCount should also be 3
+      const userMomentsRes = await request(app)
+        .get(`/api/v1/users/${creatorUser.id}/moments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      const momentInUser = userMomentsRes.body.data.moments.find((m: any) => m.momentId === testMomentId);
+      expect(momentInUser).toBeDefined();
+      expect(momentInUser.giftsCount).toBe(3);
+
+      // 6. Moment detail check: giftsCount should also be 3
+      const detailRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(detailRes.body.data.giftsCount).toBe(3);
+    });
+
+    it('should NOT show gifts in comments list or inflate commentsCount when a gift is sent', async () => {
+      // 1. Create a moment
+      const createRes = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .field('caption', 'Gift comment isolation test')
+        .attach('images', validJpegBuffer, 'isolation.jpg');
+      const testMomentId = createRes.body.data.momentId;
+
+      // 2. Post 1 legitimate text comment
+      const commentRes = await request(app)
+        .post(`/api/v1/moments/${testMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({ comment: 'Awesome picture!' });
+      expect(commentRes.status).toBe(201);
+
+      // 3. Send a gift via POST /api/v1/moments/:momentId/gifts
+      const giftRes = await request(app)
+        .post(`/api/v1/moments/${testMomentId}/gifts`)
+        .set('Authorization', `Bearer ${viewerToken}`)
+        .send({
+          giftCode: 'rose',
+          quantity: 1,
+          message: 'Enjoy this rose!',
+        });
+      expect(giftRes.status).toBe(201);
+
+      // 4. Retrieve comments list: should only contain the 1 text comment, NOT the gift!
+      const commentsListRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}/comments`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(commentsListRes.status).toBe(200);
+      expect(commentsListRes.body.data.totalComments).toBe(1);
+      expect(commentsListRes.body.data.comments).toHaveLength(1);
+      expect(commentsListRes.body.data.comments[0].comment).toBe('Awesome picture!');
+
+      // 5. Retrieve moment detail: commentsCount should be 1, giftsCount should be 1
+      const detailRes = await request(app)
+        .get(`/api/v1/moments/${testMomentId}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+      expect(detailRes.body.data.commentsCount).toBe(1);
+      expect(detailRes.body.data.giftsCount).toBe(1);
+    });
+  });
 });
+

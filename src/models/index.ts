@@ -22,8 +22,37 @@ import { Notification } from './notification.model';
 import { QuickMoment } from './quickMoment.model';
 import { QuickMomentReaction } from './quickMomentReaction.model';
 import { QuickMomentView } from './quickMomentView.model';
+import {
+  MomentGift,
+  MOMENT_GIFTS_CATALOG,
+  GiftCatalogItem,
+} from './momentGift.model';
+import { DeepLink } from './deepLink.model';
+import { CoinPackage } from './coinPackage.model';
+import { SubscriptionPlan } from './subscriptionPlan.model';
+import { SubscriptionFeature } from './subscriptionFeature.model';
+import { PlanFeature } from './planFeature.model';
+import { CoinPurchase } from './coinPurchase.model';
+import { CoinTransaction } from './coinTransaction.model';
+import { UserSubscription } from './userSubscription.model';
+import { SubscriptionEventLog } from './subscriptionEventLog.model';
+import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
 
 // Define associations
+User.hasOne(UserDiscoveryPreference, {
+  foreignKey: 'userId',
+  as: 'discoveryPreference',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+UserDiscoveryPreference.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
 User.hasMany(UserIdentity, {
   foreignKey: 'userId',
   as: 'identities',
@@ -252,6 +281,40 @@ MomentReaction.belongsTo(User, {
   as: 'user',
 });
 
+// Moment <-> MomentGift associations
+Moment.hasMany(MomentGift, {
+  foreignKey: 'momentId',
+  as: 'gifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(Moment, {
+  foreignKey: 'momentId',
+  as: 'moment',
+});
+
+User.hasMany(MomentGift, {
+  foreignKey: 'senderId',
+  as: 'sentMomentGifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(User, {
+  foreignKey: 'senderId',
+  as: 'sender',
+});
+
+User.hasMany(MomentGift, {
+  foreignKey: 'recipientId',
+  as: 'receivedMomentGifts',
+  onDelete: 'CASCADE',
+});
+
+MomentGift.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
 // User <-> Conversation
 User.hasMany(Conversation, {
   foreignKey: 'user1Id',
@@ -407,6 +470,115 @@ QuickMomentView.belongsTo(User, {
   as: 'viewer',
 });
 
+// User <-> DeepLink associations
+User.hasMany(DeepLink, {
+  foreignKey: 'creatorId',
+  as: 'deepLinks',
+  onDelete: 'CASCADE',
+});
+
+DeepLink.belongsTo(User, {
+  foreignKey: 'creatorId',
+  as: 'creator',
+});
+
+// SubscriptionPlan <-> SubscriptionFeature Many-to-Many associations
+SubscriptionPlan.belongsToMany(SubscriptionFeature, {
+  through: PlanFeature,
+  as: 'features',
+  foreignKey: 'subscription_plan_id',
+  otherKey: 'subscription_feature_id',
+});
+
+SubscriptionFeature.belongsToMany(SubscriptionPlan, {
+  through: PlanFeature,
+  as: 'plans',
+  foreignKey: 'subscription_feature_id',
+  otherKey: 'subscription_plan_id',
+});
+
+SubscriptionPlan.hasMany(PlanFeature, {
+  foreignKey: 'subscription_plan_id',
+  as: 'planFeatures',
+  onDelete: 'CASCADE',
+});
+
+PlanFeature.belongsTo(SubscriptionPlan, {
+  foreignKey: 'subscription_plan_id',
+  as: 'plan',
+});
+
+SubscriptionFeature.hasMany(PlanFeature, {
+  foreignKey: 'subscription_feature_id',
+  as: 'planFeatures',
+  onDelete: 'CASCADE',
+});
+
+PlanFeature.belongsTo(SubscriptionFeature, {
+  foreignKey: 'subscription_feature_id',
+  as: 'feature',
+});
+
+// User <-> CoinPurchase associations
+User.hasMany(CoinPurchase, {
+  foreignKey: 'userId',
+  as: 'coinPurchases',
+  onDelete: 'CASCADE',
+});
+
+CoinPurchase.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// CoinPackage <-> CoinPurchase associations
+CoinPackage.hasMany(CoinPurchase, {
+  foreignKey: 'packageId',
+  as: 'purchases',
+  onDelete: 'SET NULL',
+});
+
+CoinPurchase.belongsTo(CoinPackage, {
+  foreignKey: 'packageId',
+  as: 'package',
+});
+
+// User <-> CoinTransaction (ledger) associations
+User.hasMany(CoinTransaction, {
+  foreignKey: 'userId',
+  as: 'coinTransactions',
+  onDelete: 'CASCADE',
+});
+
+CoinTransaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// User <-> UserSubscription associations
+User.hasMany(UserSubscription, {
+  foreignKey: 'userId',
+  as: 'subscriptions',
+  onDelete: 'CASCADE',
+});
+
+UserSubscription.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+// SubscriptionPlan <-> UserSubscription associations
+SubscriptionPlan.hasMany(UserSubscription, {
+  foreignKey: 'planId',
+  as: 'subscriptions',
+  onDelete: 'SET NULL',
+});
+
+UserSubscription.belongsTo(SubscriptionPlan, {
+  foreignKey: 'planId',
+  as: 'plan',
+});
+
 export {
   sequelize,
   User,
@@ -432,6 +604,19 @@ export {
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  MomentGift,
+  MOMENT_GIFTS_CATALOG,
+  GiftCatalogItem,
+  DeepLink,
+  CoinPackage,
+  SubscriptionPlan,
+  SubscriptionFeature,
+  PlanFeature,
+  CoinPurchase,
+  CoinTransaction,
+  UserSubscription,
+  SubscriptionEventLog,
+  UserDiscoveryPreference,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -519,6 +704,10 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "users" ADD COLUMN "profilePicture" VARCHAR(500);
               END IF;
 
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coverPicture') THEN
+                ALTER TABLE "users" ADD COLUMN "coverPicture" VARCHAR(500);
+              END IF;
+
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lookingFor') THEN
                 ALTER TABLE "users" ADD COLUMN "lookingFor" VARCHAR(50);
               END IF;
@@ -529,6 +718,50 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'religion') THEN
                 ALTER TABLE "users" ADD COLUMN "religion" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'drinking') THEN
+                ALTER TABLE "users" ADD COLUMN "drinking" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'education') THEN
+                ALTER TABLE "users" ADD COLUMN "education" VARCHAR(100);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'height') THEN
+                ALTER TABLE "users" ADD COLUMN "height" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'sexuality') THEN
+                ALTER TABLE "users" ADD COLUMN "sexuality" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'smoking') THEN
+                ALTER TABLE "users" ADD COLUMN "smoking" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'weight') THEN
+                ALTER TABLE "users" ADD COLUMN "weight" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'eyeColor') THEN
+                ALTER TABLE "users" ADD COLUMN "eyeColor" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'hairColor') THEN
+                ALTER TABLE "users" ADD COLUMN "hairColor" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'living') THEN
+                ALTER TABLE "users" ADD COLUMN "living" VARCHAR(100);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'relationship') THEN
+                ALTER TABLE "users" ADD COLUMN "relationship" VARCHAR(50);
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'children') THEN
+                ALTER TABLE "users" ADD COLUMN "children" VARCHAR(100);
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'city') THEN
@@ -549,6 +782,14 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'voicePromptDuration') THEN
                 ALTER TABLE "users" ADD COLUMN "voicePromptDuration" INTEGER;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
+                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
+                ALTER TABLE "users" ADD COLUMN "lastActiveAt" TIMESTAMP WITH TIME ZONE;
               END IF;
             END IF;
 
@@ -573,8 +814,170 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "face_verifications" ADD COLUMN "isLatest" BOOLEAN DEFAULT true;
               END IF;
             END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'moments') THEN
+              IF EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name = 'moments' AND column_name = 'expiresAt' AND is_nullable = 'NO'
+              ) THEN
+                ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;
+              END IF;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'user_reports') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'targetType') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "targetType" VARCHAR(20) DEFAULT 'user';
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'momentId') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "momentId" UUID;
+              END IF;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'reason') THEN
+                ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'momentId') THEN
+                ALTER TABLE "connection_requests" ADD COLUMN "momentId" UUID;
+              END IF;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'coin_packages') THEN
+              CREATE TABLE IF NOT EXISTS "coin_packages" (
+                "id" SERIAL PRIMARY KEY,
+                "name" VARCHAR(255) NOT NULL,
+                "price" DECIMAL(10, 2) NOT NULL,
+                "currency" VARCHAR(10) NOT NULL DEFAULT 'INR',
+                "coins" INTEGER NOT NULL,
+                "bonus_coins" INTEGER NOT NULL DEFAULT 0,
+                "google_product_id" VARCHAR(255),
+                "apple_product_id" VARCHAR(255),
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "coin_packages_is_active_idx" ON "coin_packages" ("is_active");
+              CREATE INDEX IF NOT EXISTS "coin_packages_sort_order_idx" ON "coin_packages" ("is_active", "sort_order", "id");
+              CREATE INDEX IF NOT EXISTS "coin_packages_price_idx" ON "coin_packages" ("price");
+              CREATE INDEX IF NOT EXISTS "coin_packages_coins_idx" ON "coin_packages" ("coins");
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscription_plans') THEN
+              CREATE TABLE IF NOT EXISTS "subscription_plans" (
+                "id" SERIAL PRIMARY KEY,
+                "name" VARCHAR(255) NOT NULL,
+                "description" TEXT,
+                "price" DECIMAL(10, 2) NOT NULL,
+                "currency" VARCHAR(10) NOT NULL DEFAULT 'USD',
+                "duration_days" INTEGER NOT NULL,
+                "billing_cycle" VARCHAR(50) NOT NULL DEFAULT 'monthly',
+                "trial_period" INTEGER,
+                "is_recurring" BOOLEAN NOT NULL DEFAULT true,
+                "bonus_coins" INTEGER NOT NULL DEFAULT 0,
+                "discount" VARCHAR(50),
+                "is_popular_plan" BOOLEAN NOT NULL DEFAULT false,
+                "google_product_id" VARCHAR(255),
+                "apple_product_id" VARCHAR(255),
+                "icon" VARCHAR(500),
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "deleted_at" TIMESTAMP WITH TIME ZONE,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "subscription_plans_is_active_idx" ON "subscription_plans" ("is_active");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_sort_order_idx" ON "subscription_plans" ("is_active", "sort_order", "id");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_google_product_id_idx" ON "subscription_plans" ("google_product_id");
+              CREATE INDEX IF NOT EXISTS "subscription_plans_apple_product_id_idx" ON "subscription_plans" ("apple_product_id");
+            ELSE
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscription_plans' AND column_name = 'discount') THEN
+                ALTER TABLE "subscription_plans" ADD COLUMN "discount" VARCHAR(50);
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'subscription_plans' AND column_name = 'is_popular_plan') THEN
+                ALTER TABLE "subscription_plans" ADD COLUMN "is_popular_plan" BOOLEAN DEFAULT false;
+              END IF;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'subscription_features') THEN
+              CREATE TABLE IF NOT EXISTS "subscription_features" (
+                "id" SERIAL PRIMARY KEY,
+                "text" VARCHAR(255) NOT NULL,
+                "image" VARCHAR(500) NOT NULL,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "is_active" BOOLEAN NOT NULL DEFAULT true,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+              CREATE INDEX IF NOT EXISTS "subscription_features_is_active_idx" ON "subscription_features" ("is_active");
+              CREATE INDEX IF NOT EXISTS "subscription_features_sort_order_idx" ON "subscription_features" ("sort_order");
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'plan_features') THEN
+              CREATE TABLE IF NOT EXISTS "plan_features" (
+                "id" SERIAL PRIMARY KEY,
+                "subscription_plan_id" INTEGER NOT NULL REFERENCES "subscription_plans"("id") ON DELETE CASCADE,
+                "subscription_feature_id" INTEGER NOT NULL REFERENCES "subscription_features"("id") ON DELETE CASCADE,
+                "sort_order" INTEGER NOT NULL DEFAULT 0,
+                "created_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updated_at" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                CONSTRAINT "plan_features_plan_feature_unique" UNIQUE ("subscription_plan_id", "subscription_feature_id")
+              );
+              CREATE INDEX IF NOT EXISTS "plan_features_sort_order_idx" ON "plan_features" ("sort_order");
+            END IF;
           END $$;
         `);
+
+        // Explicit direct DDL for maximum reliability on all PostgreSQL environments
+        try {
+          await sequelize.query('ALTER TABLE "moments" ALTER COLUMN "expiresAt" DROP NOT NULL;');
+        } catch (_dropErr) {
+          // Safe to ignore if moments table does not exist yet or is already nullable
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "targetType" VARCHAR(20) DEFAULT \'user\';');
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+        } catch (_urColErr) {
+          // Safe to ignore if user_reports does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN IF NOT EXISTS "reason" VARCHAR(150);');
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+        } catch (_crColErr) {
+          // Safe to ignore if connection_requests does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "email_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
+          await sequelize.query('ALTER TABLE "email_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+        } catch (_evColErr) {
+          // Safe to ignore if email_verifications does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+        } catch (_pvColErr) {
+          // Safe to ignore if phone_verifications does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastActiveAt" TIMESTAMP WITH TIME ZONE;');
+        } catch (_laColErr) {
+          // Safe to ignore if users does not exist yet
+        }
+
+        // Ensure quick_moments and moment_gifts tables exist immediately on all environments
+        try {
+          await QuickMoment.sync();
+          await QuickMomentReaction.sync();
+          await QuickMomentView.sync();
+          await MomentGift.sync();
+        } catch (_qmSyncErr: any) {
+          console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
+        }
       } catch (preMigrationError) {
         // Safe to ignore if database/table is newly initialized
       }
@@ -582,7 +985,26 @@ export const initDb = async (force = false): Promise<void> => {
 
     try {
       if (sequelize.getDialect() === 'sqlite') {
+        if (isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = OFF;');
+          } catch (_) {}
+        }
         await sequelize.sync({ force: isForce });
+        if (isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = ON;');
+          } catch (_) {}
+        }
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "reason" VARCHAR(150);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "connection_requests" ADD COLUMN "momentId" VARCHAR(36);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN "lastActiveAt" DATETIME;');
+        } catch (_) {}
       } else {
         await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
       }
@@ -595,21 +1017,54 @@ export const initDb = async (force = false): Promise<void> => {
         syncError.message?.includes('already exists')
       ) {
         console.warn('⚠️ Standardizing schema without dropping constraint aliases...');
+        if (sequelize.getDialect() === 'sqlite' && isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = OFF;');
+          } catch (_) {}
+        }
         await sequelize.sync({ force: isForce, alter: false });
+        if (sequelize.getDialect() === 'sqlite' && isForce) {
+          try {
+            await sequelize.query('PRAGMA foreign_keys = ON;');
+          } catch (_) {}
+        }
       } else {
         throw syncError;
       }
     }
 
+    await ensureCoinPackageTables();
+    await ensureSubscriptionTables();
+    await ensureCoinPurchaseTables();
+    await UserDiscoveryPreference.sync();
+
     // Seed initial interests catalog
     await seedDefaultInterests();
 
-    // Seed 50 dummy discovery people profiles
+    // Seed 50 dummy discovery people profiles (skip in test environment to avoid SQLite file locking)
+    if (process.env.NODE_ENV !== 'test') {
+      try {
+        const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
+        await seed50DiscoveryUsers();
+      } catch (seedErr: any) {
+        console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+      }
+    }
+
+    // Seed 10 production coin packages idempotently
     try {
-      const { seed50DiscoveryUsers } = await import('../services/seedDiscovery.service');
-      await seed50DiscoveryUsers();
-    } catch (seedErr: any) {
-      console.warn('⚠️ Could not seed default discovery users:', seedErr.message);
+      const { seedCoinPackages } = await import('../services/seedCoinPackage.service');
+      await seedCoinPackages(false);
+    } catch (coinSeedErr: any) {
+      console.warn('⚠️ Could not seed coin packages:', coinSeedErr.message);
+    }
+
+    // Seed verified subscription plans idempotently
+    try {
+      const { seedSubscriptions } = await import('../services/seedSubscription.service');
+      await seedSubscriptions(false);
+    } catch (subSeedErr: any) {
+      console.warn('⚠️ Could not seed subscription plans:', subSeedErr.message);
     }
 
     console.log('✅ Database models synchronized successfully.');
@@ -625,20 +1080,29 @@ export const initDb = async (force = false): Promise<void> => {
 export const seedDefaultInterests = async (): Promise<void> => {
   try {
     const defaultInterests = [
+      // 20 Canonical Discovery Filter UI Interests
+      { name: 'Cinema', icon: '🎬', category: 'Entertainment' },
       { name: 'Cooking', icon: '🍳', category: 'Lifestyle' },
-      { name: 'Lyrics Music', icon: '🎵', category: 'Entertainment' },
       { name: 'Dance', icon: '💃', category: 'Arts' },
+      { name: 'Drawing', icon: '🎨', category: 'Creativity' },
+      { name: 'Extreme', icon: '🏄', category: 'Sports' },
       { name: 'Fitness', icon: '💪', category: 'Fitness' },
       { name: 'Gaming', icon: '🎮', category: 'Entertainment' },
+      { name: 'Handcraft', icon: '🧵', category: 'Creativity' },
+      { name: 'Lyrics Music', icon: '🎵', category: 'Entertainment' },
       { name: 'Party', icon: '🎉', category: 'Social' },
       { name: 'Pets', icon: '🐶', category: 'Lifestyle' },
       { name: 'Photography', icon: '📷', category: 'Creativity' },
+      { name: 'Planting', icon: '🌱', category: 'Lifestyle' },
       { name: 'Reading', icon: '📚', category: 'Lifestyle' },
       { name: 'Shopping', icon: '🛍️', category: 'Lifestyle' },
       { name: 'Sports', icon: '⚽', category: 'Sports' },
+      { name: 'Television', icon: '📺', category: 'Entertainment' },
       { name: 'Travelling', icon: '✈️', category: 'Travel' },
-      { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
+      { name: 'Writing', icon: '✍️', category: 'Creativity' },
       { name: 'Yoga', icon: '🧘', category: 'Fitness' },
+      // Additional catalog items for backward compatibility
+      { name: 'Karaoke', icon: '🎤', category: 'Entertainment' },
       { name: 'Tennis', icon: '🎾', category: 'Sports' },
       { name: 'Running', icon: '🏃', category: 'Sports' },
       { name: 'Swimming', icon: '🏊', category: 'Sports' },
@@ -657,6 +1121,89 @@ export const seedDefaultInterests = async (): Promise<void> => {
     }
   } catch (err: any) {
     console.warn('Could not seed default interests:', err.message);
+  }
+};
+
+/**
+ * Ensures moment_gifts table and users.coins column exist on all database environments
+ */
+export const ensureMomentGiftTables = async (): Promise<void> => {
+  try {
+    if (sequelize.getDialect() === 'postgres') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 500;');
+      } catch (_e) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;');
+      } catch (_e) {}
+    }
+    await MomentGift.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync MomentGift table:', err.message);
+  }
+};
+
+/**
+ * Ensures coin_packages table exists on all database environments
+ */
+export const ensureCoinPackageTables = async (): Promise<void> => {
+  try {
+    await CoinPackage.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync CoinPackage table:', err.message);
+  }
+};
+
+/**
+ * Ensures subscription_plans, subscription_features, and plan_features tables exist on all database environments
+ */
+export const ensureSubscriptionTables = async (): Promise<void> => {
+  try {
+    if (sequelize.getDialect() === 'postgres') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "is_subscribed" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "subscription_expires_at" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "active_subscription_plan_id" INTEGER;');
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "discount" VARCHAR(50);');
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN IF NOT EXISTS "is_popular_plan" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "is_subscribed" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "subscription_expires_at" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "active_subscription_plan_id" INTEGER;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN "discount" VARCHAR(50);');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "subscription_plans" ADD COLUMN "is_popular_plan" BOOLEAN DEFAULT false;');
+      } catch (_e) {}
+    }
+    await SubscriptionPlan.sync();
+    await SubscriptionFeature.sync();
+    await PlanFeature.sync();
+    await UserSubscription.sync();
+    await SubscriptionEventLog.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync Subscription tables:', err.message);
+  }
+};
+
+/**
+ * Ensures coin_purchases and coin_transactions tables exist with required constraints on all database environments
+ */
+export const ensureCoinPurchaseTables = async (): Promise<void> => {
+  try {
+    await CoinPurchase.sync();
+    await CoinTransaction.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction tables:', err.message);
   }
 };
 

@@ -5,8 +5,10 @@ import {
   QuickMomentView,
   User,
   Notification,
+  UserBlock,
+  UserReport,
 } from '../models';
-import { s3Service } from './s3.service';
+import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from './s3.service';
 
 export class QuickMomentServiceError extends Error {
   public statusCode: number;
@@ -78,6 +80,20 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
   return { badgeText, topEmojis, total, breakdown };
 }
 
+let quickMomentTablesReady = false;
+
+export async function ensureQuickMomentTables(): Promise<void> {
+  if (quickMomentTablesReady) return;
+  try {
+    await QuickMoment.sync();
+    await QuickMomentReaction.sync();
+    await QuickMomentView.sync();
+    quickMomentTablesReady = true;
+  } catch (err: any) {
+    console.warn('[QuickMoment Schema Warning]:', err.message);
+  }
+}
+
 export class QuickMomentService {
   /**
    * 1. GET TRAY: Horizontal Stories Bar (Screen / Image 1)
@@ -85,6 +101,7 @@ export class QuickMomentService {
    * plus other users' active stories with unread state, preview, time, and reaction badges.
    */
   public async getTray(viewerUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     // Fetch all active, non-expired quick moments
@@ -137,7 +154,7 @@ export class QuickMomentService {
       myStatus = {
         hasActive: true,
         totalActive: myMoments.length,
-        avatar: viewer?.profilePicture || null,
+        avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
         addLabel: formatTimeAgo(latestStory.createdAt, true),
         latestTimeAgo: formatTimeAgo(latestStory.createdAt, true),
         badge: reactionSummary.badgeText
@@ -147,18 +164,50 @@ export class QuickMomentService {
               count: reactionSummary.total,
             }
           : null,
-        stories: myMoments.map((m) => ({
-          id: m.id,
-          type: m.type,
-          thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
-          text: m.text,
-          createdAt: m.createdAt,
-        })),
+        stories: myMoments.map((m) => {
+          const cleanKey = m.mediaUrl ? extractS3Key(m.mediaUrl) : null;
+          return {
+            id: m.id,
+            type: m.type,
+            imageKey: cleanKey,
+            imageUrl: cleanKey ? formatMediaUrl(cleanKey) : (m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null),
+            thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
+            mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+            text: m.text,
+            createdAt: m.createdAt,
+          };
+        }),
       };
     }
 
+    // Exclude blocked and reported users from tray
+    const [blocks, reports] = await Promise.all([
+      UserBlock.findAll({
+        where: {
+          [Op.or]: [{ userId: viewerUserId }, { blockedUserId: viewerUserId }],
+        },
+      }),
+      UserReport.findAll({
+        where: {
+          reporterId: viewerUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+      }),
+    ]);
+
+    const excludedUserIds = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === viewerUserId) excludedUserIds.add(b.blockedUserId);
+      if (b.blockedUserId === viewerUserId) excludedUserIds.add(b.userId);
+    }
+    for (const r of reports) {
+      if (r.targetUserId) excludedUserIds.add(r.targetUserId);
+    }
+
     // 2. Group other users' stories
-    const otherMoments = activeMoments.filter((m) => m.userId !== viewerUserId);
+    const otherMoments = activeMoments.filter(
+      (m) => m.userId !== viewerUserId && !excludedUserIds.has(m.userId)
+    );
     const userGroups = new Map<string, typeof otherMoments>();
 
     for (const moment of otherMoments) {
@@ -184,9 +233,13 @@ export class QuickMomentService {
       const allReactions = moments.flatMap((m) => m.reactions || []);
       const reactionSummary = buildReactionBadge(allReactions);
 
+      const latestCleanKey = latest.mediaUrl ? extractS3Key(latest.mediaUrl) : null;
       let preview: any = {
         type: latest.type,
-        thumbnailUrl: latest.thumbnailUrl || latest.mediaUrl,
+        imageKey: latestCleanKey,
+        imageUrl: latestCleanKey ? formatMediaUrl(latestCleanKey) : (latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null),
+        thumbnailUrl: formatThumbnailUrl(latest.thumbnailUrl || latest.mediaUrl),
+        mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
         text: latest.text ? (latest.text.length > 30 ? `${latest.text.slice(0, 30)}...` : latest.text) : null,
         backgroundColor: latest.backgroundColor,
       };
@@ -194,7 +247,7 @@ export class QuickMomentService {
       otherUsers.push({
         userId: author.id,
         name: author.fullName || author.nickName || 'User',
-        avatar: author.profilePicture,
+        avatar: author.profilePicture ? formatThumbnailUrl(author.profilePicture) : null,
         isVerified: !!author.isFaceVerified,
         hasUnread,
         totalStories: moments.length,
@@ -230,6 +283,7 @@ export class QuickMomentService {
    * reactions summary badge (e.g. "😍🔥 3 · 💬 2 replies"), viewers list, and expansion sheet.
    */
   public async getMyQuickMoments(viewerUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     const moments = await QuickMoment.findAll({
@@ -251,7 +305,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'user',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
             },
           ],
         },
@@ -262,7 +316,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'viewer',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'updatedAt'],
             },
           ],
         },
@@ -271,7 +325,7 @@ export class QuickMomentService {
     });
 
     const viewer = await User.findByPk(viewerUserId, {
-      attributes: ['id', 'fullName', 'nickName', 'profilePicture'],
+      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'updatedAt'],
     });
 
     const authorName = viewer?.fullName || viewer?.nickName || 'You';
@@ -298,8 +352,10 @@ export class QuickMomentService {
         text: m.text,
         backgroundColor: m.backgroundColor || '#2d0b1e',
         textColor: m.textColor || '#ffffff',
-        mediaUrl: m.mediaUrl,
-        thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
+        imageKey: m.mediaUrl ? extractS3Key(m.mediaUrl) : null,
+        imageUrl: m.mediaUrl ? (m.mediaUrl.startsWith('http') ? m.mediaUrl : formatMediaUrl(m.mediaUrl)) : null,
+        mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+        thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         caption: m.caption,
         locationLabel: m.locationLabel,
         createdAt: m.createdAt,
@@ -320,7 +376,7 @@ export class QuickMomentService {
           user: {
             id: r.user?.id,
             name: r.user?.fullName || r.user?.nickName || 'User',
-            avatar: r.user?.profilePicture,
+            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
             city: r.user?.city,
             isVerified: !!r.user?.isFaceVerified,
           },
@@ -328,7 +384,7 @@ export class QuickMomentService {
         viewers: (m.views || []).map((v: any) => ({
           userId: v.viewer?.id,
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-          avatar: v.viewer?.profilePicture,
+          avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
           isVerified: !!v.viewer?.isFaceVerified,
           viewedAt: v.createdAt,
         })),
@@ -339,7 +395,7 @@ export class QuickMomentService {
       author: {
         id: viewerUserId,
         name: authorName,
-        avatar: viewer?.profilePicture || null,
+        avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
       },
       totalStories: slides.length,
       stories: slides,
@@ -353,6 +409,7 @@ export class QuickMomentService {
    * quick reaction emojis list (😍, 🔥, 😂, 😮, 👏, ❤️), viewer's own reaction state, and reply input.
    */
   public async getUserQuickMoments(viewerUserId: string, targetUserId: string) {
+    await ensureQuickMomentTables();
     const now = new Date();
 
     const targetUser = await User.findByPk(targetUserId, {
@@ -361,6 +418,36 @@ export class QuickMomentService {
 
     if (!targetUser) {
       throw new QuickMomentServiceError('User not found', 404, 'USER_NOT_FOUND');
+    }
+
+    if (viewerUserId !== targetUserId) {
+      const isBlocked = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: viewerUserId, blockedUserId: targetUserId },
+            { userId: targetUserId, blockedUserId: viewerUserId },
+          ],
+        },
+      });
+      if (isBlocked) {
+        throw new QuickMomentServiceError('User unavailable due to privacy restrictions', 403, 'USER_BLOCKED');
+      }
+
+      const isReported = await UserReport.findOne({
+        where: {
+          reporterId: viewerUserId,
+          targetUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+      });
+      if (isReported) {
+        return {
+          userId: targetUserId,
+          authorDisplayName: targetUser.fullName?.split(' ')[0] || targetUser.nickName || 'User',
+          totalMoments: 0,
+          slides: [],
+        };
+      }
     }
 
     const moments = await QuickMoment.findAll({
@@ -399,8 +486,10 @@ export class QuickMomentService {
         slideIndex: index,
         totalSlides: moments.length,
         type: m.type,
-        mediaUrl: m.mediaUrl,
-        thumbnailUrl: m.thumbnailUrl || m.mediaUrl,
+        imageKey: m.mediaUrl ? extractS3Key(m.mediaUrl) : null,
+        imageUrl: m.mediaUrl ? (m.mediaUrl.startsWith('http') ? m.mediaUrl : formatMediaUrl(m.mediaUrl)) : null,
+        mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
+        thumbnailUrl: formatThumbnailUrl(m.thumbnailUrl || m.mediaUrl),
         text: m.text,
         backgroundColor: m.backgroundColor,
         textColor: m.textColor,
@@ -423,7 +512,7 @@ export class QuickMomentService {
         id: targetUser.id,
         name: authorDisplayName,
         fullName: targetUser.fullName,
-        avatar: targetUser.profilePicture,
+        avatar: targetUser.profilePicture ? formatThumbnailUrl(targetUser.profilePicture) : null,
         city: targetUser.city,
         isVerified: !!targetUser.isFaceVerified,
       },
@@ -442,12 +531,25 @@ export class QuickMomentService {
     momentId: string,
     options: { page?: number; limit?: number; emoji?: string } = {}
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       attributes: ['id', 'userId', 'caption', 'text', 'type', 'mediaUrl'],
     });
 
     if (!moment) {
       throw new QuickMomentServiceError('Quick moment not found', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const viewer = await User.findByPk(viewerUserId, { attributes: ['id', 'role'] });
+    const isOwner = moment.userId === viewerUserId;
+    const isAuthorized = isOwner || viewer?.role === 'admin';
+
+    if (!isAuthorized) {
+      throw new QuickMomentServiceError(
+        'Only the moment owner can view reaction details',
+        403,
+        'FORBIDDEN'
+      );
     }
 
     const page = Math.max(1, options.page || 1);
@@ -474,7 +576,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'user',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -490,7 +592,7 @@ export class QuickMomentService {
       user: {
         id: r.user?.id,
         name: r.user?.fullName || r.user?.nickName || 'User',
-        avatar: r.user?.profilePicture,
+        avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
         city: r.user?.city,
         isVerified: !!r.user?.isFaceVerified,
       },
@@ -522,6 +624,7 @@ export class QuickMomentService {
     momentId: string,
     emoji: string
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       include: [{ model: User, as: 'author', attributes: ['id', 'fullName'] }],
     });
@@ -547,11 +650,74 @@ export class QuickMomentService {
         await existingReaction.destroy();
         action = 'removed';
         currentEmoji = null;
+
+        // Clean up reaction notification since reaction was removed
+        if (moment.userId !== viewerUserId) {
+          try {
+            await Notification.destroy({
+              where: {
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                entityId: momentId,
+              },
+            });
+          } catch (notifErr: any) {
+            console.warn('[Quick Moment Notif Clean Warning]:', notifErr.message);
+          }
+        }
       } else {
         // Update to new emoji
         existingReaction.emoji = emoji;
         await existingReaction.save();
         action = 'updated';
+
+        // Update existing notification or create if not present without duplicating
+        if (moment.userId !== viewerUserId) {
+          try {
+            const reactor = await User.findByPk(viewerUserId, {
+              attributes: ['id', 'fullName', 'nickName'],
+            });
+            const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
+
+            const existingNotif = await Notification.findOne({
+              where: {
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                entityId: momentId,
+              },
+            });
+
+            if (existingNotif) {
+              existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
+              existingNotif.data = {
+                quickMomentId: momentId,
+                emoji,
+                navigation: { type: 'quick_moment', targetId: momentId },
+              };
+              existingNotif.isRead = false;
+              await existingNotif.save();
+            } else {
+              await Notification.create({
+                recipientId: moment.userId,
+                senderId: viewerUserId,
+                type: 'moment_reaction',
+                title: 'New Quick Moment Reaction',
+                body: `${reactorName} reacted ${emoji} to your quick moment`,
+                entityId: momentId,
+                data: {
+                  quickMomentId: momentId,
+                  emoji,
+                  navigation: { type: 'quick_moment', targetId: momentId },
+                },
+                isRead: false,
+              });
+            }
+          } catch (notifErr: any) {
+            console.warn('[Quick Moment Notif Update Warning]:', notifErr.message);
+          }
+        }
       }
     } else {
       // Add new reaction
@@ -562,7 +728,7 @@ export class QuickMomentService {
       });
       action = 'added';
 
-      // Send in-app notification to story author if not self
+      // Send in-app notification to story author if not self (reuse/upsert to avoid duplicates)
       if (moment.userId !== viewerUserId) {
         try {
           const reactor = await User.findByPk(viewerUserId, {
@@ -570,17 +736,40 @@ export class QuickMomentService {
           });
           const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
 
-          await Notification.create({
-            recipientId: moment.userId,
-            senderId: viewerUserId,
-            type: 'moment_reaction',
-            title: 'New Quick Moment Reaction',
-            body: `${reactorName} reacted ${emoji} to your quick moment`,
-            data: {
-              quickMomentId: momentId,
-              emoji,
+          const existingNotif = await Notification.findOne({
+            where: {
+              recipientId: moment.userId,
+              senderId: viewerUserId,
+              type: 'moment_reaction',
+              entityId: momentId,
             },
           });
+
+          if (existingNotif) {
+            existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
+            existingNotif.data = {
+              quickMomentId: momentId,
+              emoji,
+              navigation: { type: 'quick_moment', targetId: momentId },
+            };
+            existingNotif.isRead = false;
+            await existingNotif.save();
+          } else {
+            await Notification.create({
+              recipientId: moment.userId,
+              senderId: viewerUserId,
+              type: 'moment_reaction',
+              title: 'New Quick Moment Reaction',
+              body: `${reactorName} reacted ${emoji} to your quick moment`,
+              entityId: momentId,
+              data: {
+                quickMomentId: momentId,
+                emoji,
+                navigation: { type: 'quick_moment', targetId: momentId },
+              },
+              isRead: false,
+            });
+          }
         } catch (notifErr: any) {
           console.warn('[Quick Moment Notif Warning]:', notifErr.message);
         }
@@ -614,6 +803,7 @@ export class QuickMomentService {
     momentId: string,
     message: string
   ) {
+    await ensureQuickMomentTables();
     const moment = await QuickMoment.findByPk(momentId, {
       include: [{ model: User, as: 'author', attributes: ['id', 'fullName', 'nickName'] }],
     });
@@ -705,7 +895,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'viewer',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -714,7 +904,7 @@ export class QuickMomentService {
     const viewers = views.map((v: any) => ({
       userId: v.viewer?.id,
       name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
-      avatar: v.viewer?.profilePicture,
+      avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
       isVerified: !!v.viewer?.isFaceVerified,
       city: v.viewer?.city,
       viewedAt: v.createdAt,
@@ -726,6 +916,70 @@ export class QuickMomentService {
       totalViews: viewers.length,
       viewers,
     };
+  }
+
+  /**
+   * Batch determines whether the authenticated viewer has viewed each target user's active quick moments (stories).
+   * - If candidate has active quick moment(s) and ALL have been viewed by viewer, returns true (gray story outline).
+   * - If candidate has active quick moment(s) and at least one is unviewed, returns false (active story outline).
+   * - If candidate has NO active quick moments (missing or expired), returns false.
+   * - Uses a single batch query with left-join on views to avoid N+1 queries.
+   */
+  public async getViewedStatusByUserIds(
+    viewerUserId: string,
+    targetUserIds: string[]
+  ): Promise<Map<string, boolean>> {
+    const statusMap = new Map<string, boolean>();
+    if (!targetUserIds || targetUserIds.length === 0) {
+      return statusMap;
+    }
+
+    // Default false for every requested candidate
+    for (const id of targetUserIds) {
+      statusMap.set(id, false);
+    }
+
+    await ensureQuickMomentTables();
+
+    const now = new Date();
+
+    const activeMoments = await QuickMoment.findAll({
+      where: {
+        userId: { [Op.in]: targetUserIds },
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'userId'],
+      include: [
+        {
+          model: QuickMomentView,
+          as: 'views',
+          attributes: ['userId'],
+          where: { userId: viewerUserId },
+          required: false,
+        },
+      ],
+    });
+
+    const userMomentsMap = new Map<string, Array<{ id: string; isViewed: boolean }>>();
+    for (const id of targetUserIds) {
+      userMomentsMap.set(id, []);
+    }
+
+    for (const moment of activeMoments) {
+      const isViewed = Array.isArray(moment.views) && moment.views.length > 0;
+      userMomentsMap.get(moment.userId)?.push({ id: moment.id, isViewed });
+    }
+
+    for (const [userId, moments] of userMomentsMap.entries()) {
+      if (moments.length > 0 && moments.every((m) => m.isViewed)) {
+        statusMap.set(userId, true);
+      } else {
+        statusMap.set(userId, false);
+      }
+    }
+
+    return statusMap;
   }
 
   /**
@@ -741,12 +995,15 @@ export class QuickMomentService {
       caption?: string;
       locationLabel?: string;
       mediaUrl?: string;
+      imageKey?: string;
+      key?: string;
+      imageUrl?: string;
     },
     file?: Express.Multer.File
   ) {
-    let type = data.type || (file || data.mediaUrl ? 'image' : 'text');
-    let mediaUrl = data.mediaUrl || null;
-    let thumbnailUrl = null;
+    const rawImageKey = data.imageKey || data.key || data.imageUrl || data.mediaUrl;
+    let type = data.type || (file || rawImageKey ? 'image' : 'text');
+    let cleanKey: string | null = null;
 
     if (file) {
       type = 'image';
@@ -756,11 +1013,41 @@ export class QuickMomentService {
         file.mimetype,
         'quick_moments'
       );
-      mediaUrl = s3Service.getPublicUrl(s3Key);
-      thumbnailUrl = mediaUrl;
-    } else if (mediaUrl) {
-      thumbnailUrl = s3Service.getPublicUrl(mediaUrl);
-      mediaUrl = thumbnailUrl;
+      cleanKey = extractS3Key(s3Key);
+    } else if (rawImageKey) {
+      type = 'image';
+      cleanKey = extractS3Key(rawImageKey);
+
+      // Verify user ownership
+      const isAuthorized =
+        cleanKey.startsWith(`${userId}/`) ||
+        cleanKey.includes(`/${userId}/`) ||
+        cleanKey.startsWith('http://') ||
+        cleanKey.startsWith('https://');
+
+      if (!isAuthorized) {
+        throw new QuickMomentServiceError('Unauthorized image key', 403, 'UNAUTHORIZED_IMAGE_KEY');
+      }
+
+      // Verify object exists in storage and size limit
+      if (!cleanKey.startsWith('http://') && !cleanKey.startsWith('https://')) {
+        const objectCheck = await s3Service.checkObjectExists(cleanKey);
+        if (!objectCheck.exists) {
+          throw new QuickMomentServiceError(
+            'Uploaded image does not exist in storage',
+            400,
+            'IMAGE_NOT_FOUND'
+          );
+        }
+        if (objectCheck.contentLength && objectCheck.contentLength > 5 * 1024 * 1024) {
+          throw new QuickMomentServiceError(
+            'Image file size exceeds 5MB limit',
+            400,
+            'IMAGE_SIZE_EXCEEDED'
+          );
+        }
+        s3Service.ensureThumbnail(cleanKey);
+      }
     }
 
     if (type === 'text' && !data.text) {
@@ -771,31 +1058,71 @@ export class QuickMomentService {
       );
     }
 
+    await ensureQuickMomentTables();
+
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    const moment = await QuickMoment.create({
-      userId,
-      type,
-      mediaUrl,
-      thumbnailUrl,
-      text: data.text || null,
-      backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
-      textColor: data.textColor || '#ffffff',
-      caption: data.caption || null,
-      locationLabel: data.locationLabel || null,
-      viewsCount: 0,
-      repliesCount: 0,
-      status: 'active',
-      publishedAt: new Date(),
-      expiresAt,
-    });
+    let moment: QuickMoment;
+    try {
+      moment = await QuickMoment.create({
+        userId,
+        type,
+        mediaUrl: cleanKey,
+        thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
+        text: data.text || null,
+        backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
+        textColor: data.textColor || '#ffffff',
+        caption: data.caption || null,
+        locationLabel: data.locationLabel || null,
+        viewsCount: 0,
+        repliesCount: 0,
+        status: 'active',
+        publishedAt: new Date(),
+        expiresAt,
+      });
+    } catch (createErr: any) {
+      if (
+        createErr.original?.code === '42P01' ||
+        createErr.message?.includes('relation "quick_moments" does not exist') ||
+        createErr.message?.includes('quick_moments')
+      ) {
+        await QuickMoment.sync();
+        await QuickMomentReaction.sync();
+        await QuickMomentView.sync();
+        quickMomentTablesReady = true;
+
+        moment = await QuickMoment.create({
+          userId,
+          type,
+          mediaUrl: cleanKey,
+          thumbnailUrl: cleanKey ? formatThumbnailUrl(cleanKey) : null,
+          text: data.text || null,
+          backgroundColor: data.backgroundColor || (type === 'text' ? '#2d0b1e' : null),
+          textColor: data.textColor || '#ffffff',
+          caption: data.caption || null,
+          locationLabel: data.locationLabel || null,
+          viewsCount: 0,
+          repliesCount: 0,
+          status: 'active',
+          publishedAt: new Date(),
+          expiresAt,
+        });
+      } else {
+        throw createErr;
+      }
+    }
+
+    const finalImageUrl = cleanKey ? formatMediaUrl(cleanKey) : null;
+    const finalThumbnailUrl = cleanKey ? formatThumbnailUrl(cleanKey) : null;
 
     return {
       id: moment.id,
       userId: moment.userId,
       type: moment.type,
-      mediaUrl: moment.mediaUrl,
-      thumbnailUrl: moment.thumbnailUrl,
+      imageKey: cleanKey || null,
+      imageUrl: finalImageUrl,
+      thumbnailUrl: finalThumbnailUrl,
+      mediaUrl: finalImageUrl,
       text: moment.text,
       backgroundColor: moment.backgroundColor,
       textColor: moment.textColor,

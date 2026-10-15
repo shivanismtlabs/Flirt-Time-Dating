@@ -380,7 +380,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"firstName\": \"Mike\",\n  \"lastName\": \"Hussey\",\n  \"nickName\": \"Mikey\",\n  \"dateOfBirth\": \"1996-10-09\",\n  \"gender\": \"male\",\n  \"about\": \"Creative mind with a love for Design. Looking for someone who appreciates deep thinking and empathy:)\"\n}"
+              "raw": "{\n  \"firstName\": \"Mike\",\n  \"lastName\": \"Hussey\",\n  \"nickName\": \"Mikey\",\n  \"dateOfBirth\": \"1996-10-09\",\n  \"gender\": \"male\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"about\": \"Creative mind with a love for Design. Looking for someone who appreciates deep thinking and empathy:)\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",

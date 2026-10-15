@@ -1,5 +1,15 @@
 import { User } from '../models/user.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
+import { calculateAge } from './discovery.service';
+
+export interface LocationDTO {
+  city: string | null;
+  state: string | null;
+  name?: string | null;
+  label?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+}
 
 export interface MoreAboutMeItem {
   key: string;
@@ -28,10 +38,27 @@ export interface MoreAboutMeDTO {
 
 export interface UpdateProfileInput {
   fullName?: string;
+  firstName?: string | null;
+  lastName?: string | null;
   nickName?: string;
   dateOfBirth?: string;
   gender?: string;
   about?: string | null;
+  location?:
+    | string
+    | {
+        city?: string | null;
+        state?: string | null;
+        name?: string | null;
+        label?: string | null;
+        address?: string | null;
+        latitude?: number | null;
+        longitude?: number | null;
+      }
+    | null;
+  city?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
   drinking?: string | null;
   education?: string | null;
   height?: string | null;
@@ -169,6 +196,24 @@ export const updateUserProfile = async (
   // 3. Update profile fields
   if (data.fullName !== undefined) {
     user.fullName = data.fullName.trim();
+    if (!data.firstName && user.fullName) {
+      user.firstName = user.fullName.split(' ')[0] || null;
+    }
+    if (!data.lastName && user.fullName && user.fullName.includes(' ')) {
+      user.lastName = user.fullName.split(' ').slice(1).join(' ') || null;
+    }
+  }
+  if (data.firstName !== undefined) {
+    user.firstName = data.firstName ? data.firstName.trim() : null;
+    if (!data.fullName && user.firstName) {
+      user.fullName = user.lastName ? `${user.firstName} ${user.lastName}` : user.firstName;
+    }
+  }
+  if (data.lastName !== undefined) {
+    user.lastName = data.lastName ? data.lastName.trim() : null;
+    if (!data.fullName && user.firstName && user.lastName) {
+      user.fullName = `${user.firstName} ${user.lastName}`;
+    }
   }
   if (data.nickName !== undefined) {
     user.nickName = data.nickName.trim();
@@ -176,6 +221,44 @@ export const updateUserProfile = async (
 
   if (data.dateOfBirth && !user.dateOfBirth) {
     user.dateOfBirth = data.dateOfBirth;
+  }
+
+  // Handle Location / City / Coordinates
+  if (data.location !== undefined) {
+    if (typeof data.location === 'string') {
+      user.city = data.location.trim() || null;
+    } else if (data.location && typeof data.location === 'object') {
+      const loc = data.location;
+      if (loc.name && loc.name.trim()) {
+        user.city = loc.name.trim();
+      } else if (loc.city && loc.city.trim()) {
+        user.city = loc.state && loc.state.trim()
+          ? `${loc.city.trim()}, ${loc.state.trim()}`
+          : loc.city.trim();
+      } else if (loc.label && loc.label.trim()) {
+        user.city = loc.label.trim();
+      } else if (loc.address && loc.address.trim()) {
+        user.city = loc.address.trim();
+      }
+      if (loc.latitude !== undefined) {
+        user.latitude = loc.latitude;
+      }
+      if (loc.longitude !== undefined) {
+        user.longitude = loc.longitude;
+      }
+    } else if (data.location === null) {
+      user.city = null;
+    }
+  }
+
+  if (data.city !== undefined) {
+    user.city = data.city ? data.city.trim() : null;
+  }
+  if (data.latitude !== undefined) {
+    user.latitude = data.latitude;
+  }
+  if (data.longitude !== undefined) {
+    user.longitude = data.longitude;
   }
 
   if (normalizedIncomingGender && !user.gender) {
@@ -252,10 +335,17 @@ export const updateUserProfile = async (
     email: user.email,
     phone: user.phone,
     fullName: user.fullName,
+    firstName: user.firstName,
+    lastName: user.lastName,
     nickName: user.nickName,
     dateOfBirth: user.dateOfBirth,
+    age: calculateAge(user.dateOfBirth),
     gender: user.gender,
     about: user.about,
+    location: parseLocation(user.city, user.latitude, user.longitude),
+    city: user.city || null,
+    latitude: user.latitude ?? null,
+    longitude: user.longitude ?? null,
     drinking: user.drinking,
     education: user.education,
     height: user.height,
@@ -717,21 +807,31 @@ export const calculateProfileCompletion = (
  * Parses city string (e.g. "Indore, Madhya Pradesh" or "Indore") into structured city & state
  */
 export const parseLocation = (
-  cityString?: string | null
-): { city: string | null; state: string | null } => {
+  cityString?: string | null,
+  latitude?: number | null,
+  longitude?: number | null
+): LocationDTO => {
   if (!cityString || !cityString.trim()) {
-    return { city: null, state: null };
-  }
-  const parts = cityString.split(',').map((p) => p.trim());
-  if (parts.length >= 2) {
     return {
-      city: parts[0] || null,
-      state: parts.slice(1).join(', ') || null,
+      city: null,
+      state: null,
+      name: null,
+      label: null,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
     };
   }
+  const trimmed = cityString.trim();
+  const parts = trimmed.split(',').map((p) => p.trim());
+  const city = parts[0] || null;
+  const state = parts.length >= 2 ? parts.slice(1).join(', ') : null;
   return {
-    city: parts[0] || null,
-    state: null,
+    city,
+    state,
+    name: trimmed,
+    label: trimmed,
+    latitude: latitude ?? null,
+    longitude: longitude ?? null,
   };
 };
 

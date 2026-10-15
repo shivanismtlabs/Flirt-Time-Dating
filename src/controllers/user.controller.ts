@@ -134,7 +134,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       user.username;
 
     const age = calculateAge(user.dateOfBirth);
-    const location = parseLocation(user.city);
+    const location = parseLocation(user.city, user.latitude, user.longitude);
     const completionPercentage = calculateProfileCompletion(
       user,
       (rawUser.interests || []).length,
@@ -250,6 +250,9 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       gender: user.gender || null,
       bio: user.about || null,
       location,
+      city: user.city || null,
+      latitude: user.latitude ?? null,
+      longitude: user.longitude ?? null,
       profilePhoto: primaryProfilePhoto,
       profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,

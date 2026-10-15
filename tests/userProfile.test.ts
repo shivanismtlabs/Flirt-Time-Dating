@@ -68,6 +68,8 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.gender).toBe('male');
       expect(res.body.data.about).toBe(payload.about);
       expect(res.body.data.isProfileComplete).toBe(true);
+      expect(res.body.data.location).toBeDefined();
+      expect(res.body.data.age).toBeDefined();
       expect(res.body.data.password).toBeUndefined();
 
       // Verify in DB
@@ -77,6 +79,73 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedDbUser?.dateOfBirth).toBe('1996-10-09');
       expect(updatedDbUser?.gender).toBe('male');
       expect(updatedDbUser?.isProfileComplete).toBe(true);
+    });
+
+    it('should accept location string along with dateOfBirth and return structured location and age', async () => {
+      const payload = {
+        dateOfBirth: '1996-10-09',
+        location: 'Indore, Madhya Pradesh',
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.dateOfBirth).toBe('1996-10-09');
+      expect(res.body.data.age).toBeDefined();
+      expect(typeof res.body.data.age).toBe('number');
+      expect(res.body.data.location).toEqual({
+        city: 'Indore',
+        state: 'Madhya Pradesh',
+        name: 'Indore, Madhya Pradesh',
+        label: 'Indore, Madhya Pradesh',
+        latitude: null,
+        longitude: null,
+      });
+      expect(res.body.data.city).toBe('Indore, Madhya Pradesh');
+
+      // Verify in DB
+      const userInDb = await User.findByPk(testUser.id);
+      expect(userInDb?.city).toBe('Indore, Madhya Pradesh');
+    });
+
+    it('should accept location object with coordinates and return structured location', async () => {
+      const payload = {
+        location: {
+          city: 'Mumbai',
+          state: 'Maharashtra',
+          latitude: 19.076,
+          longitude: 72.8777,
+        },
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.location.city).toBe('Mumbai');
+      expect(res.body.data.location.state).toBe('Maharashtra');
+      expect(res.body.data.location.latitude).toBe(19.076);
+      expect(res.body.data.location.longitude).toBe(72.8777);
+      expect(res.body.data.latitude).toBe(19.076);
+      expect(res.body.data.longitude).toBe(72.8777);
+
+      // Verify in GET /api/v1/users/profile
+      const getRes = await request(app)
+        .get('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.data.location.city).toBe('Mumbai');
+      expect(getRes.body.data.location.state).toBe('Maharashtra');
+      expect(getRes.body.data.location.latitude).toBe(19.076);
+      expect(getRes.body.data.location.longitude).toBe(72.8777);
     });
   });
 

@@ -50,6 +50,22 @@ export const dateOfBirthSchema = z
     }
   });
 
+export const locationInputSchema = z
+  .union([
+    z.string().trim().max(100),
+    z.object({
+      city: z.string().trim().max(100).optional().nullable(),
+      state: z.string().trim().max(100).optional().nullable(),
+      name: z.string().trim().max(100).optional().nullable(),
+      label: z.string().trim().max(100).optional().nullable(),
+      address: z.string().trim().max(255).optional().nullable(),
+      latitude: z.number().optional().nullable(),
+      longitude: z.number().optional().nullable(),
+    }),
+  ])
+  .optional()
+  .nullable();
+
 export const updateProfileSchema = z.object({
   body: z.object({
     fullName: z
@@ -58,7 +74,19 @@ export const updateProfileSchema = z.object({
       .min(1, 'fullName cannot be empty')
       .max(100, 'fullName must not exceed 100 characters')
       .optional(),
-
+    firstName: z
+      .string()
+      .trim()
+      .min(1, 'firstName cannot be empty')
+      .max(50, 'firstName must not exceed 50 characters')
+      .optional()
+      .nullable(),
+    lastName: z
+      .string()
+      .trim()
+      .max(50, 'lastName must not exceed 50 characters')
+      .optional()
+      .nullable(),
     nickName: z
       .string()
       .trim()
@@ -66,6 +94,10 @@ export const updateProfileSchema = z.object({
       .max(50, 'nickName must not exceed 50 characters')
       .optional(),
     dateOfBirth: dateOfBirthSchema.optional(),
+    location: locationInputSchema,
+    city: z.string().trim().max(100).optional().nullable(),
+    latitude: z.number().optional().nullable(),
+    longitude: z.number().optional().nullable(),
     gender: z
       .string()
       .trim()

@@ -14,6 +14,7 @@ import { UserReport } from './userReport.model';
 import { Moment } from './moment.model';
 import { MomentMedia } from './momentMedia.model';
 import { MomentReaction } from './momentReaction.model';
+import { MomentCommentLike } from './momentCommentLike.model';
 import { Conversation } from './conversation.model';
 import { ChatMessage } from './chatMessage.model';
 import { ConnectionRequest } from './connectionRequest.model';
@@ -372,6 +373,29 @@ ChatMessage.belongsTo(User, {
   as: 'recipient',
 });
 
+// ChatMessage (Comment) <-> MomentCommentLike associations
+ChatMessage.hasMany(MomentCommentLike, {
+  foreignKey: 'commentId',
+  as: 'commentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(ChatMessage, {
+  foreignKey: 'commentId',
+  as: 'comment',
+});
+
+User.hasMany(MomentCommentLike, {
+  foreignKey: 'userId',
+  as: 'momentCommentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 // User <-> ConnectionRequest
 User.hasMany(ConnectionRequest, {
   foreignKey: 'requesterId',
@@ -617,6 +641,7 @@ export {
   UserSubscription,
   SubscriptionEventLog,
   UserDiscoveryPreference,
+  MomentCommentLike,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -975,6 +1000,7 @@ export const initDb = async (force = false): Promise<void> => {
           await QuickMomentReaction.sync();
           await QuickMomentView.sync();
           await MomentGift.sync();
+          await MomentCommentLike.sync();
         } catch (_qmSyncErr: any) {
           console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
         }
@@ -1037,6 +1063,7 @@ export const initDb = async (force = false): Promise<void> => {
     await ensureSubscriptionTables();
     await ensureCoinPurchaseTables();
     await UserDiscoveryPreference.sync();
+    await MomentCommentLike.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();

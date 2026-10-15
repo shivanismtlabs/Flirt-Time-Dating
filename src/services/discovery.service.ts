@@ -249,7 +249,6 @@ export class DiscoveryService {
         where: {
           reporterId: currentUserId,
           status: { [Op.ne]: 'dismissed' },
-          momentId: null,
         } as any,
         attributes: ['targetUserId'],
       }),

@@ -19,6 +19,7 @@ import {
 } from './discovery.service';
 import { momentService } from './moment.service';
 import { quickMomentService } from './quickMoment.service';
+import { parseLocation, LocationDTO } from './user.service';
 
 export const ONLINE_FRESHNESS_MINUTES = 15;
 
@@ -50,6 +51,11 @@ export interface UserSearchCardDTO {
   isVerified: boolean;
   isOnline: boolean;
   city: string;
+  state?: string | null;
+  country?: string | null;
+  county?: string | null;
+  location?: LocationDTO;
+  fullLocation?: string | null;
   distanceKm: number | null;
   distanceText: string | null;
   about: string | null;
@@ -379,6 +385,7 @@ export class UserSearchService {
 
       const momentCount = momentCountsMap.get(user.id) || 0;
       const hasViewedQuickMoment = quickMomentViewedMap.get(user.id) || false;
+      const userLoc = parseLocation(user.city, user.latitude, user.longitude);
 
       return {
         id: user.id,
@@ -392,6 +399,11 @@ export class UserSearchService {
         isVerified: !!user.isFaceVerified,
         isOnline,
         city: user.city || 'Mumbai',
+        state: userLoc.state || null,
+        country: userLoc.country || null,
+        county: userLoc.county || null,
+        location: userLoc,
+        fullLocation: userLoc.fullLocation || user.city || 'Mumbai',
         distanceKm,
         distanceText: formatDistanceText(distanceKm),
         about: user.about || null,

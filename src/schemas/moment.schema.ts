@@ -257,4 +257,72 @@ export const deleteMomentCommentSchema = z.object({
   }),
 });
 
+export const likeMomentCommentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  body: z
+    .object({
+      like: z.boolean().optional(),
+      isLiked: z.boolean().optional(),
+      action: z.enum(['like', 'unlike', 'toggle']).optional(),
+      type: z.enum(['like', 'unlike', 'toggle']).optional(),
+      reaction: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const getMomentCommentLikesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
+});
+
+export const replyMomentCommentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  body: z
+    .object({
+      reply: z.string().trim().min(1).max(1000).optional(),
+      comment: z.string().trim().min(1).max(1000).optional(),
+      message: z.string().trim().min(1).max(1000).optional(),
+      text: z.string().trim().min(1).max(1000).optional(),
+      parentReplyId: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
+    })
+    .refine((data) => Boolean(data.reply || data.comment || data.message || data.text), {
+      message: 'Reply message cannot be empty',
+    }),
+});
+
+export const getMomentCommentRepliesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
+});
+
+export const deleteMomentCommentReplySchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format'),
+    replyId: z.string().uuid('Invalid reply ID format'),
+  }),
+});
+
 

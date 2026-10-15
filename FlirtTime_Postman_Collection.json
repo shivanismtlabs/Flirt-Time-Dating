@@ -787,7 +787,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Meera Patel\",\n  \"nickName\": \"Meera\",\n  \"dateOfBirth\": \"1998-05-15\",\n  \"gender\": \"female\",\n  \"about\": \"Travel enthusiast and food lover looking for genuine vibes:)\"\n}"
+              "raw": "{\n  \"fullName\": \"Madsudan Patel\",\n  \"username\": \"madupatel\",\n  \"dateOfBirth\": \"2007-06-07\",\n  \"gender\": \"male\",\n  \"about\": \"Def a. SCD kasndklat and you will never get a chance for this one day you are not going anywhere with your life in it you will be a legend and you are\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"latitude\": 19.076,\n  \"longitude\": 72.8777\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",

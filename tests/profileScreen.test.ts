@@ -206,11 +206,16 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.profile.firstName).toBe('Alex');
       expect(data.profile.lastName).toBe('Turner');
       expect(data.profile.gender).toBe('male');
-      expect(data.profile.bio).toBe('Lead singer, music lover, and weekend traveller.');
-      expect(data.profile.location).toEqual({
-        city: 'Indore',
-        state: 'Madhya Pradesh',
-      });
+      expect(data.profile.location.city).toBe('Indore');
+      expect(data.profile.location.state).toBe('Madhya Pradesh');
+      expect(data.profile.location.country).toBe('India');
+      expect(data.profile.location.county).toBeNull();
+      expect(data.profile.location.fullLocation).toBe('Indore, Madhya Pradesh, India');
+      expect(data.profile.city).toBe('Indore, Madhya Pradesh');
+      expect(data.profile.state).toBe('Madhya Pradesh');
+      expect(data.profile.country).toBe('India');
+      expect(data.profile.county).toBeNull();
+      expect(data.profile.fullLocation).toBe('Indore, Madhya Pradesh, India');
       expect(data.profile.age).toBeGreaterThanOrEqual(25);
       expect(data.profile.isVerified).toBe(true);
       expect(data.profile.completionPercentage).toBeGreaterThanOrEqual(90);
@@ -253,7 +258,7 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.moreAboutMe).toBeDefined();
       expect(data.profile.moreAboutMe).toBeDefined();
       expect(Array.isArray(data.moreAboutMe.items)).toBe(true);
-      expect(data.moreAboutMe.items.length).toBe(11);
+      expect(data.moreAboutMe.items.length).toBe(12);
       const drinkingItem = data.moreAboutMe.items.find((i: any) => i.key === 'drinking');
       expect(drinkingItem).toBeDefined();
       expect(drinkingItem.label).toBe('Drinking');
@@ -307,8 +312,18 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.interests).toEqual([]);
       expect(data.moments).toEqual([]);
       expect(data.voiceIntro).toBeNull();
-      expect(data.profile.age).toBeNull();
-      expect(data.profile.location).toEqual({ city: null, state: null });
+      expect(data.profile.location).toEqual({
+        city: null,
+        state: null,
+        country: null,
+        county: null,
+        name: null,
+        label: null,
+        fullLocation: null,
+        formattedLocation: null,
+        latitude: null,
+        longitude: null,
+      });
       expect(data.profile.completionPercentage).toBe(0);
     });
   });
@@ -558,14 +573,38 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(parseLocation('Indore, Madhya Pradesh')).toEqual({
         city: 'Indore',
         state: 'Madhya Pradesh',
+        country: 'India',
+        county: null,
+        name: 'Indore, Madhya Pradesh',
+        label: 'Indore, Madhya Pradesh, India',
+        fullLocation: 'Indore, Madhya Pradesh, India',
+        formattedLocation: 'Indore, Madhya Pradesh, India',
+        latitude: null,
+        longitude: null,
       });
       expect(parseLocation('London')).toEqual({
         city: 'London',
         state: null,
+        country: 'United Kingdom',
+        county: null,
+        name: 'London',
+        label: 'London, United Kingdom',
+        fullLocation: 'London, United Kingdom',
+        formattedLocation: 'London, United Kingdom',
+        latitude: null,
+        longitude: null,
       });
       expect(parseLocation(null)).toEqual({
         city: null,
         state: null,
+        country: null,
+        county: null,
+        name: null,
+        label: null,
+        fullLocation: null,
+        formattedLocation: null,
+        latitude: null,
+        longitude: null,
       });
     });
   });

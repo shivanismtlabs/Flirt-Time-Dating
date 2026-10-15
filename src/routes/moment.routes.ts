@@ -17,6 +17,12 @@ import {
   getMomentGiftsCatalogHandler,
   sendMomentGiftHandler,
   getMomentGiftsReceivedHandler,
+  likeMomentCommentHandler,
+  unlikeMomentCommentHandler,
+  getMomentCommentLikesHandler,
+  replyMomentCommentHandler,
+  getMomentCommentRepliesHandler,
+  deleteMomentCommentReplyHandler,
 } from '../controllers/moment.controller';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadMomentImages } from '../middlewares/upload.middleware';
@@ -38,6 +44,11 @@ import {
   sendMomentGiftSchema,
   getMomentGiftsCatalogSchema,
   getMomentGiftsReceivedSchema,
+  likeMomentCommentSchema,
+  getMomentCommentLikesSchema,
+  replyMomentCommentSchema,
+  getMomentCommentRepliesSchema,
+  deleteMomentCommentReplySchema,
 } from '../schemas/moment.schema';
 
 const router = Router();
@@ -185,6 +196,86 @@ router.delete(
   '/comments/:commentId',
   validate(deleteMomentCommentSchema),
   deleteMomentCommentHandler
+);
+
+// Comment Likes & Unlikes
+router.post(
+  '/:momentId/comments/:commentId/like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.post(
+  '/:momentId/comments/:commentId/toggle-like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.post(
+  '/comments/:commentId/like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.post(
+  '/comments/:commentId/toggle-like',
+  validate(likeMomentCommentSchema),
+  likeMomentCommentHandler
+);
+
+router.delete(
+  '/:momentId/comments/:commentId/like',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.delete(
+  '/comments/:commentId/like',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.post(
+  '/:momentId/comments/:commentId/unlike',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.post(
+  '/comments/:commentId/unlike',
+  validate(likeMomentCommentSchema),
+  unlikeMomentCommentHandler
+);
+
+router.get(
+  '/:momentId/comments/:commentId/likes',
+  validate(getMomentCommentLikesSchema),
+  getMomentCommentLikesHandler
+);
+
+router.get(
+  '/comments/:commentId/likes',
+  validate(getMomentCommentLikesSchema),
+  getMomentCommentLikesHandler
+);
+
+// Canonical Comment Replies
+router.post(
+  '/:momentId/comments/:commentId/replies',
+  validate(replyMomentCommentSchema),
+  replyMomentCommentHandler
+);
+
+router.get(
+  '/:momentId/comments/:commentId/replies',
+  validate(getMomentCommentRepliesSchema),
+  getMomentCommentRepliesHandler
+);
+
+router.delete(
+  '/:momentId/comments/:commentId/replies/:replyId',
+  validate(deleteMomentCommentReplySchema),
+  deleteMomentCommentReplyHandler
 );
 
 // 6. Gifts on Moment (Send Gift & Gifts Catalog)

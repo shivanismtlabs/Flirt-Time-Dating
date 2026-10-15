@@ -431,6 +431,228 @@ export const deleteMomentCommentHandler = async (
 };
 
 /**
+ * Controller to like or toggle like on a Moment Comment
+ * POST /api/v1/moments/:momentId/comments/:commentId/like (or /toggle-like)
+ */
+export const likeMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = req.params.commentId as string;
+    const momentId = req.params.momentId as string | undefined;
+
+    let action: 'like' | 'unlike' | 'toggle' | undefined;
+    if (typeof req.body?.isLiked === 'boolean') {
+      action = req.body.isLiked ? 'like' : 'unlike';
+    } else if (typeof req.body?.like === 'boolean') {
+      action = req.body.like ? 'like' : 'unlike';
+    } else if (req.body?.action) {
+      action = req.body.action;
+    } else if (req.body?.type) {
+      action = req.body.type;
+    }
+
+    const reaction = req.body?.reaction;
+
+    const result = await momentService.toggleLikeMomentComment(
+      userId,
+      commentId,
+      { action, reaction, momentId }
+    );
+
+    const message = result.isLiked
+      ? 'Comment liked successfully'
+      : 'Comment unliked successfully';
+
+    return sendSuccess(res, message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error processing comment like', 500);
+  }
+};
+
+/**
+ * Controller to explicitly unlike a Moment Comment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId/like or POST /api/v1/moments/:momentId/comments/:commentId/unlike
+ */
+export const unlikeMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = req.params.commentId as string;
+    const momentId = req.params.momentId as string | undefined;
+
+    const result = await momentService.toggleLikeMomentComment(
+      userId,
+      commentId,
+      { action: 'unlike', momentId }
+    );
+
+    return sendSuccess(res, 'Comment unliked successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error processing comment unlike', 500);
+  }
+};
+
+/**
+ * Controller to get all users who liked a Moment Comment
+ * GET /api/v1/moments/:momentId/comments/:commentId/likes
+ */
+export const getMomentCommentLikesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = req.params.commentId as string;
+    const momentId = req.params.momentId as string | undefined;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentCommentLikes(viewerId, commentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      momentId,
+    });
+
+    return sendSuccess(res, 'Comment likes fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching comment likes', 500);
+  }
+};
+
+/**
+ * Controller to reply to an existing comment on a Moment
+ * POST /api/v1/moments/:momentId/comments/:commentId/replies
+ */
+export const replyMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const senderId = req.user?.id;
+    if (!senderId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const commentId = req.params.commentId as string;
+    const message =
+      req.body?.reply || req.body?.comment || req.body?.message || req.body?.text;
+    const parentReplyId = req.body?.parentReplyId || null;
+
+    const result = await momentService.replyToMomentComment(
+      senderId,
+      momentId,
+      commentId,
+      message,
+      { parentReplyId }
+    );
+
+    return sendSuccess(res, 'Reply posted successfully', result, 201);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error replying to comment', 500);
+  }
+};
+
+/**
+ * Controller to get replies for a specific Comment
+ * GET /api/v1/moments/:momentId/comments/:commentId/replies
+ */
+export const getMomentCommentRepliesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const commentId = req.params.commentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentCommentReplies(
+      viewerId,
+      momentId,
+      commentId,
+      {
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      }
+    );
+
+    return sendSuccess(res, 'Comment replies fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching comment replies', 500);
+  }
+};
+
+/**
+ * Controller to delete a specific reply to a Moment Comment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId/replies/:replyId
+ */
+export const deleteMomentCommentReplyHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const commentId = req.params.commentId as string;
+    const replyId = req.params.replyId as string;
+
+    const result = await momentService.deleteMomentCommentReply(
+      userId,
+      momentId,
+      commentId,
+      replyId
+    );
+
+    return sendSuccess(res, 'Reply deleted successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting reply', 500);
+  }
+};
+
+/**
  * Controller to get all users who liked / reacted to a Moment
  * GET /api/v1/moments/:momentId/likes or GET /api/v1/moments/:momentId/reactions
  */

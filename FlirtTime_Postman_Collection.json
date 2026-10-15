@@ -1001,6 +1001,126 @@
             "description": "Reports target user for policy violations. Supported reasons: fake_profile, harassment, inappropriate_content, spam, scam, underage, other."
           },
           "response": []
+        },
+        {
+          "name": "Get Blocked Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/blocked",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "blocked"
+              ]
+            },
+            "description": "Retrieves all users blocked by the authenticated user, including their fullName, username, profilePicture, reason, and blocked timestamp."
+          },
+          "response": []
+        },
+        {
+          "name": "Block User (Body)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"Inappropriate behavior\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/blocked",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "blocked"
+              ]
+            },
+            "description": "Blocks target user using request body targetUserId and returns isBlocked, userId, fullName, and username."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Reports",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "reports"
+              ]
+            },
+            "description": "Retrieves moderation reports filed by the authenticated user (or all reports if admin), including target user fullName and username."
+          },
+          "response": []
+        },
+        {
+          "name": "Report User (Body)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetUserId\": \"<TARGET_USER_ID>\",\n  \"reason\": \"fake_profile\",\n  \"description\": \"This profile appears to be using someone else's photos.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "reports"
+              ]
+            },
+            "description": "Reports target user using request body targetUserId and returns reportId, status, fullName, and username."
+          },
+          "response": []
         }
       ]
     },

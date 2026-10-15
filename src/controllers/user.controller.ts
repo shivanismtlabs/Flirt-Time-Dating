@@ -175,6 +175,119 @@ export const reportUserHandler = async (req: AuthenticatedRequest, res: Response
   }
 };
 
+/**
+ * Controller to retrieve list of blocked users
+ * GET /api/v1/users/blocked (and /api/users/blocked)
+ */
+export const getBlockedUsersHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const blockedUsers = await moderationService.getBlockedUsers(userId);
+
+    return sendSuccess(res, 'Blocked users retrieved successfully', {
+      blockedUsers,
+      total: blockedUsers.length,
+    });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error fetching blocked users', 500);
+  }
+};
+
+/**
+ * Controller to retrieve list of reports
+ * GET /api/v1/users/reports (and /api/users/reports)
+ */
+export const getUserReportsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const reports = await moderationService.getUserReports(userId, req.user?.role);
+
+    return sendSuccess(res, 'Reports retrieved successfully', {
+      reports,
+      total: reports.length,
+    });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error fetching reports', 500);
+  }
+};
+
+/**
+ * Controller to block a user via POST /api/v1/users/blocked (with targetUserId in body)
+ */
+export const blockUserBodyHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const blockerId = req.user?.id;
+    if (!blockerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = (req.body?.targetUserId || req.body?.userId) as string;
+    const { reason } = req.body || {};
+
+    const result = await moderationService.blockUser(blockerId, targetUserId, reason);
+
+    return sendSuccess(res, 'User blocked successfully', result);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error processing block request', 500);
+  }
+};
+
+/**
+ * Controller to report a user via POST /api/v1/users/reports (with targetUserId in body)
+ */
+export const reportUserBodyHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const reporterId = req.user?.id;
+    if (!reporterId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = (req.body?.targetUserId || req.body?.userId) as string;
+    const { reason, description } = req.body;
+
+    const result = await moderationService.reportUser(
+      reporterId,
+      targetUserId,
+      reason,
+      description
+    );
+
+    const targetUser = await User.findByPk(targetUserId, {
+      attributes: ['id', 'username', 'fullName', 'firstName', 'lastName'],
+    });
+
+    const targetFullName =
+      targetUser?.fullName ||
+      (targetUser?.firstName && targetUser?.lastName
+        ? `${targetUser.firstName} ${targetUser.lastName}`
+        : targetUser?.firstName || null);
+
+    return sendSuccess(res, 'Report submitted successfully', {
+      reportId: result.reportId,
+      status: result.status,
+      targetUserId,
+      username: targetUser?.username || null,
+      fullName: targetFullName,
+    });
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error submitting report', 500);
+  }
+};
+
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await User.findAll({

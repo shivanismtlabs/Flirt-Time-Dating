@@ -463,4 +463,129 @@ describe('Report User and Block User APIs', () => {
       expect(res.body.data.targetUserId).toBeUndefined();
     });
   });
+
+  describe('16. GET /api/v1/users/blocked Endpoint', () => {
+    it('should return 401 when requesting blocked users without JWT', async () => {
+      const res = await request(app).get('/api/v1/users/blocked');
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should return empty list when no users have been blocked', async () => {
+      const res = await request(app)
+        .get('/api/v1/users/blocked')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.blockedUsers).toEqual([]);
+      expect(res.body.data.total).toBe(0);
+    });
+
+    it('should return blocked users including fullName and username', async () => {
+      // User A blocks User B
+      await request(app)
+        .post(`/api/v1/users/${userB.id}/block`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ reason: 'Unwanted messages' });
+
+      const res = await request(app)
+        .get('/api/v1/users/blocked')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.blockedUsers.length).toBe(1);
+
+      const item = res.body.data.blockedUsers[0];
+      expect(item.userId).toBe(userB.id);
+      expect(item.username).toBe(userB.username);
+      expect(item.fullName).toBe(userB.fullName);
+      expect(item.reason).toBe('Unwanted messages');
+      expect(item.createdAt).toBeDefined();
+    });
+  });
+
+  describe('17. GET /api/v1/users/reports Endpoint', () => {
+    it('should return 401 when requesting reports without JWT', async () => {
+      const res = await request(app).get('/api/v1/users/reports');
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should return empty list when no reports have been filed', async () => {
+      const res = await request(app)
+        .get('/api/v1/users/reports')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.reports).toEqual([]);
+      expect(res.body.data.total).toBe(0);
+    });
+
+    it('should return reports including target user fullName and username', async () => {
+      // User A reports User B
+      await request(app)
+        .post(`/api/v1/users/${userB.id}/report`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ reason: 'spam', description: 'Sending advertising links' });
+
+      const res = await request(app)
+        .get('/api/v1/users/reports')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.reports.length).toBe(1);
+
+      const item = res.body.data.reports[0];
+      expect(item.targetUserId).toBe(userB.id);
+      expect(item.username).toBe(userB.username);
+      expect(item.fullName).toBe(userB.fullName);
+      expect(item.reason).toBe('spam');
+      expect(item.description).toBe('Sending advertising links');
+      expect(item.status).toBe('pending');
+      expect(item.createdAt).toBeDefined();
+    });
+  });
+
+  describe('18. POST /api/v1/users/blocked with Body', () => {
+    it('should block user and return fullName and username in API response', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/blocked')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ targetUserId: userB.id, reason: 'Harassment in chat' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('User blocked successfully');
+      expect(res.body.data.userId).toBe(userB.id);
+      expect(res.body.data.isBlocked).toBe(true);
+      expect(res.body.data.username).toBe(userB.username);
+      expect(res.body.data.fullName).toBe(userB.fullName);
+    });
+  });
+
+  describe('19. POST /api/v1/users/reports with Body', () => {
+    it('should submit report and return fullName and username in API response', async () => {
+      const res = await request(app)
+        .post('/api/v1/users/reports')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          targetUserId: userB.id,
+          reason: 'fake_profile',
+          description: 'Catfishing with celebrity photo',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Report submitted successfully');
+      expect(res.body.data.reportId).toBeDefined();
+      expect(res.body.data.status).toBe('pending');
+      expect(res.body.data.username).toBe(userB.username);
+      expect(res.body.data.fullName).toBe(userB.fullName);
+    });
+  });
 });
+

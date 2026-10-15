@@ -5,6 +5,34 @@ import { ReportReason } from '../models/userReport.model';
 export interface BlockUserResult {
   userId: string;
   isBlocked: boolean;
+  username?: string | null;
+  fullName?: string | null;
+}
+
+export interface BlockedUserInfo {
+  id: string;
+  userId: string;
+  blockedUserId: string;
+  username: string | null;
+  fullName: string | null;
+  profilePicture: string | null;
+  reason: string | null;
+  createdAt: Date;
+}
+
+export interface UserReportInfo {
+  id: string;
+  reportId: string;
+  targetUserId: string;
+  username: string | null;
+  fullName: string | null;
+  profilePicture: string | null;
+  reason: string;
+  description: string | null;
+  status: string;
+  targetType: string;
+  momentId?: string | null;
+  createdAt: Date;
 }
 
 export interface ReportUserResult {
@@ -68,6 +96,12 @@ export class ModerationService {
       },
     });
 
+    const targetFullName =
+      targetUser.fullName ||
+      (targetUser.firstName && targetUser.lastName
+        ? `${targetUser.firstName} ${targetUser.lastName}`
+        : targetUser.firstName || null);
+
     if (existing) {
       if (reason && existing.reason !== reason.trim()) {
         existing.reason = reason.trim();
@@ -76,6 +110,8 @@ export class ModerationService {
       return {
         userId: targetUserId,
         isBlocked: true,
+        username: targetUser.username,
+        fullName: targetFullName,
       };
     }
 
@@ -90,6 +126,8 @@ export class ModerationService {
       return {
         userId: targetUserId,
         isBlocked: true,
+        username: targetUser.username,
+        fullName: targetFullName,
       };
     } catch (err: any) {
       // Handle race condition unique constraint error gracefully as idempotent success
@@ -102,6 +140,8 @@ export class ModerationService {
         return {
           userId: targetUserId,
           isBlocked: true,
+          username: targetUser.username,
+          fullName: targetFullName,
         };
       }
 
@@ -378,6 +418,88 @@ export class ModerationService {
     });
 
     return !blockRecord;
+  }
+
+  /**
+   * Retrieves all users blocked by the authenticated user with user details (fullName, username, profilePicture).
+   */
+  public async getBlockedUsers(userId: string): Promise<BlockedUserInfo[]> {
+    const blocks = await UserBlock.findAll({
+      where: { userId },
+      include: [
+        {
+          model: User,
+          as: 'blockedUser',
+          attributes: ['id', 'username', 'fullName', 'firstName', 'lastName', 'profilePicture'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return blocks.map((b) => {
+      const blocked = (b as any).blockedUser;
+      const fullName =
+        blocked?.fullName ||
+        (blocked?.firstName && blocked?.lastName
+          ? `${blocked.firstName} ${blocked.lastName}`
+          : blocked?.firstName || null);
+
+      return {
+        id: b.id,
+        userId: b.blockedUserId,
+        blockedUserId: b.blockedUserId,
+        username: blocked?.username || null,
+        fullName: fullName,
+        profilePicture: blocked?.profilePicture || null,
+        reason: b.reason,
+        createdAt: b.createdAt,
+      };
+    });
+  }
+
+  /**
+   * Retrieves reports filed by the authenticated user (or all reports if admin)
+   * with target user details (fullName, username, profilePicture).
+   */
+  public async getUserReports(userId: string, role?: string): Promise<UserReportInfo[]> {
+    const whereClause = role === 'admin' ? {} : { reporterId: userId };
+
+    const reports = await UserReport.findAll({
+      where: whereClause,
+      include: [
+        {
+          model: User,
+          as: 'targetUser',
+          attributes: ['id', 'username', 'fullName', 'firstName', 'lastName', 'profilePicture'],
+          required: false,
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+
+    return reports.map((r) => {
+      const target = (r as any).targetUser;
+      const fullName =
+        target?.fullName ||
+        (target?.firstName && target?.lastName
+          ? `${target.firstName} ${target.lastName}`
+          : target?.firstName || null);
+
+      return {
+        id: r.id,
+        reportId: r.id,
+        targetUserId: r.targetUserId,
+        username: target?.username || null,
+        fullName: fullName,
+        profilePicture: target?.profilePicture || null,
+        reason: r.reason,
+        description: r.description,
+        status: r.status,
+        targetType: r.targetType,
+        momentId: r.momentId,
+        createdAt: r.createdAt,
+      };
+    });
   }
 }
 

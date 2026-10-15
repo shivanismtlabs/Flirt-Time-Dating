@@ -6,6 +6,9 @@ import {
   UserBlock,
   Match,
   SwipeAction,
+  Conversation,
+  ChatMessage,
+  UserSubscription,
 } from '../models';
 import { ConnectionRequestStatus } from '../models/connectionRequest.model';
 import { notificationService } from './notification.service';
@@ -19,6 +22,9 @@ export interface SendComplimentResult {
   isMatched: boolean;
   matchId: string | null;
   createdAt: string;
+  conversationId?: string;
+  chatMessageId?: string;
+  isNewMatch?: boolean;
 }
 
 export class ComplimentServiceError extends Error {
@@ -36,8 +42,45 @@ export class ComplimentServiceError extends Error {
 
 export class ComplimentService {
   /**
+   * Validates whether a user has an active, entitled subscription.
+   * Checks UserSubscription records (verifying expiration and grace period)
+   * and falls back to user.isSubscribed flag for unit/integration tests and manual grants.
+   */
+  public async isUserSubscribed(user: User): Promise<boolean> {
+    const now = new Date();
+    const latestSub = await UserSubscription.findOne({
+      where: { userId: user.id },
+      order: [['created_at', 'DESC']],
+    });
+
+    if (latestSub) {
+      const hasNotExpired = new Date(latestSub.expiresAt) > now;
+      const isEntitledNow =
+        latestSub.isEntitled &&
+        (hasNotExpired || latestSub.status === 'in_grace_period');
+
+      // Reconcile user flag if expired or newly entitled
+      if (!isEntitledNow && user.isSubscribed) {
+        user.isSubscribed = false;
+        await user.save();
+      } else if (isEntitledNow && !user.isSubscribed) {
+        user.isSubscribed = true;
+        await user.save();
+      }
+
+      return isEntitledNow;
+    }
+
+    return !!user.isSubscribed;
+  }
+
+  /**
    * Sends a profile compliment from the authenticated user to a target user.
-   * Handles self-compliment check, block checks, mutual auto-matching, and push/in-app notifications.
+   * Rules:
+   * 1. Subscribed users: unlimited compliments (unmatched or matched).
+   * 2. Already matched users: deliver via chat conversation and ConnectionRequest.
+   * 3. Unmatched users: 1 compliment per target profile for unsubscribed users (prevent duplicate).
+   * 4. Mutual connect: automatically forms a match and delivers compliment to chat.
    */
   public async sendCompliment(
     requesterId: string,
@@ -105,7 +148,17 @@ export class ComplimentService {
       );
     }
 
-    // 4. Check if already matched
+    const requesterName =
+      requester.nickName ||
+      requester.firstName ||
+      requester.fullName ||
+      requester.username ||
+      'Someone';
+
+    // 4. Validate subscription status of requester
+    const isSubscribed = await this.isUserSubscribed(requester);
+
+    // 5. Check if already matched
     const [u1, u2] = [requesterId, targetUserId].sort();
     const existingMatch = await Match.findOne({
       where: {
@@ -116,38 +169,125 @@ export class ComplimentService {
     });
 
     if (existingMatch) {
-      throw new ComplimentServiceError(
-        'You are already matched with this user',
-        400,
-        'ALREADY_MATCHED'
-      );
-    }
+      // Rule 2: If users are matched, allow communication through chat.
+      // Deliver compliment into chat thread and persist accepted ConnectionRequest.
+      const now = new Date();
+      const t = await sequelize.transaction();
+      let savedRequest: ConnectionRequest;
+      let conversation: Conversation;
+      let chatMessage: ChatMessage;
 
-    // 5. Check if requester has already sent a pending compliment/request
-    const existingRequest = await ConnectionRequest.findOne({
-      where: {
-        requesterId,
+      try {
+        const [conv] = await Conversation.findOrCreate({
+          where: { user1Id: u1, user2Id: u2 },
+          defaults: {
+            user1Id: u1,
+            user2Id: u2,
+            lastMessage: finalMessage,
+            lastMessageAt: now,
+          },
+          transaction: t,
+        });
+        conversation = conv;
+
+        const metadata = JSON.stringify({
+          type: 'compliment',
+          reason: finalReason,
+          momentId,
+        });
+
+        chatMessage = await ChatMessage.create(
+          {
+            conversationId: conversation.id,
+            senderId: requesterId,
+            recipientId: targetUserId,
+            content: finalMessage,
+            messageType: 'text',
+            metadata,
+            isRead: false,
+          },
+          { transaction: t }
+        );
+
+        conversation.lastMessage = finalMessage;
+        conversation.lastMessageAt = now;
+        await conversation.save({ transaction: t });
+
+        savedRequest = await ConnectionRequest.create(
+          {
+            requesterId,
+            targetUserId,
+            status: 'accepted',
+            message: finalMessage,
+            reason: finalReason,
+            momentId,
+            respondedAt: now,
+          },
+          { transaction: t }
+        );
+
+        await t.commit();
+      } catch (err: any) {
+        await t.rollback();
+        throw err;
+      }
+
+      // Dispatch compliment notification to targetUser
+      try {
+        await notificationService.sendComplimentNotification(targetUserId, {
+          requesterId,
+          requesterName,
+          complimentId: savedRequest.id,
+          message: finalMessage,
+        });
+      } catch (notifErr: any) {
+        console.error('[Send Compliment Notification Error]:', notifErr.message);
+      }
+
+      return {
+        complimentId: savedRequest.id,
         targetUserId,
-        status: 'pending',
-      },
-    });
-
-    if (existingRequest) {
-      throw new ComplimentServiceError(
-        'A compliment is already pending for this user',
-        409,
-        'COMPLIMENT_ALREADY_PENDING'
-      );
+        message: finalMessage,
+        reason: finalReason,
+        status: 'accepted',
+        isMatched: true,
+        matchId: existingMatch.id,
+        createdAt: savedRequest.createdAt
+          ? savedRequest.createdAt.toISOString()
+          : new Date().toISOString(),
+        conversationId: conversation.id,
+        chatMessageId: chatMessage.id,
+        isNewMatch: false,
+      };
     }
 
-    const requesterName =
-      requester.nickName ||
-      requester.firstName ||
-      requester.fullName ||
-      requester.username ||
-      'Someone';
+    // 6. Rule 3: Unmatched users check
+    // If not subscribed, only one compliment per target profile is permitted.
+    if (!isSubscribed) {
+      const existingCompliment = await ConnectionRequest.findOne({
+        where: {
+          requesterId,
+          targetUserId,
+        },
+      });
 
-    // 6. Check if target user has ALREADY sent a pending request to requester (Mutual Connect -> Instant Match)
+      if (existingCompliment) {
+        if (existingCompliment.status === 'pending') {
+          throw new ComplimentServiceError(
+            'A compliment is already pending for this user',
+            409,
+            'COMPLIMENT_ALREADY_PENDING'
+          );
+        }
+        throw new ComplimentServiceError(
+          'You have already sent a compliment to this profile',
+          409,
+          'DUPLICATE_COMPLIMENT'
+        );
+      }
+    }
+
+    // 7. Check if target user has ALREADY sent a pending request to requester (Mutual Connect -> Instant Match)
     const reversePendingRequest = await ConnectionRequest.findOne({
       where: {
         requesterId: targetUserId,
@@ -158,12 +298,16 @@ export class ComplimentService {
 
     if (reversePendingRequest) {
       const t = await sequelize.transaction();
+      let match: Match;
+      let conversation: Conversation;
+      let chatMessage: ChatMessage;
+
       try {
         reversePendingRequest.status = 'accepted';
         reversePendingRequest.respondedAt = new Date();
         await reversePendingRequest.save({ transaction: t });
 
-        const [match] = await Match.findOrCreate({
+        const [createdMatch] = await Match.findOrCreate({
           where: { user1Id: u1, user2Id: u2 },
           defaults: {
             user1Id: u1,
@@ -173,11 +317,49 @@ export class ComplimentService {
           },
           transaction: t,
         });
+        match = createdMatch;
 
         await SwipeAction.upsert(
           { userId: requesterId, targetUserId, action: 'super_like' },
           { transaction: t }
         );
+
+        // Deliver compliment to chat conversation for new match
+        const now = new Date();
+        const [conv] = await Conversation.findOrCreate({
+          where: { user1Id: u1, user2Id: u2 },
+          defaults: {
+            user1Id: u1,
+            user2Id: u2,
+            lastMessage: finalMessage,
+            lastMessageAt: now,
+          },
+          transaction: t,
+        });
+        conversation = conv;
+
+        const metadata = JSON.stringify({
+          type: 'compliment',
+          reason: finalReason,
+          momentId,
+        });
+
+        chatMessage = await ChatMessage.create(
+          {
+            conversationId: conversation.id,
+            senderId: requesterId,
+            recipientId: targetUserId,
+            content: finalMessage,
+            messageType: 'text',
+            metadata,
+            isRead: false,
+          },
+          { transaction: t }
+        );
+
+        conversation.lastMessage = finalMessage;
+        conversation.lastMessageAt = now;
+        await conversation.save({ transaction: t });
 
         await t.commit();
 
@@ -231,6 +413,9 @@ export class ComplimentService {
           createdAt: reversePendingRequest.createdAt
             ? reversePendingRequest.createdAt.toISOString()
             : new Date().toISOString(),
+          conversationId: conversation.id,
+          chatMessageId: chatMessage.id,
+          isNewMatch: true,
         };
       } catch (err: any) {
         await t.rollback();
@@ -238,7 +423,7 @@ export class ComplimentService {
       }
     }
 
-    // 7. Atomic transaction for new ConnectionRequest persistence
+    // 8. Atomic transaction for new ConnectionRequest persistence
     const t = await sequelize.transaction();
     let savedRequest: ConnectionRequest;
     try {
@@ -266,7 +451,7 @@ export class ComplimentService {
       throw dbErr;
     }
 
-    // 8. Dispatch In-App & Push Notification to target user
+    // 9. Dispatch In-App & Push Notification to target user
     try {
       await notificationService.sendComplimentNotification(targetUserId, {
         requesterId,
@@ -289,6 +474,7 @@ export class ComplimentService {
       createdAt: savedRequest.createdAt
         ? savedRequest.createdAt.toISOString()
         : new Date().toISOString(),
+      isNewMatch: false,
     };
   }
 }

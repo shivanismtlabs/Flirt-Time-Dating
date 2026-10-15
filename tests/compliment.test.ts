@@ -10,6 +10,9 @@ import {
   Notification,
   SwipeAction,
   UserPhoto,
+  Conversation,
+  ChatMessage,
+  UserSubscription,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
@@ -77,15 +80,24 @@ describe('Profile Compliment API & Interactions Integration', () => {
       sendEachForMulticast: mockSendEachForMulticast,
     } as any);
 
+    await ChatMessage.destroy({ where: {} });
+    await Conversation.destroy({ where: {} });
+    await UserSubscription.destroy({ where: {} });
     await ConnectionRequest.destroy({ where: {} });
     await Notification.destroy({ where: {} });
     await UserBlock.destroy({ where: {} });
     await Match.destroy({ where: {} });
     await SwipeAction.destroy({ where: {} });
     await UserDevice.destroy({ where: {} });
+    if (userA) await userA.update({ isSubscribed: false });
+    if (userB) await userB.update({ isSubscribed: false });
+    if (userC) await userC.update({ isSubscribed: false });
   });
 
   afterAll(async () => {
+    await ChatMessage.destroy({ where: {} });
+    await Conversation.destroy({ where: {} });
+    await UserSubscription.destroy({ where: {} });
     await ConnectionRequest.destroy({ where: {} });
     await Notification.destroy({ where: {} });
     await UserBlock.destroy({ where: {} });
@@ -286,25 +298,6 @@ describe('Profile Compliment API & Interactions Integration', () => {
       expect(res.body.message).toMatch(/block restrictions/i);
     });
 
-    it('should reject compliment when users are already matched with 400 Bad Request', async () => {
-      const [u1, u2] = [userA.id, userB.id].sort();
-      await Match.create({
-        user1Id: u1,
-        user2Id: u2,
-        matchedBy: 'super_like',
-        isActive: true,
-      });
-
-      const res = await request(app)
-        .post(`/api/v1/users/${userB.id}/compliment`)
-        .set('Authorization', `Bearer ${tokenA}`)
-        .send({ message: 'Hey again!' });
-
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/already matched/i);
-    });
-
     it('should reject duplicate compliment with 409 Conflict when one is already pending', async () => {
       await ConnectionRequest.create({
         requesterId: userA.id,
@@ -323,7 +316,7 @@ describe('Profile Compliment API & Interactions Integration', () => {
       expect(res.body.message).toMatch(/already pending/i);
     });
 
-    it('should automatically match when target user previously sent a pending request', async () => {
+    it('should automatically match when target user previously sent a pending request and deliver compliment to chat', async () => {
       // User B previously sent a pending connection request to User A
       const prevReq = await ConnectionRequest.create({
         requesterId: userB.id,
@@ -347,6 +340,215 @@ describe('Profile Compliment API & Interactions Integration', () => {
       const [u1, u2] = [userA.id, userB.id].sort();
       const match = await Match.findOne({ where: { user1Id: u1, user2Id: u2, isActive: true } });
       expect(match).not.toBeNull();
+
+      // Check message delivered to chat
+      const chatMsg = await ChatMessage.findOne({
+        where: { senderId: userA.id, recipientId: userB.id },
+      });
+      expect(chatMsg).not.toBeNull();
+      expect(chatMsg?.content).toBe('You look wonderful!');
+    });
+  });
+
+  describe('4. Matched Users & Chat Delivery', () => {
+    it('should allow compliment between already matched users, deliver to chat, and keep profile accessible without returning ALREADY_MATCHED', async () => {
+      const [u1, u2] = [userA.id, userB.id].sort();
+      const match = await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'super_like',
+        isActive: true,
+      });
+
+      const complimentText = 'You have the coolest vibe!';
+      const res = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: complimentText });
+
+      // Must NOT return 400 ALREADY_MATCHED
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isMatched).toBe(true);
+      expect(res.body.data.status).toBe('accepted');
+      expect(res.body.data.matchId).toBe(match.id);
+      expect(res.body.data.complimentId).toBeDefined();
+
+      // Verify visible in chat conversation
+      const conversation = await Conversation.findOne({
+        where: { user1Id: u1, user2Id: u2 },
+      });
+      expect(conversation).not.toBeNull();
+      expect(conversation?.lastMessage).toBe(complimentText);
+
+      const chatMessage = await ChatMessage.findOne({
+        where: {
+          conversationId: conversation!.id,
+          senderId: userA.id,
+          recipientId: userB.id,
+        },
+      });
+      expect(chatMessage).not.toBeNull();
+      expect(chatMessage?.content).toBe(complimentText);
+      expect(chatMessage?.messageType).toBe('text');
+
+      // Verify profile remains accessible for matched users
+      const profileRes = await request(app)
+        .get(`/api/v1/users/${userB.id}/profile`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(profileRes.status).toBe(200);
+      expect(profileRes.body.success).toBe(true);
+      expect(profileRes.body.data.isMatched).toBe(true);
+    });
+  });
+
+  describe('5. Subscribed Users (Unlimited Compliments)', () => {
+    it('should allow subscribed user to send unlimited compliments to unmatched users without duplicate error', async () => {
+      // Mark userA as subscribed
+      await userA.update({ isSubscribed: true });
+
+      // First compliment to userB
+      const res1 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'First compliment from subscriber!' });
+
+      expect(res1.status).toBe(201);
+      expect(res1.body.success).toBe(true);
+      expect(res1.body.data.status).toBe('pending');
+
+      // Second compliment to same target profile (should NOT be blocked by duplicate 409 check)
+      const res2 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Second compliment from subscriber!' });
+
+      expect(res2.status).toBe(201);
+      expect(res2.body.success).toBe(true);
+      expect(res2.body.data.status).toBe('pending');
+
+      // Third compliment
+      const res3 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Third compliment from subscriber!' });
+
+      expect(res3.status).toBe(201);
+      expect(res3.body.success).toBe(true);
+    });
+
+    it('should allow subscribed user to send multiple compliments to already matched users delivered to chat', async () => {
+      await userA.update({ isSubscribed: true });
+
+      const [u1, u2] = [userA.id, userB.id].sort();
+      await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'super_like',
+        isActive: true,
+      });
+
+      // Compliment 1
+      const res1 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Subscribed matched compliment 1' });
+
+      expect(res1.status).toBe(201);
+      expect(res1.body.data.isMatched).toBe(true);
+
+      // Compliment 2
+      const res2 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Subscribed matched compliment 2' });
+
+      expect(res2.status).toBe(201);
+      expect(res2.body.data.isMatched).toBe(true);
+
+      // Both messages exist in chat
+      const messages = await ChatMessage.findAll({
+        where: { senderId: userA.id, recipientId: userB.id },
+        order: [['createdAt', 'ASC']],
+      });
+      expect(messages.length).toBe(2);
+      expect(messages[0].content).toBe('Subscribed matched compliment 1');
+      expect(messages[1].content).toBe('Subscribed matched compliment 2');
+    });
+
+    it('should validate subscription through active UserSubscription record', async () => {
+      // Create active UserSubscription with future expiration date
+      await UserSubscription.create({
+        userId: userA.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'sub_tx_compliment_active',
+        originalTransactionId: 'sub_tx_compliment_active',
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: new Date(Date.now() + 7 * 86400000), // 7 days in future
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'sandbox',
+        acknowledged: true,
+        bonusCoinsCredited: false,
+        bonusCoinsAmount: 0,
+      });
+
+      const res1 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Entitled via UserSubscription 1' });
+
+      expect(res1.status).toBe(201);
+
+      const res2 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Entitled via UserSubscription 2' });
+
+      expect(res2.status).toBe(201);
+    });
+
+    it('should enforce duplicate restriction when subscription is expired', async () => {
+      // Create expired UserSubscription
+      await UserSubscription.create({
+        userId: userA.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'sub_tx_compliment_expired',
+        originalTransactionId: 'sub_tx_compliment_expired',
+        status: 'expired',
+        isEntitled: false,
+        startsAt: new Date(Date.now() - 14 * 86400000),
+        expiresAt: new Date(Date.now() - 7 * 86400000), // Expired 7 days ago
+        autoRenewing: false,
+        currency: 'USD',
+        environment: 'sandbox',
+        acknowledged: true,
+        bonusCoinsCredited: false,
+        bonusCoinsAmount: 0,
+      });
+
+      // First compliment succeeds
+      const res1 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Compliment with expired sub 1' });
+
+      expect(res1.status).toBe(201);
+
+      // Second duplicate compliment must be rejected with 409
+      const res2 = await request(app)
+        .post(`/api/v1/users/${userB.id}/compliment`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ message: 'Duplicate compliment with expired sub 2' });
+
+      expect(res2.status).toBe(409);
+      expect(res2.body.success).toBe(false);
+      expect(res2.body.message).toMatch(/already pending/i);
     });
   });
 });

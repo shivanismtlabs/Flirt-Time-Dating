@@ -336,6 +336,7 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
         caption: 'Another moment',
         audience: 'everyone',
         status: 'active',
+        publishedAt: new Date(),
       });
 
       const res = await request(app)

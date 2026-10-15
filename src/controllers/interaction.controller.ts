@@ -148,7 +148,7 @@ export const sendComplimentHandler = async (
       momentId,
     });
 
-    const successMessage = result.isMatched
+    const successMessage = result.isNewMatch
       ? 'Compliment accepted! You have a new match'
       : 'Compliment sent successfully';
 

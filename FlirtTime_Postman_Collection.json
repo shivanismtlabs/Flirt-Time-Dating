@@ -3930,6 +3930,153 @@
           "response": []
         },
         {
+          "name": "Create Moment Comment Reply or Sub-reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reply\": \"Totally agree, stunning capture! ✨\",\n  \"parentReplyId\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to create a reply or sub-reply to an existing comment. Pass optional parentReplyId to reply directly to another reply."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Comment Replies",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to fetch paginated replies for a specific comment, including parentComment metadata, likesCount, and isLiked status."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Moment Comment Reply",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies/:replyId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies",
+                ":replyId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Comment UUID"
+                },
+                {
+                  "key": "replyId",
+                  "value": "<REPLY_ID>",
+                  "description": "Reply UUID to delete"
+                }
+              ]
+            },
+            "description": "Canonical API to delete a specific reply. Authorized for the reply author, parent comment author, or moment creator."
+          },
+          "response": []
+        },
+        {
           "name": "Get General Gifts Catalog & User Balance",
           "request": {
             "method": "GET",

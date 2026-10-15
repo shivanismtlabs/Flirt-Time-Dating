@@ -175,7 +175,9 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
 
       const data = res.body.data;
       expect(data.userId).toBe(targetUser.id);
-      expect(data.name).toBe('Meera');
+      expect(data.username).toBe(targetUser.username);
+      expect(data.fullName).toBe('Meera Patel');
+      expect(data.name).toBeUndefined();
       expect(typeof data.age).toBe('number');
       expect(data.isVerified).toBe(true);
       expect(data.profilePhoto).toBe('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
@@ -196,6 +198,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(Array.isArray(data.interests)).toBe(true);
       expect(data.interests.length).toBe(2);
       expect(data.sharedInterests).toEqual(['Cooking']);
+      expect(data.action).toBeNull();
       expect(data.myAction).toBeNull();
       expect(data.isMatched).toBe(false);
       expect(data.canConnect).toBe(true);
@@ -449,7 +452,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
   });
 
   describe('13. Existing Action and Match State', () => {
-    it('should return myAction as like and canConnect as false when already liked', async () => {
+    it('should return action and myAction as like and canConnect as false when already liked', async () => {
       await SwipeAction.create({
         userId: viewerUser.id,
         targetUserId: targetUser.id,
@@ -461,6 +464,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
         .set('Authorization', `Bearer ${viewerToken}`);
 
       expect(res.status).toBe(200);
+      expect(res.body.data.action).toBe('like');
       expect(res.body.data.myAction).toBe('like');
       expect(res.body.data.isMatched).toBe(false);
       expect(res.body.data.canConnect).toBe(false);
@@ -486,12 +490,13 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
         .set('Authorization', `Bearer ${viewerToken}`);
 
       expect(res.status).toBe(200);
+      expect(res.body.data.action).toBe('like');
       expect(res.body.data.myAction).toBe('like');
       expect(res.body.data.isMatched).toBe(true);
       expect(res.body.data.canConnect).toBe(false);
     });
 
-    it('should return myAction as nope and canConnect as false when swiped nope', async () => {
+    it('should return action and myAction as nope and canConnect as false when swiped nope', async () => {
       await SwipeAction.create({
         userId: viewerUser.id,
         targetUserId: targetUser.id,
@@ -503,7 +508,43 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
         .set('Authorization', `Bearer ${viewerToken}`);
 
       expect(res.status).toBe(200);
+      expect(res.body.data.action).toBe('nope');
       expect(res.body.data.myAction).toBe('nope');
+      expect(res.body.data.canConnect).toBe(false);
+    });
+
+    it('should return action and myAction as super_like when swiped super_like', async () => {
+      await SwipeAction.create({
+        userId: viewerUser.id,
+        targetUserId: targetUser.id,
+        action: 'super_like',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.action).toBe('super_like');
+      expect(res.body.data.myAction).toBe('super_like');
+      expect(res.body.data.canConnect).toBe(false);
+    });
+
+    it('should return action as super_like when connection request is pending', async () => {
+      const { ConnectionRequest } = await import('../src/models');
+      await ConnectionRequest.create({
+        requesterId: viewerUser.id,
+        targetUserId: targetUser.id,
+        status: 'pending',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.action).toBe('super_like');
+      expect(res.body.data.myAction).toBe('super_like');
       expect(res.body.data.canConnect).toBe(false);
     });
   });
@@ -524,7 +565,9 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
 
       expect(res.status).toBe(200);
       expect(res.body.data.userId).toBe(minimalUser.id);
-      expect(res.body.data.name).toBe('Minimal');
+      expect(res.body.data.username).toBe('minimal_user');
+      expect(res.body.data.fullName).toBe('Minimal User');
+      expect(res.body.data.name).toBeUndefined();
       expect(res.body.data.age).toBeNull();
       expect(res.body.data.bio).toBeNull();
       expect(res.body.data.voiceIntro).toBeNull();
@@ -552,6 +595,102 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(res.body.stack).toBeUndefined();
 
       findByPkSpy.mockRestore();
+    });
+  });
+
+  describe('16. Clean Non-Duplicate S3 and Profile Fields Verification', () => {
+    it('should send only username and fullName (no name alias)', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      expect(data.username).toBe(targetUser.username);
+      expect(data.fullName).toBe('Meera Patel');
+      expect(data.name).toBeUndefined();
+    });
+
+    it('should return coverPhoto object without redundant coverPicture or coverPhotoUrl keys', async () => {
+      await targetUser.update({
+        coverPicture: 'covers/target_cover.jpg',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      expect(data.coverPhoto).toBeDefined();
+      expect(data.coverPhoto.url).toContain('covers/target_cover.jpg');
+      expect(data.coverPhoto.thumbnailUrl).toContain('covers/target_cover.jpg');
+      // Redundant duplicate S3 keys must NOT exist
+      expect(data.coverPicture).toBeUndefined();
+      expect(data.coverPhotoUrl).toBeUndefined();
+    });
+
+    it('should cleanly encapsulate moreAboutMe without repeating the 12 fields at root or using duplicate aliases', async () => {
+      await targetUser.update({
+        drinking: 'socially',
+        education: 'postgraduate',
+        height: '170cm',
+        religion: 'agnostic',
+        sexuality: 'straight',
+        smoking: 'never',
+        weight: '60kg',
+        eyeColor: 'Hazel',
+        hairColor: 'Brown',
+        living: 'with roommates',
+        relationship: 'single',
+        children: 'none',
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+
+      // 1. None of the 12 fields or duplicate casing should be at the root
+      expect(data.drinking).toBeUndefined();
+      expect(data.education).toBeUndefined();
+      expect(data.height).toBeUndefined();
+      expect(data.religion).toBeUndefined();
+      expect(data.sexuality).toBeUndefined();
+      expect(data.smoking).toBeUndefined();
+      expect(data.weight).toBeUndefined();
+      expect(data.eyeColor).toBeUndefined();
+      expect(data.eyecolor).toBeUndefined();
+      expect(data.hairColor).toBeUndefined();
+      expect(data.haircolor).toBeUndefined();
+      expect(data.living).toBeUndefined();
+      expect(data.relationship).toBeUndefined();
+      expect(data.children).toBeUndefined();
+
+      // 2. All 12 fields properly structured inside moreAboutMe
+      expect(data.moreAboutMe).toBeDefined();
+      expect(data.moreAboutMe.drinking).toBe('socially');
+      expect(data.moreAboutMe.education).toBe('postgraduate');
+      expect(data.moreAboutMe.height).toBe('170cm');
+      expect(data.moreAboutMe.religion).toBe('agnostic');
+      expect(data.moreAboutMe.sexuality).toBe('straight');
+      expect(data.moreAboutMe.smoking).toBe('never');
+      expect(data.moreAboutMe.weight).toBe('60kg');
+      expect(data.moreAboutMe.eyeColor).toBe('Hazel');
+      expect(data.moreAboutMe.hairColor).toBe('Brown');
+      expect(data.moreAboutMe.living).toBe('with roommates');
+      expect(data.moreAboutMe.relationship).toBe('single');
+      expect(data.moreAboutMe.children).toBe('none');
+
+      // 3. No duplicate lowercase aliases inside moreAboutMe
+      expect(data.moreAboutMe.eyecolor).toBeUndefined();
+      expect(data.moreAboutMe.haircolor).toBeUndefined();
+
+      // 4. Exactly 12 items formatted with key, label, icon, value
+      expect(Array.isArray(data.moreAboutMe.items)).toBe(true);
+      expect(data.moreAboutMe.items.length).toBe(12);
     });
   });
 });

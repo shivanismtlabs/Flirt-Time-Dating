@@ -1,6 +1,6 @@
 import request from 'supertest';
 import app from '../src/app';
-import { sequelize, User, EmailVerification, PhoneVerification } from '../src/models';
+import { sequelize, User, EmailVerification, PhoneVerification, UserPhoto, UserInterest } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { hashPassword } from '../src/utils/password';
 import { s3Service } from '../src/services/s3.service';
@@ -17,7 +17,11 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   beforeEach(async () => {
-    await User.destroy({ where: {}, truncate: true });
+    await EmailVerification.destroy({ where: {} });
+    await PhoneVerification.destroy({ where: {} });
+    await UserPhoto.destroy({ where: {} });
+    await UserInterest.destroy({ where: {} });
+    await User.destroy({ where: {} });
     jest.restoreAllMocks();
 
     const hashedPassword = await hashPassword('Password123');
@@ -349,8 +353,8 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
     });
   });
 
-  describe('4. Business Rules: Immutability of Date of Birth & Gender', () => {
-    it('should reject attempting to change an already-set Date of Birth', async () => {
+  describe('4. Business Rules: Profile Updates for Date of Birth & Gender', () => {
+    it('should allow updating an already-set Date of Birth and recalculate age', async () => {
       // 1. Initial save: sets DOB to 1996-10-09
       const res1 = await request(app)
         .patch('/api/v1/users/profile')
@@ -362,24 +366,26 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
           gender: 'male',
         });
       expect(res1.status).toBe(200);
+      expect(res1.body.data.dateOfBirth).toBe('1996-10-09');
 
-      // 2. Subsequent attempt to change DOB to 1995-05-05
+      // 2. Subsequent attempt to change DOB to 2005-07-08
       const res2 = await request(app)
         .patch('/api/v1/users/profile')
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           fullName: 'Mike Hussey',
           nickName: 'Mikey',
-          dateOfBirth: '1995-05-05',
+          dateOfBirth: '2005-07-08',
           gender: 'male',
         });
 
-      expect(res2.status).toBe(400);
-      expect(res2.body.success).toBe(false);
-      expect(res2.body.message).toMatch(/date of birth cannot be changed once set/i);
+      expect(res2.status).toBe(200);
+      expect(res2.body.success).toBe(true);
+      expect(res2.body.data.dateOfBirth).toBe('2005-07-08');
+      expect(typeof res2.body.data.age).toBe('number');
     });
 
-    it('should reject attempting to change an already-set Gender', async () => {
+    it('should allow updating an already-set Gender', async () => {
       // 1. Initial save: sets Gender to male
       const res1 = await request(app)
         .patch('/api/v1/users/profile')
@@ -403,9 +409,9 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
           gender: 'female',
         });
 
-      expect(res2.status).toBe(400);
-      expect(res2.body.success).toBe(false);
-      expect(res2.body.message).toMatch(/gender cannot be changed once set/i);
+      expect(res2.status).toBe(200);
+      expect(res2.body.success).toBe(true);
+      expect(res2.body.data.gender).toBe('female');
     });
 
     it('should allow subsequent updates to other fields (e.g. about, nickName) when DOB and Gender remain identical', async () => {

@@ -291,6 +291,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       coverPicture: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       coverPhotoUrl: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       profile: profileData,
+      location,
       moreAboutMe,
       interests: formattedInterests,
       moments: permanentMoments,

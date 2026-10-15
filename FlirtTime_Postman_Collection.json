@@ -1650,7 +1650,7 @@
                 }
               ]
             },
-            "description": "Retrieves the target user's full profile detail screen (e.g. Meera, 26) including profile photo, verified status, city, distance, Why This Vibe? score and explanation, bio, voice intro audio, moments gallery, interests, shared interests, and bottom action state (myAction, isMatched, canConnect)."
+            "description": "Retrieves the target user's full profile detail screen (e.g. Meera, 26) including profile photo, verified status, city, distance, Why This Vibe? score and explanation, bio, voice intro audio, moments gallery, interests, shared interests, and bottom action state (action, myAction, isMatched, canConnect)."
           },
           "response": []
         },

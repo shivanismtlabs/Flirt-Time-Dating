@@ -154,9 +154,7 @@ export const formatMoreAboutMe = (user: {
     smoking,
     weight,
     eyeColor,
-    eyecolor: eyeColor,
     hairColor,
-    haircolor: hairColor,
     living,
     relationship,
     children,
@@ -165,12 +163,11 @@ export const formatMoreAboutMe = (user: {
 };
 
 /**
- * Updates user profile details for the onboarding process.
+ * Updates user profile details for onboarding and profile editing.
  * Enforces business rules:
  * 1. User ID must exist.
- * 2. Date of Birth once set cannot be changed.
- * 3. Gender once set cannot be changed.
- * 4. Marks profile as complete upon successful update.
+ * 2. Date of Birth and Gender can be set and updated when valid values are provided.
+ * 3. Marks profile as complete upon successful update.
  */
 export const updateUserProfile = async (
   userId: string,
@@ -182,15 +179,15 @@ export const updateUserProfile = async (
     throw new ServiceError('User not found', 404);
   }
 
-  // 1. Enforce Date of Birth Immutability
-  if (data.dateOfBirth && user.dateOfBirth && user.dateOfBirth !== data.dateOfBirth) {
-    throw new ServiceError('Date of birth cannot be changed once set', 400);
+  // 1. Update Date of Birth if provided
+  if (data.dateOfBirth !== undefined) {
+    user.dateOfBirth = data.dateOfBirth ? data.dateOfBirth.trim() : null;
   }
 
-  // 2. Enforce Gender Immutability
+  // 2. Normalize and update Gender if provided
   const normalizedIncomingGender = data.gender ? data.gender.toLowerCase() : null;
-  if (normalizedIncomingGender && user.gender && user.gender.toLowerCase() !== normalizedIncomingGender) {
-    throw new ServiceError('Gender cannot be changed once set', 400);
+  if (data.gender !== undefined) {
+    user.gender = normalizedIncomingGender;
   }
 
   // 3. Update profile fields
@@ -217,10 +214,6 @@ export const updateUserProfile = async (
   }
   if (data.nickName !== undefined) {
     user.nickName = data.nickName.trim();
-  }
-
-  if (data.dateOfBirth && !user.dateOfBirth) {
-    user.dateOfBirth = data.dateOfBirth;
   }
 
   // Handle Location / City / Coordinates
@@ -259,10 +252,6 @@ export const updateUserProfile = async (
   }
   if (data.longitude !== undefined) {
     user.longitude = data.longitude;
-  }
-
-  if (normalizedIncomingGender && !user.gender) {
-    user.gender = normalizedIncomingGender;
   }
 
   if (data.about !== undefined) {
@@ -380,7 +369,7 @@ export const updateUserProfile = async (
 export interface OtherUserProfileResponse {
   userId: string;
   username: string;
-  name: string;
+  fullName: string;
   age: number | null;
   isVerified: boolean;
   profilePhoto: string | null;
@@ -389,25 +378,9 @@ export interface OtherUserProfileResponse {
     url: string;
     thumbnailUrl: string;
   } | null;
-  coverPicture?: string | null;
-  coverPhotoUrl?: string | null;
   city: string;
   distanceKm: number | null;
   bio: string | null;
-  drinking?: string | null;
-  education?: string | null;
-  height?: string | null;
-  religion?: string | null;
-  sexuality?: string | null;
-  smoking?: string | null;
-  weight?: string | null;
-  eyeColor?: string | null;
-  eyecolor?: string | null;
-  hairColor?: string | null;
-  haircolor?: string | null;
-  living?: string | null;
-  relationship?: string | null;
-  children?: string | null;
   moreAboutMe?: MoreAboutMeDTO;
   vibeScore: number | null;
   vibeExplanation: {
@@ -451,6 +424,7 @@ export interface OtherUserProfileResponse {
     icon: string | null;
   }>;
   sharedInterests: string[];
+  action: 'like' | 'nope' | 'super_like' | null;
   myAction: 'like' | 'nope' | 'super_like' | null;
   isMatched: boolean;
   canConnect: boolean;
@@ -472,6 +446,7 @@ export const getOtherUserProfile = async (
     UserPhoto,
     SwipeAction,
     Match,
+    ConnectionRequest,
   } = await import('../models');
   const {
     calculateAge,
@@ -658,7 +633,7 @@ export const getOtherUserProfile = async (
   }
 
   // 8. Existing actions & match state
-  const [existingSwipe, existingMatch] = await Promise.all([
+  const [existingSwipe, existingMatch, existingRequest] = await Promise.all([
     SwipeAction.findOne({
       where: {
         userId: viewerUserId,
@@ -675,22 +650,38 @@ export const getOtherUserProfile = async (
         },
       });
     })(),
+    ConnectionRequest.findOne({
+      where: {
+        requesterId: viewerUserId,
+        targetUserId,
+      },
+    }),
   ]);
 
-  const myAction = existingSwipe ? (existingSwipe.action as 'like' | 'nope' | 'super_like') : null;
-  const isMatched = !!existingMatch;
-  const canConnect = !myAction && !isMatched && viewerUserId !== targetUserId;
+  let action: 'like' | 'nope' | 'super_like' | null = existingSwipe
+    ? (existingSwipe.action as 'like' | 'nope' | 'super_like')
+    : null;
 
-  const displayName =
-    targetUser.firstName ||
-    (targetUser.fullName ? targetUser.fullName.split(' ')[0] : null) ||
+  if (!action && existingRequest) {
+    action = 'super_like';
+  }
+
+  const myAction = action;
+  const isMatched = !!existingMatch;
+  const canConnect = !action && !isMatched && viewerUserId !== targetUserId;
+
+  const fullName =
+    targetUser.fullName ||
+    (targetUser.firstName
+      ? `${targetUser.firstName} ${targetUser.lastName || ''}`.trim()
+      : null) ||
     targetUser.nickName ||
     targetUser.username;
 
   return {
     userId: targetUser.id,
     username: targetUser.username,
-    name: displayName,
+    fullName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto) : null,
@@ -701,25 +692,9 @@ export const getOtherUserProfile = async (
           thumbnailUrl: formatThumbnailUrl(targetUser.coverPicture),
         }
       : null,
-    coverPicture: targetUser.coverPicture ? formatMediaUrl(targetUser.coverPicture) : null,
-    coverPhotoUrl: targetUser.coverPicture ? formatMediaUrl(targetUser.coverPicture) : null,
     city: targetUser.city || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
-    drinking: targetUser.drinking || null,
-    education: targetUser.education || null,
-    height: targetUser.height || null,
-    religion: targetUser.religion || null,
-    sexuality: targetUser.sexuality || null,
-    smoking: targetUser.smoking || null,
-    weight: targetUser.weight || null,
-    eyeColor: targetUser.eyeColor || null,
-    eyecolor: targetUser.eyeColor || null,
-    hairColor: targetUser.hairColor || null,
-    haircolor: targetUser.hairColor || null,
-    living: targetUser.living || null,
-    relationship: targetUser.relationship || null,
-    children: targetUser.children || null,
     moreAboutMe: formatMoreAboutMe(targetUser),
     vibeScore,
     vibeExplanation,
@@ -731,6 +706,7 @@ export const getOtherUserProfile = async (
       icon: i.icon || null,
     })),
     sharedInterests,
+    action,
     myAction,
     isMatched,
     canConnect,

@@ -9,10 +9,6 @@ import {
   getOtherUserProfileHandler,
   blockUserHandler,
   reportUserHandler,
-  getBlockedUsersHandler,
-  getUserReportsHandler,
-  blockUserBodyHandler,
-  reportUserBodyHandler,
 } from '../controllers/user.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
@@ -23,8 +19,6 @@ import {
   getOtherUserProfileSchema,
   blockUserSchema,
   reportUserSchema,
-  blockUserBodySchema,
-  reportUserBodySchema,
 } from '../schemas/user.schema';
 import { getUserMomentsHandler } from '../controllers/moment.controller';
 import { getUserMomentsSchema } from '../schemas/moment.schema';
@@ -43,12 +37,6 @@ router.post('/device-token', validate(registerDeviceTokenSchema), registerDevice
 router.get('/profile', (req, res) => getProfile(req, res));
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 
-// Moderation Endpoints: Collection routes /blocked and /reports (Must be registered before :id)
-router.get('/blocked', getBlockedUsersHandler);
-router.post('/blocked', validate(blockUserBodySchema), blockUserBodyHandler);
-router.get('/reports', getUserReportsHandler);
-router.post('/reports', validate(reportUserBodySchema), reportUserBodyHandler);
-
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 
@@ -59,7 +47,7 @@ router.get(
   (req, res) => getUserMomentsHandler(req, res)
 );
 
-// Moderation Endpoints: Block and Report User by path parameter
+// Moderation Endpoints: Block and Report User
 router.post('/:userId/block', validate(blockUserSchema), blockUserHandler);
 router.post('/:userId/report', validate(reportUserSchema), reportUserHandler);
 

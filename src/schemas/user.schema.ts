@@ -153,42 +153,4 @@ export const reportUserSchema = z.object({
   }),
 });
 
-export const blockUserBodySchema = z.object({
-  body: z
-    .object({
-      targetUserId: z.string().uuid('Invalid target user ID format').optional(),
-      userId: z.string().uuid('Invalid user ID format').optional(),
-      reason: z
-        .string()
-        .trim()
-        .max(255, 'Reason must not exceed 255 characters')
-        .optional()
-        .nullable(),
-    })
-    .refine((data) => !!(data.targetUserId || data.userId), {
-      message: 'Either targetUserId or userId is required',
-      path: ['targetUserId'],
-    }),
-});
-
-export const reportUserBodySchema = z.object({
-  body: z
-    .object({
-      targetUserId: z.string().uuid('Invalid target user ID format').optional(),
-      userId: z.string().uuid('Invalid user ID format').optional(),
-      reason: reportReasonEnum,
-      description: z
-        .string()
-        .trim()
-        .max(1000, 'Description must not exceed 1000 characters')
-        .optional()
-        .nullable(),
-    })
-    .refine((data) => !!(data.targetUserId || data.userId), {
-      message: 'Either targetUserId or userId is required',
-      path: ['targetUserId'],
-    }),
-});
-
-
 

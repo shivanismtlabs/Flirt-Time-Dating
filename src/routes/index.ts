@@ -17,6 +17,7 @@ import coinPackageRoutes from './coinPackage.routes';
 import subscriptionRoutes from './subscription.routes';
 import coinRoutes from './coin.routes';
 import walletRoutes from './wallet.routes';
+import moderationRoutes from './moderation.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
@@ -49,6 +50,8 @@ router.use('/coin-packages', coinPackageRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
+router.use('/moderation', moderationRoutes);
+router.use('/reports', moderationRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);

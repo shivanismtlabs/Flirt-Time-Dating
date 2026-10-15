@@ -194,6 +194,88 @@ export const reportUserSchema = z.object({
   }),
 });
 
+export const getBlockedUsersSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+    })
+    .optional(),
+});
+
+export const unblockUserSchema = z.object({
+  params: z.object({
+    userId: z.string().uuid('Invalid user ID format'),
+  }),
+});
+
+export const getUserReportsSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+      status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved']).optional(),
+      targetType: z.enum(['user', 'moment']).optional(),
+    })
+    .optional(),
+});
+
+export const getAllReportsSchema = z.object({
+  query: z
+    .object({
+      page: z
+        .string()
+        .regex(/^\d+$/, 'Page must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('1'),
+      limit: z
+        .string()
+        .regex(/^\d+$/, 'Limit must be a positive integer')
+        .transform(Number)
+        .optional()
+        .default('20'),
+      status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved']).optional(),
+      targetType: z.enum(['user', 'moment']).optional(),
+      search: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const updateReportStatusSchema = z.object({
+  params: z.object({
+    reportId: z.string().uuid('Invalid report ID format'),
+  }),
+  body: z.object({
+    status: z.enum(['pending', 'reviewed', 'dismissed', 'resolved'], {
+      errorMap: () => ({
+        message: 'Invalid status. Allowed: pending, reviewed, dismissed, resolved',
+      }),
+    }),
+    reviewNotes: z.string().trim().max(1000).optional().nullable(),
+  }),
+});
+
 // Profile Email OTP Schemas
 export const requestProfileEmailOtpSchema = z.object({
   body: z.object({

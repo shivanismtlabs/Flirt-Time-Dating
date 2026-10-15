@@ -123,8 +123,14 @@ JWT_EXPIRES_IN=7d
 - **GET `/api/v1/users/profile/:userId`** - Alias for other user profile.
 - **GET `/api/v1/profile/:userId`** - Alias for other user profile.
 - **GET `/api/v1/users/:userId/moments`** - Get another user's visible moments thumbnails.
+- **GET `/api/v1/users/blocked`** - Get paginated list of blocked users (`page`, `limit`).
 - **POST `/api/v1/users/:userId/block`** - Block a user.
+- **DELETE `/api/v1/users/:userId/block`** - Unblock a user *(alias: `POST /api/v1/users/:userId/unblock`)*.
+- **GET `/api/v1/users/reports`** - Get reports filed by the authenticated user.
+- **GET `/api/v1/reports/reasons`** - Catalog of standard report reasons and categories for mobile UI modals.
 - **POST `/api/v1/users/:userId/report`** - Report a user for policy violations.
+- **GET `/api/v1/reports`** - Moderation/Admin list of all reports with counts and status filters.
+- **PATCH `/api/v1/reports/:reportId/status`** - Update report status (`pending`, `reviewed`, `dismissed`, `resolved`).
 - **GET `/api/v1/users`** - List all users *(Requires Admin role)*.
 - **GET `/api/v1/users/:id`** - Get basic user record by ID.
 - **PUT `/api/v1/users/:id`** - Update user details *(Requires Admin role)*.

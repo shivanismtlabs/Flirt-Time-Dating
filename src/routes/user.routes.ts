@@ -9,6 +9,10 @@ import {
   getOtherUserProfileHandler,
   blockUserHandler,
   reportUserHandler,
+  getBlockedUsersHandler,
+  unblockUserHandler,
+  getUserReportsHandler,
+  getReportReasonsHandler,
   getMoreAboutMeHandler,
   updateMoreAboutMeHandler,
   uploadCoverPhotoHandler,
@@ -29,6 +33,9 @@ import {
   getOtherUserProfileSchema,
   blockUserSchema,
   reportUserSchema,
+  getBlockedUsersSchema,
+  unblockUserSchema,
+  getUserReportsSchema,
   requestProfileEmailOtpSchema,
   verifyProfileEmailOtpSchema,
   resendProfileEmailOtpSchema,
@@ -101,8 +108,15 @@ router.get(
   (req, res) => getUserMomentsHandler(req, res)
 );
 
-// Moderation Endpoints: Block and Report User
+// Moderation Endpoints: Block, Unblock, and Report User
+router.get('/blocked', validate(getBlockedUsersSchema), getBlockedUsersHandler);
+router.get('/blocks', validate(getBlockedUsersSchema), getBlockedUsersHandler);
 router.post('/:userId/block', validate(blockUserSchema), blockUserHandler);
+router.delete('/:userId/block', validate(unblockUserSchema), unblockUserHandler);
+router.post('/:userId/unblock', validate(unblockUserSchema), unblockUserHandler);
+
+router.get('/reports', validate(getUserReportsSchema), getUserReportsHandler);
+router.get('/report-reasons', getReportReasonsHandler);
 router.post('/:userId/report', validate(reportUserSchema), reportUserHandler);
 
 // Admin / User Management Endpoints

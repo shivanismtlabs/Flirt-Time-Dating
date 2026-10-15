@@ -384,6 +384,147 @@ export const reportUserHandler = async (req: AuthenticatedRequest, res: Response
   }
 };
 
+/**
+ * Controller to retrieve list of blocked users
+ * GET /api/v1/users/blocked (and /api/users/blocked)
+ */
+export const getBlockedUsersHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+
+    const result = await moderationService.getBlockedUsers(userId, { page, limit });
+    return sendSuccess(res, 'Blocked users retrieved successfully', result);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error retrieving blocked users', 500);
+  }
+};
+
+/**
+ * Controller to unblock a user
+ * DELETE /api/v1/users/:userId/block (and POST /api/v1/users/:userId/unblock)
+ */
+export const unblockUserHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const blockerId = req.user?.id;
+    if (!blockerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = req.params.userId as string;
+    const result = await moderationService.unblockUser(blockerId, targetUserId);
+
+    return sendSuccess(res, 'User unblocked successfully', result);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error processing unblock request', 500);
+  }
+};
+
+/**
+ * Controller to retrieve reports filed by authenticated user
+ * GET /api/v1/users/reports (and /api/v1/reports/my-reports)
+ */
+export const getUserReportsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+    const status = req.query.status as string | undefined;
+    const targetType = req.query.targetType as string | undefined;
+
+    const result = await moderationService.getUserReports(userId, {
+      page,
+      limit,
+      status,
+      targetType,
+    });
+
+    return sendSuccess(res, 'Reports retrieved successfully', result);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error retrieving reports', 500);
+  }
+};
+
+/**
+ * Controller to retrieve all reports for moderation/admin dashboard
+ * GET /api/v1/moderation/reports (and /api/v1/reports)
+ */
+export const getAllReportsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
+    const status = req.query.status as string | undefined;
+    const targetType = req.query.targetType as string | undefined;
+    const search = req.query.search as string | undefined;
+
+    const result = await moderationService.getAllReports({
+      page,
+      limit,
+      status,
+      targetType,
+      search,
+    });
+
+    return sendSuccess(res, 'Moderation reports retrieved successfully', result);
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error retrieving moderation reports', 500);
+  }
+};
+
+/**
+ * Controller to update report status (admin/moderator)
+ * PATCH /api/v1/reports/:reportId/status
+ */
+export const updateReportStatusHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const reportId = req.params.reportId as string;
+    const { status, reviewNotes } = req.body;
+
+    const result = await moderationService.updateReportStatus(reportId, status, reviewNotes);
+
+    return sendSuccess(res, 'Report status updated successfully', { report: result });
+  } catch (error: any) {
+    if (error instanceof ModerationServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, 'Error updating report status', 500);
+  }
+};
+
+/**
+ * Controller to retrieve standard report reasons list
+ * GET /api/v1/reports/reasons (and /api/v1/users/report-reasons)
+ */
+export const getReportReasonsHandler = async (_req: Request, res: Response) => {
+  try {
+    const reasons = moderationService.getReportReasons();
+    return sendSuccess(res, 'Report reasons retrieved successfully', reasons);
+  } catch (error: any) {
+    return sendError(res, 'Error retrieving report reasons', 500);
+  }
+};
+
 export const getAllUsers = async (req: Request, res: Response) => {
   try {
     const users = await User.findAll({

@@ -13,6 +13,7 @@ import {
   ChatMessage,
   Match,
   UserBlock,
+  UserReport,
 } from '../models';
 import {
   s3Service,
@@ -479,6 +480,41 @@ export class MomentService {
       whereConditions.push({ audience: { [Op.ne]: 'matches_only' } });
     }
 
+    if (!isSelf) {
+      const reports = await UserReport.findAll({
+        where: {
+          reporterId: viewerId,
+          targetUserId: resolvedUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+        attributes: ['targetType', 'momentId'],
+      });
+
+      const hasUserReport = reports.some(
+        (r) => r.targetType === 'user' || !r.momentId
+      );
+      if (hasUserReport) {
+        return {
+          type: 'feed',
+          page,
+          limit,
+          totalCount: 0,
+          totalPages: 0,
+          moments: [],
+        };
+      }
+
+      const reportedMomentIds = reports
+        .map((r) => r.momentId)
+        .filter((id): id is string => Boolean(id));
+
+      if (reportedMomentIds.length > 0) {
+        whereConditions.push({
+          id: { [Op.notIn]: reportedMomentIds },
+        });
+      }
+    }
+
     const { count, rows: moments } = await Moment.findAndCountAll({
       where: { [Op.and]: whereConditions },
       include: [
@@ -698,6 +734,22 @@ export class MomentService {
       if (b.blockedUserId === viewerId) blockedUserIds.add(b.userId);
     }
 
+    // 1b. Identify reported users and moments to filter out for viewer
+    const reports = await UserReport.findAll({
+      where: {
+        reporterId: viewerId,
+        status: { [Op.ne]: 'dismissed' },
+      },
+      attributes: ['targetUserId', 'momentId'],
+    });
+
+    const reportedUserIds = new Set<string>();
+    const reportedMomentIds = new Set<string>();
+    for (const r of reports) {
+      if (r.targetUserId) reportedUserIds.add(r.targetUserId);
+      if (r.momentId) reportedMomentIds.add(r.momentId);
+    }
+
     // 2. Identify matches for matches_only audience filter
     const matches = await Match.findAll({
       where: {
@@ -714,9 +766,16 @@ export class MomentService {
     // 3. Construct where conditions based on scope & privacy
     const whereConditions: any[] = [{ status: 'active' }];
 
-    if (blockedUserIds.size > 0) {
+    const excludedUserIds = new Set<string>([...blockedUserIds, ...reportedUserIds]);
+    if (excludedUserIds.size > 0) {
       whereConditions.push({
-        userId: { [Op.notIn]: Array.from(blockedUserIds) },
+        userId: { [Op.notIn]: Array.from(excludedUserIds) },
+      });
+    }
+
+    if (reportedMomentIds.size > 0) {
+      whereConditions.push({
+        id: { [Op.notIn]: Array.from(reportedMomentIds) },
       });
     }
 
@@ -1124,6 +1183,26 @@ export class MomentService {
           'Moment unavailable due to privacy restrictions',
           403,
           'MOMENT_BLOCKED'
+        );
+      }
+
+      // Check report restrictions
+      const reportRecord = await UserReport.findOne({
+        where: {
+          reporterId: viewerId,
+          [Op.or]: [
+            { momentId: moment.id },
+            { targetUserId: creator.id, targetType: 'user' },
+          ],
+          status: { [Op.ne]: 'dismissed' },
+        },
+      });
+
+      if (reportRecord) {
+        throw new MomentServiceError(
+          'Moment unavailable or has been reported',
+          404,
+          'MOMENT_NOT_FOUND'
         );
       }
 

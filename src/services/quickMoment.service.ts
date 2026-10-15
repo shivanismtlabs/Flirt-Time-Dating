@@ -5,6 +5,8 @@ import {
   QuickMomentView,
   User,
   Notification,
+  UserBlock,
+  UserReport,
 } from '../models';
 import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from './s3.service';
 
@@ -178,8 +180,34 @@ export class QuickMomentService {
       };
     }
 
+    // Exclude blocked and reported users from tray
+    const [blocks, reports] = await Promise.all([
+      UserBlock.findAll({
+        where: {
+          [Op.or]: [{ userId: viewerUserId }, { blockedUserId: viewerUserId }],
+        },
+      }),
+      UserReport.findAll({
+        where: {
+          reporterId: viewerUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+      }),
+    ]);
+
+    const excludedUserIds = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === viewerUserId) excludedUserIds.add(b.blockedUserId);
+      if (b.blockedUserId === viewerUserId) excludedUserIds.add(b.userId);
+    }
+    for (const r of reports) {
+      if (r.targetUserId) excludedUserIds.add(r.targetUserId);
+    }
+
     // 2. Group other users' stories
-    const otherMoments = activeMoments.filter((m) => m.userId !== viewerUserId);
+    const otherMoments = activeMoments.filter(
+      (m) => m.userId !== viewerUserId && !excludedUserIds.has(m.userId)
+    );
     const userGroups = new Map<string, typeof otherMoments>();
 
     for (const moment of otherMoments) {
@@ -390,6 +418,36 @@ export class QuickMomentService {
 
     if (!targetUser) {
       throw new QuickMomentServiceError('User not found', 404, 'USER_NOT_FOUND');
+    }
+
+    if (viewerUserId !== targetUserId) {
+      const isBlocked = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: viewerUserId, blockedUserId: targetUserId },
+            { userId: targetUserId, blockedUserId: viewerUserId },
+          ],
+        },
+      });
+      if (isBlocked) {
+        throw new QuickMomentServiceError('User unavailable due to privacy restrictions', 403, 'USER_BLOCKED');
+      }
+
+      const isReported = await UserReport.findOne({
+        where: {
+          reporterId: viewerUserId,
+          targetUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+      });
+      if (isReported) {
+        return {
+          userId: targetUserId,
+          authorDisplayName: targetUser.fullName?.split(' ')[0] || targetUser.nickName || 'User',
+          totalMoments: 0,
+          slides: [],
+        };
+      }
     }
 
     const moments = await QuickMoment.findAll({

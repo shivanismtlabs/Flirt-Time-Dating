@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
-import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto } from '../models';
+import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto, UserReport } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 
 export interface DiscoveryQueryInput {
@@ -217,10 +217,10 @@ export const resolveDisplayName = (user: any): string => {
 
 export class DiscoveryService {
   /**
-   * Retrieves excluded user IDs for the current user (self, swiped, blocked)
+   * Retrieves excluded user IDs for the current user (self, swiped, blocked, reported)
    */
   public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
-    const [existingSwipes, blocks] = await Promise.all([
+    const [existingSwipes, blocks, reports] = await Promise.all([
       SwipeAction.findAll({
         where: { userId: currentUserId },
         attributes: ['targetUserId'],
@@ -234,14 +234,26 @@ export class DiscoveryService {
         },
         attributes: ['userId', 'blockedUserId'],
       }),
+      UserReport.findAll({
+        where: {
+          reporterId: currentUserId,
+          status: { [Op.ne]: 'dismissed' },
+        },
+        attributes: ['targetUserId'],
+      }),
     ]);
 
     const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
     const blockedUserIds = blocks.map((b) =>
       b.userId === currentUserId ? b.blockedUserId : b.userId
     );
+    const reportedUserIds = reports
+      .map((r) => r.targetUserId)
+      .filter((id): id is string => Boolean(id));
 
-    return Array.from(new Set([currentUserId, ...swipedUserIds, ...blockedUserIds]));
+    return Array.from(
+      new Set([currentUserId, ...swipedUserIds, ...blockedUserIds, ...reportedUserIds])
+    );
   }
 
   /**

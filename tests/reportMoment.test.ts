@@ -491,4 +491,66 @@ describe('Report Moment API (POST /api/v1/moments/:momentId/report)', () => {
       expect(report!.targetType).toBe('user');
     });
   });
+
+  describe('11. Feed and Discovery Hiding for Reporter', () => {
+    it('should hide reported moment and its creator from feed and discovery for reporter', async () => {
+      // 1. Before report, reporter can see the moment in feed
+      const feedBefore = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${reporterToken}`);
+      expect(feedBefore.status).toBe(200);
+      const momentIdsBefore = feedBefore.body.data.moments.map((m: any) => m.id);
+      expect(momentIdsBefore).toContain(activeMoment.id);
+
+      // 2. Reporter reports the moment
+      const reportRes = await request(app)
+        .post(`/api/v1/moments/${activeMoment.id}/report`)
+        .set('Authorization', `Bearer ${reporterToken}`)
+        .send({
+          reason: 'harassment',
+          description: 'Harassing moment',
+        });
+      expect(reportRes.status).toBe(201);
+
+      // 3. After report, reporter must NOT see the moment or creator in moments feed
+      const feedAfter = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${reporterToken}`);
+      expect(feedAfter.status).toBe(200);
+      const momentIdsAfter = feedAfter.body.data.moments.map((m: any) => m.id);
+      expect(momentIdsAfter).not.toContain(activeMoment.id);
+      const creatorMoments = feedAfter.body.data.moments.filter(
+        (m: any) => m.userId === creatorUser.id
+      );
+      expect(creatorMoments.length).toBe(0);
+
+      // 4. Third-party user should still see the moment (it is not deleted globally)
+      const feedThirdParty = await request(app)
+        .get('/api/v1/moments')
+        .set('Authorization', `Bearer ${thirdPartyToken}`);
+      expect(feedThirdParty.status).toBe(200);
+      const thirdPartyIds = feedThirdParty.body.data.moments.map((m: any) => m.id);
+      expect(thirdPartyIds).toContain(activeMoment.id);
+
+      // 5. Reporter should not see creator in discovery feed
+      const discoveryRes = await request(app)
+        .get('/api/v1/discovery/people')
+        .set('Authorization', `Bearer ${reporterToken}`);
+      expect(discoveryRes.status).toBe(200);
+      const discoveryUserIds = discoveryRes.body.data.users.map((u: any) => u.userId);
+      expect(discoveryUserIds).not.toContain(creatorUser.id);
+
+      // 6. Direct moment detail for reporter should return 404
+      const detailRes = await request(app)
+        .get(`/api/v1/moments/${activeMoment.id}`)
+        .set('Authorization', `Bearer ${reporterToken}`);
+      expect(detailRes.status).toBe(404);
+
+      // 7. Direct moment detail for third party should succeed
+      const detailThirdParty = await request(app)
+        .get(`/api/v1/moments/${activeMoment.id}`)
+        .set('Authorization', `Bearer ${thirdPartyToken}`);
+      expect(detailThirdParty.status).toBe(200);
+    });
+  });
 });

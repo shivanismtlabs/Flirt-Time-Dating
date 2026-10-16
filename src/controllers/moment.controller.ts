@@ -597,7 +597,7 @@ export const getMomentCommentRepliesHandler = async (
 
     const momentId = req.params.momentId as string;
     const commentId = req.params.commentId as string;
-    const { page, limit } = req.query as any;
+    const { page, limit, format, flat } = req.query as any;
 
     const result = await momentService.getMomentCommentReplies(
       viewerId,
@@ -606,6 +606,8 @@ export const getMomentCommentRepliesHandler = async (
       {
         page: page ? Number(page) : undefined,
         limit: limit ? Number(limit) : undefined,
+        format: typeof format === 'string' ? format : undefined,
+        flat: flat === 'true' || flat === true,
       }
     );
 

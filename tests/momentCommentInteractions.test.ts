@@ -674,16 +674,12 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(getRepliesRes.status).toBe(200);
       expect(getRepliesRes.body.success).toBe(true);
       expect(getRepliesRes.body.data.totalReplies).toBe(4);
-      expect(getRepliesRes.body.data.replies).toHaveLength(4);
+      // Top-level replies should only contain direct replies (r1), with child replies properly nested in .replies
+      expect(getRepliesRes.body.data.replies).toHaveLength(1);
+      expect(getRepliesRes.body.data.replies[0].id).toBe(r1Id);
 
-      const returnedIds = getRepliesRes.body.data.replies.map((r: any) => r.id);
-      expect(returnedIds).toContain(r1Id);
-      expect(returnedIds).toContain(s1Id);
-      expect(returnedIds).toContain(t1Id);
-      expect(returnedIds).toContain(u1Id);
-
-      // Verify nested replies hierarchy on R1
-      const r1Item = getRepliesRes.body.data.replies.find((r: any) => r.id === r1Id);
+      // Verify nested replies hierarchy on R1 -> S1 -> T1 -> U1
+      const r1Item = getRepliesRes.body.data.replies[0];
       expect(r1Item.replies).toHaveLength(1);
       expect(r1Item.replies[0].id).toBe(s1Id);
 
@@ -695,6 +691,22 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(t1Item.replies).toHaveLength(1);
       expect(t1Item.replies[0].id).toBe(u1Id);
 
+      // Verify allReplies contains all 4 replies flat with clean replies: []
+      expect(getRepliesRes.body.data.allReplies).toHaveLength(4);
+      const allReturnedIds = getRepliesRes.body.data.allReplies.map((r: any) => r.id);
+      expect(allReturnedIds).toContain(r1Id);
+      expect(allReturnedIds).toContain(s1Id);
+      expect(allReturnedIds).toContain(t1Id);
+      expect(allReturnedIds).toContain(u1Id);
+      expect(getRepliesRes.body.data.allReplies[0].replies).toHaveLength(0);
+
+      // When requested with format=flat
+      const getRepliesFlatRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments/${commentId}/replies?format=flat`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+      expect(getRepliesFlatRes.status).toBe(200);
+      expect(getRepliesFlatRes.body.data.replies).toHaveLength(4);
+
       // 6. Fetch top-level comments list via GET /api/v1/moments/:momentId/comments
       const getCommentsRes = await request(app)
         .get(`/api/v1/moments/${momentId}/comments`)
@@ -704,9 +716,12 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(getCommentsRes.body.data.comments).toHaveLength(1);
       const commentData = getCommentsRes.body.data.comments[0];
       expect(commentData.repliesCount).toBe(4);
-      expect(commentData.replies).toHaveLength(4);
-      expect(commentData.replies.map((r: any) => r.id)).toContain(t1Id);
-      expect(commentData.replies.map((r: any) => r.id)).toContain(u1Id);
+      // Top-level replies under comment should only contain direct replies (length 1)
+      expect(commentData.replies).toHaveLength(1);
+      expect(commentData.replies[0].id).toBe(r1Id);
+      expect(commentData.replies[0].replies[0].id).toBe(s1Id);
+      // allReplies contains all 4
+      expect(commentData.allReplies).toHaveLength(4);
     });
 
     it('should cascade delete all nested sub-replies when root comment is deleted', async () => {

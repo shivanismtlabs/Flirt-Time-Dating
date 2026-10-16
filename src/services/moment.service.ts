@@ -1956,21 +1956,38 @@ export class MomentService {
             isVerified: !!r.sender?.isFaceVerified,
             city: r.sender?.city || null,
           },
-          replies: [] as any[],
         };
-        itemMap.set(formatted.id, formatted);
         formattedList.push(formatted);
       }
 
-      // Link nested sub-replies into parent reply's replies array
+      // 1. Clean flat list of all replies (no nested duplicates)
+      const flatList = formattedList.map((item) => ({
+        ...item,
+        replies: [] as any[],
+      }));
+
+      // 2. Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
+      const treeItemMap = new Map<string, any>();
+      const treeList: any[] = [];
       for (const item of formattedList) {
-        if (item.parentReplyId && itemMap.has(item.parentReplyId)) {
-          itemMap.get(item.parentReplyId).replies.push(item);
+        const treeItem = {
+          ...item,
+          user: { ...item.user },
+          replies: [] as any[],
+        };
+        treeItemMap.set(treeItem.id, treeItem);
+        treeList.push(treeItem);
+      }
+
+      for (const item of treeList) {
+        if (item.parentReplyId && treeItemMap.has(item.parentReplyId)) {
+          treeItemMap.get(item.parentReplyId).replies.push(item);
         }
       }
 
-      const directReplies = formattedList.filter(
-        (item) => !item.parentReplyId || item.parentReplyId === c.id || !itemMap.has(item.parentReplyId)
+      // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
+      const directReplies = treeList.filter(
+        (item) => !item.parentReplyId || item.parentReplyId === c.id || !treeItemMap.has(item.parentReplyId)
       );
 
       return {
@@ -1996,8 +2013,8 @@ export class MomentService {
           isVerified: !!c.sender?.isFaceVerified,
           city: c.sender?.city || null,
         },
-        replies: formattedList,
-        allReplies: formattedList,
+        replies: directReplies,
+        allReplies: flatList,
         nestedReplies: directReplies,
       };
     });
@@ -2539,7 +2556,7 @@ export class MomentService {
     viewerId: string,
     momentId: string,
     commentId: string,
-    options?: { page?: number; limit?: number }
+    options?: { page?: number; limit?: number; format?: string; flat?: boolean }
   ) {
     const moment = await Moment.findByPk(momentId);
     if (!moment || moment.status === 'deleted') {
@@ -2665,8 +2682,7 @@ export class MomentService {
       } catch {}
     }
 
-    const itemMap = new Map<string, any>();
-    const formattedList: any[] = [];
+    const rawFormattedList: any[] = [];
 
     for (const c of matchingReplies) {
       let meta: any = {};
@@ -2683,10 +2699,15 @@ export class MomentService {
 
       let replyToUName = meta?.replyToUsername || null;
       let replyToUId = meta?.replyToUserId || null;
-      if (!replyToUName && parentReplyId && replyMap.has(parentReplyId)) {
-        const pr = replyMap.get(parentReplyId);
-        replyToUName = pr.sender?.username || pr.sender?.fullName || null;
-        replyToUId = pr.senderId || null;
+      if (!replyToUName) {
+        if (parentReplyId && replyMap.has(parentReplyId)) {
+          const pr = replyMap.get(parentReplyId);
+          replyToUName = pr.sender?.username || pr.sender?.fullName || null;
+          replyToUId = pr.senderId || null;
+        } else if (!parentReplyId && parentComment) {
+          replyToUName = parentComment.sender?.username || parentComment.sender?.fullName || null;
+          replyToUId = parentComment.senderId || null;
+        }
       }
 
       const formatted = {
@@ -2723,25 +2744,47 @@ export class MomentService {
           isVerified: !!c.sender?.isFaceVerified,
           city: c.sender?.city || null,
         },
+      };
+      rawFormattedList.push(formatted);
+    }
+
+    // 1. Clean flat list of all replies (each item has empty replies: [], no nested duplication)
+    const flatList = rawFormattedList.map((item) => ({
+      ...item,
+      replies: [] as any[],
+    }));
+
+    // 2. Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
+    const treeItemMap = new Map<string, any>();
+    const treeList: any[] = [];
+    for (const item of rawFormattedList) {
+      const treeItem = {
+        ...item,
+        user: { ...item.user },
         replies: [] as any[],
       };
-      itemMap.set(formatted.id, formatted);
-      formattedList.push(formatted);
+      treeItemMap.set(treeItem.id, treeItem);
+      treeList.push(treeItem);
     }
 
     // Link nested sub-replies into parent reply's replies array
-    for (const item of formattedList) {
-      if (item.parentReplyId && itemMap.has(item.parentReplyId)) {
-        itemMap.get(item.parentReplyId).replies.push(item);
+    for (const item of treeList) {
+      if (item.parentReplyId && treeItemMap.has(item.parentReplyId)) {
+        treeItemMap.get(item.parentReplyId).replies.push(item);
       }
     }
 
-    const directReplies = formattedList.filter(
-      (item) => !item.parentReplyId || item.parentReplyId === commentId || !itemMap.has(item.parentReplyId)
+    // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
+    const directReplies = treeList.filter(
+      (item) => !item.parentReplyId || item.parentReplyId === commentId || !treeItemMap.has(item.parentReplyId)
     );
 
-    const totalReplies = formattedList.length;
-    const paginatedReplies = formattedList.slice(offset, offset + limit);
+    const isFlat = options?.format === 'flat' || options?.flat === true;
+    const targetList = isFlat ? flatList : directReplies;
+
+    const totalReplies = rawFormattedList.length;
+    const paginatedReplies = targetList.slice(offset, offset + limit);
+    const totalPages = Math.ceil(targetList.length / limit) || 1;
 
     return {
       commentId,
@@ -2749,7 +2792,7 @@ export class MomentService {
       totalReplies,
       page,
       limit,
-      totalPages: Math.ceil(totalReplies / limit),
+      totalPages,
       parentComment: {
         id: parentComment.id,
         comment: parentComment.content,
@@ -2769,7 +2812,7 @@ export class MomentService {
         },
       },
       replies: paginatedReplies,
-      allReplies: formattedList,
+      allReplies: flatList,
       nestedReplies: directReplies,
     };
   }

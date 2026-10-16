@@ -1,6 +1,7 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { User } from '../models/user.model';
+import { UserDevice } from '../models/userDevice.model';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import {
@@ -1099,3 +1100,33 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
     return sendError(res, error.message || 'Error resending phone OTP', 500);
   }
 };
+
+/**
+ * Delete Account API
+ * DELETE /api/v1/users/account (and aliases /api/v1/users/me, /api/v1/auth/delete-account)
+ * Permanently removes user account, deactivates device push tokens, and cascade deletes associated data.
+ */
+export const deleteAccountHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return sendError(res, 'User not found', 404);
+    }
+
+    // 1. Immediately deactivate all registered devices for push notifications
+    await UserDevice.update({ isActive: false }, { where: { userId } });
+
+    // 2. Permanently delete user record (foreign keys with CASCADE clean up related records)
+    await user.destroy();
+
+    return sendSuccess(res, 'Account deleted successfully', { deleted: true });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error deleting account', 500);
+  }
+};
+

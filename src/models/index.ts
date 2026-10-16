@@ -1,5 +1,5 @@
 import { sequelize } from '../config/database';
-import { User } from './user.model';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from './user.model';
 import { PhoneVerification } from './phoneVerification.model';
 import { EmailVerification } from './emailVerification.model';
 import { UserIdentity } from './userIdentity.model';
@@ -39,6 +39,7 @@ import { UserSubscription } from './userSubscription.model';
 import { SubscriptionEventLog } from './subscriptionEventLog.model';
 import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
 import { NotificationOutbox } from './notificationOutbox.model';
+import { NotificationSetting } from './notificationSetting.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -49,6 +50,20 @@ User.hasOne(UserDiscoveryPreference, {
 });
 
 UserDiscoveryPreference.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+User.hasOne(NotificationSetting, {
+  foreignKey: 'userId',
+  as: 'notificationSetting',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+NotificationSetting.belongsTo(User, {
   foreignKey: 'userId',
   as: 'user',
   onDelete: 'CASCADE',
@@ -656,6 +671,9 @@ export {
   UserDiscoveryPreference,
   MomentCommentLike,
   NotificationOutbox,
+  NotificationSetting,
+  DEFAULT_NOTIFY_SETTINGS,
+  NotificationSettings,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -831,6 +849,29 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
                 ALTER TABLE "users" ADD COLUMN "lastActiveAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'notification_settings') THEN
+                ALTER TABLE "users" ADD COLUMN "notification_settings" JSONB DEFAULT '{"new_message":true,"new_matches":true,"likes_comments_calls":true,"profile_visit":true,"new_tips_available":false,"push":true,"email":false,"app_updates":true,"promotions":false,"discounts":false}'::jsonb;
+              END IF;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'notification_settings') THEN
+              CREATE TABLE IF NOT EXISTS "notification_settings" (
+                "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                "userId" UUID NOT NULL UNIQUE REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+                "new_messages" BOOLEAN NOT NULL DEFAULT true,
+                "new_matches" BOOLEAN NOT NULL DEFAULT true,
+                "like_comments" BOOLEAN NOT NULL DEFAULT true,
+                "profile_visits" BOOLEAN NOT NULL DEFAULT true,
+                "dating_tips" BOOLEAN NOT NULL DEFAULT false,
+                "push_notifications" BOOLEAN NOT NULL DEFAULT true,
+                "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+            ELSE
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'notification_settings' AND column_name = 'dating_tips') THEN
+                ALTER TABLE "notification_settings" ADD COLUMN "dating_tips" BOOLEAN DEFAULT false;
               END IF;
             END IF;
 
@@ -1080,6 +1121,7 @@ export const initDb = async (force = false): Promise<void> => {
     await ensureCoinPurchaseTables();
     await UserDiscoveryPreference.sync();
     await MomentCommentLike.sync();
+    await NotificationSetting.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();

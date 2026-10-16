@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
-import { User } from '../models/user.model';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from '../models/user.model';
 import { UserDevice } from '../models/userDevice.model';
+import { NotificationSetting } from '../models/notificationSetting.model';
+import { notificationService } from '../services/notification.service';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import {
@@ -250,6 +252,17 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     // 7. Structured Profile Object (only requested fields, no redundant data)
     const moreAboutMe = formatMoreAboutMe(user);
 
+    let userNotifySettings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
+    try {
+      const settingRecord = await NotificationSetting.findOne({ where: { userId } });
+      if (settingRecord) {
+        userNotifySettings = {
+          ...userNotifySettings,
+          ...settingRecord.toResponseJSON(),
+        };
+      }
+    } catch {}
+
     const profileData = {
       id: user.id,
       username: user.username,
@@ -303,6 +316,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       relationship: user.relationship || null,
       children: user.children || null,
       moreAboutMe,
+      notify_settings: userNotifySettings,
+      notificationSettings: userNotifySettings,
     };
 
     // 8. Clean response payload with no internal or redundant data
@@ -332,6 +347,8 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       moments: permanentMoments,
       voiceIntro,
       quickMoments: quickMomentsSummary,
+      notify_settings: user.notificationSettings || DEFAULT_NOTIFY_SETTINGS,
+      notificationSettings: user.notificationSettings || DEFAULT_NOTIFY_SETTINGS,
     };
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -362,6 +379,24 @@ export const getOtherUserProfileHandler = async (req: AuthenticatedRequest, res:
     }
 
     const profileData = await getOtherUserProfile(viewerUserId, targetUserId);
+
+    if (viewerUserId !== targetUserId) {
+      // Asynchronously dispatch profile visit notification without blocking profile response
+      const viewerName = (req.user as any)?.username || 'Someone';
+      notificationService
+        .dispatchNotification(targetUserId, {
+          type: 'profile_visit',
+          title: 'New Profile Visit',
+          body: `${viewerName} checked out your profile!`,
+          senderId: viewerUserId,
+          entityId: viewerUserId,
+          navigation: { type: 'profile', targetId: viewerUserId },
+          idempotencyKey: `profile_visit_${viewerUserId}_${targetUserId}_${new Date().toISOString().slice(0, 13)}`,
+        })
+        .catch((err) => {
+          console.warn('[Profile Visit Notification Warn]:', err.message);
+        });
+    }
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -1162,4 +1197,162 @@ export const deleteAccountHandler = async (req: AuthenticatedRequest, res: Respo
     return sendError(res, error.message || 'Error deleting account', 500);
   }
 };
+
+/**
+ * Controller to get user's notification preferences
+ * GET /api/v1/users/notification-settings
+ */
+export const getNotificationSettingsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const [setting] = await NotificationSetting.findOrCreate({
+      where: { userId },
+      defaults: {
+        userId,
+        newMessages: true,
+        newMatches: true,
+        likeComments: true,
+        profileVisits: true,
+        datingTips: false,
+        pushNotifications: true,
+      },
+    });
+
+    const responseData = setting.toResponseJSON();
+
+    return sendSuccess(res, 'Notification settings fetched successfully', {
+      settings: responseData,
+      notify_settings: responseData,
+      notificationSettings: responseData,
+      ...responseData,
+    });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error fetching notification settings', 500);
+  }
+};
+
+/**
+ * Controller to update user's notification preferences
+ * PATCH /api/v1/users/notification-settings (and PUT /api/v1/users/notification-settings)
+ */
+export const updateNotificationSettingsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const [setting] = await NotificationSetting.findOrCreate({
+      where: { userId },
+      defaults: {
+        userId,
+        newMessages: true,
+        newMatches: true,
+        likeComments: true,
+        profileVisits: true,
+        datingTips: false,
+        pushNotifications: true,
+      },
+    });
+
+    const incoming =
+      req.body?.notify_settings ||
+      req.body?.notificationSettings ||
+      req.body ||
+      {};
+
+    // 1. New Messages
+    if (incoming.new_messages !== undefined) {
+      setting.newMessages = Boolean(incoming.new_messages);
+    } else if (incoming.new_message !== undefined) {
+      setting.newMessages = Boolean(incoming.new_message);
+    } else if (incoming.newMessages !== undefined) {
+      setting.newMessages = Boolean(incoming.newMessages);
+    }
+
+    // 2. New Matches
+    if (incoming.new_matches !== undefined) {
+      setting.newMatches = Boolean(incoming.new_matches);
+    } else if (incoming.newMatches !== undefined) {
+      setting.newMatches = Boolean(incoming.newMatches);
+    }
+
+    // 3. Likes & comments (not for calls)
+    if (incoming.like_comments !== undefined) {
+      setting.likeComments = Boolean(incoming.like_comments);
+    } else if (incoming.likes_comments_calls !== undefined) {
+      setting.likeComments = Boolean(incoming.likes_comments_calls);
+    } else if (incoming.likeComments !== undefined) {
+      setting.likeComments = Boolean(incoming.likeComments);
+    }
+
+    // 4. Profile visits
+    if (incoming.profile_visits !== undefined) {
+      setting.profileVisits = Boolean(incoming.profile_visits);
+    } else if (incoming.profile_visit !== undefined) {
+      setting.profileVisits = Boolean(incoming.profile_visit);
+    } else if (incoming.profileVisits !== undefined) {
+      setting.profileVisits = Boolean(incoming.profileVisits);
+    }
+
+    // 5. Dating tips
+    if (incoming.dating_tips !== undefined) {
+      setting.datingTips = Boolean(incoming.dating_tips);
+    } else if (incoming.new_tips_available !== undefined) {
+      setting.datingTips = Boolean(incoming.new_tips_available);
+    } else if (incoming.datingTips !== undefined) {
+      setting.datingTips = Boolean(incoming.datingTips);
+    }
+
+    // 6. Global Push notifications switch
+    if (incoming.push_notifications !== undefined) {
+      setting.pushNotifications = Boolean(incoming.push_notifications);
+    } else if (incoming.push !== undefined) {
+      setting.pushNotifications = Boolean(incoming.push);
+    } else if (incoming.pushNotifications !== undefined) {
+      setting.pushNotifications = Boolean(incoming.pushNotifications);
+    }
+
+    await setting.save();
+
+    const responseData = setting.toResponseJSON();
+
+    // Also update legacy user.notificationSettings column for complete backward compatibility
+    try {
+      const user = await User.findByPk(userId);
+      if (user) {
+        user.notificationSettings = {
+          ...(user.notificationSettings || DEFAULT_NOTIFY_SETTINGS),
+          new_message: setting.newMessages,
+          new_matches: setting.newMatches,
+          likes_comments_calls: setting.likeComments,
+          profile_visit: setting.profileVisits,
+          new_tips_available: setting.datingTips,
+          push: setting.pushNotifications,
+        };
+        await user.save();
+      }
+    } catch {}
+
+    return sendSuccess(res, 'Notification settings updated successfully', {
+      settings: responseData,
+      notify_settings: responseData,
+      notificationSettings: responseData,
+      ...responseData,
+    });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error updating notification settings', 500);
+  }
+};
+
 

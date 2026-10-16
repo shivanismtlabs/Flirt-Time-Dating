@@ -24,6 +24,8 @@ import {
   verifyProfilePhoneOtpHandler,
   resendProfilePhoneOtpHandler,
   deleteAccountHandler,
+  getNotificationSettingsHandler,
+  updateNotificationSettingsHandler,
 } from '../controllers/user.controller';
 import { deleteAccountSchema } from '../schemas/auth.schema';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
@@ -45,6 +47,7 @@ import {
   requestProfilePhoneOtpSchema,
   verifyProfilePhoneOtpSchema,
   resendProfilePhoneOtpSchema,
+  notificationSettingsSchema,
 } from '../schemas/user.schema';
 import { getUserMomentsHandler } from '../controllers/moment.controller';
 import { getUserMomentsSchema } from '../schemas/moment.schema';
@@ -117,6 +120,11 @@ router.post('/profile/phone/resend-otp', validate(resendProfilePhoneOtpSchema), 
 router.get('/more-about-me', getMoreAboutMeHandler);
 router.patch('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
 router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
+
+// Notification Preferences Endpoints
+router.get('/notification-settings', getNotificationSettingsHandler);
+router.patch('/notification-settings', validate(notificationSettingsSchema), updateNotificationSettingsHandler);
+router.put('/notification-settings', validate(notificationSettingsSchema), updateNotificationSettingsHandler);
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));

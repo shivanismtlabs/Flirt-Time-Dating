@@ -1,6 +1,32 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export interface NotificationSettings {
+  new_message: boolean;
+  new_matches: boolean;
+  likes_comments_calls: boolean;
+  profile_visit: boolean;
+  new_tips_available: boolean;
+  push: boolean;
+  email?: boolean;
+  app_updates?: boolean;
+  promotions?: boolean;
+  discounts?: boolean;
+}
+
+export const DEFAULT_NOTIFY_SETTINGS: NotificationSettings = {
+  new_message: true,
+  new_matches: true,
+  likes_comments_calls: true,
+  profile_visit: true,
+  new_tips_available: false,
+  push: true,
+  email: false,
+  app_updates: true,
+  promotions: false,
+  discounts: false,
+};
+
 export interface UserAttributes {
   id: string;
   username: string;
@@ -45,6 +71,7 @@ export interface UserAttributes {
   isSubscribed?: boolean;
   subscriptionExpiresAt?: Date | null;
   activeSubscriptionPlanId?: number | null;
+  notificationSettings?: NotificationSettings | null;
   lastActiveAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
@@ -96,6 +123,7 @@ export interface UserCreationAttributes
     | 'isSubscribed'
     | 'subscriptionExpiresAt'
     | 'activeSubscriptionPlanId'
+    | 'notificationSettings'
     | 'lastActiveAt'
   > {}
 
@@ -144,6 +172,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public isSubscribed: boolean;
   declare public subscriptionExpiresAt: Date | null;
   declare public activeSubscriptionPlanId: number | null;
+  declare public notificationSettings: NotificationSettings | null;
   declare public lastActiveAt: Date | null;
 
   declare public readonly createdAt: Date;
@@ -153,6 +182,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public interests?: any[];
   declare public photos?: any[];
   declare public discoveryPreference?: any;
+  declare public notificationSetting?: any;
 
   // Omit sensitive data when converting to JSON
   public toJSON(): Omit<UserAttributes, 'password'> {
@@ -362,6 +392,12 @@ User.init(
       type: DataTypes.INTEGER,
       allowNull: true,
       field: 'active_subscription_plan_id',
+    },
+    notificationSettings: {
+      type: DataTypes.JSON,
+      allowNull: true,
+      defaultValue: DEFAULT_NOTIFY_SETTINGS,
+      field: 'notification_settings',
     },
     lastActiveAt: {
       type: DataTypes.DATE,

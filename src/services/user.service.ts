@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { User } from '../models/user.model';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from '../models/user.model';
 import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
@@ -114,6 +114,8 @@ export interface UpdateProfileInput {
     relationship?: string | null;
     children?: string | null;
   };
+  notify_settings?: Partial<NotificationSettings> | null;
+  notificationSettings?: Partial<NotificationSettings> | null;
 }
 
 export class ServiceError extends Error {
@@ -402,6 +404,51 @@ export const updateUserProfile = async (
   }
   if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
     user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
+  }
+
+  const incomingNotifySettings = data.notify_settings || data.notificationSettings;
+  if (incomingNotifySettings && typeof incomingNotifySettings === 'object') {
+    const existingSettings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
+    user.notificationSettings = {
+      ...existingSettings,
+      ...incomingNotifySettings,
+    };
+
+    try {
+      const { NotificationSetting } = await import('../models/notificationSetting.model');
+      const [setting] = await NotificationSetting.findOrCreate({
+        where: { userId },
+        defaults: {
+          userId,
+          newMessages: true,
+          newMatches: true,
+          likeComments: true,
+          profileVisits: true,
+          datingTips: false,
+          pushNotifications: true,
+        },
+      });
+
+      const inc = incomingNotifySettings as any;
+      if (inc.new_messages !== undefined) setting.newMessages = Boolean(inc.new_messages);
+      else if (inc.new_message !== undefined) setting.newMessages = Boolean(inc.new_message);
+
+      if (inc.new_matches !== undefined) setting.newMatches = Boolean(inc.new_matches);
+
+      if (inc.like_comments !== undefined) setting.likeComments = Boolean(inc.like_comments);
+      else if (inc.likes_comments_calls !== undefined) setting.likeComments = Boolean(inc.likes_comments_calls);
+
+      if (inc.profile_visits !== undefined) setting.profileVisits = Boolean(inc.profile_visits);
+      else if (inc.profile_visit !== undefined) setting.profileVisits = Boolean(inc.profile_visit);
+
+      if (inc.dating_tips !== undefined) setting.datingTips = Boolean(inc.dating_tips);
+      else if (inc.new_tips_available !== undefined) setting.datingTips = Boolean(inc.new_tips_available);
+
+      if (inc.push_notifications !== undefined) setting.pushNotifications = Boolean(inc.push_notifications);
+      else if (inc.push !== undefined) setting.pushNotifications = Boolean(inc.push);
+
+      await setting.save();
+    } catch {}
   }
 
   const incomingPhoto = data.profilePicture ?? data.profilePhoto ?? (data as any).imageKey;

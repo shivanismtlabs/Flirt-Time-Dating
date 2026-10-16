@@ -156,8 +156,13 @@ export class NotificationOutboxService {
         );
       }
 
-      // Check if notification reached at least DB in-app record or FCM
-      if (pushResult.inAppCreated || pushResult.pushStatus === 'sent_to_fcm' || pushResult.pushStatus === 'no_device_tokens') {
+      // Check if notification reached at least DB in-app record or FCM or was intentionally suppressed by user settings
+      if (
+        pushResult.inAppCreated ||
+        pushResult.pushStatus === 'sent_to_fcm' ||
+        pushResult.pushStatus === 'no_device_tokens' ||
+        pushResult.pushStatus === 'suppressed_by_settings'
+      ) {
         outboxItem.status = 'sent';
         outboxItem.processedAt = new Date();
         outboxItem.lastError = null;

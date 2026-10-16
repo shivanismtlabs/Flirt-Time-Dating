@@ -1,13 +1,13 @@
 import { Op, WhereOptions } from 'sequelize';
 import { getFirebaseMessaging } from '../config/firebase';
-import { Notification, UserDevice, User, UserPhoto } from '../models';
+import { Notification, UserDevice, User, UserPhoto, NotificationSetting } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { resolveDisplayName } from './discovery.service';
 import type { MulticastMessage, BatchResponse } from 'firebase-admin/messaging';
 
 export interface PushNotificationResult {
   inAppCreated: boolean;
-  pushStatus: 'sent_to_fcm' | 'no_device_tokens' | 'failed';
+  pushStatus: 'sent_to_fcm' | 'no_device_tokens' | 'failed' | 'suppressed_by_settings';
   inAppNotificationId?: string;
   successCount?: number;
   failureCount?: number;
@@ -125,6 +125,118 @@ export class NotificationService {
       }
     }
     return photo ? formatThumbnailUrl(photo, photoVersion) : null;
+  }
+
+  /**
+   * Checks whether push notifications are enabled for the recipient and this event type.
+   * Rules:
+   * 1. Global master pushNotifications switch: When false, NOT a single notification is triggered.
+   * 2. Calls are explicitly blocked from push.
+   * 3. Category checks:
+   *    - New messages (newMessages)
+   *    - New matches (newMatches)
+   *    - Like & comments (likeComments)
+   *    - Profile visits (profileVisits)
+   */
+  public shouldSendPush(settings: any, type: string): boolean {
+    if (!settings) {
+      return true; // default all enabled
+    }
+
+    // 1. Master push switch: when OFF, not a single notification triggers!
+    const isMasterPushOn =
+      settings.pushNotifications !== undefined
+        ? settings.pushNotifications
+        : settings.push_notifications !== undefined
+        ? settings.push_notifications
+        : settings.push !== undefined
+        ? settings.push
+        : true;
+
+    if (!isMasterPushOn) {
+      return false;
+    }
+
+    const normalizedType = (type || '').toLowerCase();
+
+    // Calls are explicitly excluded
+    if (normalizedType.includes('call')) {
+      return false;
+    }
+
+    // New messages
+    if (normalizedType.includes('message') || normalizedType.includes('chat')) {
+      const allowed =
+        settings.newMessages !== undefined
+          ? settings.newMessages
+          : settings.new_messages !== undefined
+          ? settings.new_messages
+          : settings.new_message !== undefined
+          ? settings.new_message
+          : true;
+      return Boolean(allowed);
+    }
+
+    // New matches
+    if (normalizedType.includes('match') || normalizedType.includes('connection')) {
+      const allowed =
+        settings.newMatches !== undefined
+          ? settings.newMatches
+          : settings.new_matches !== undefined
+          ? settings.new_matches
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Like & comments (reactions, likes, moment comments) - NOT calls
+    if (
+      normalizedType.includes('like') ||
+      normalizedType.includes('comment') ||
+      normalizedType.includes('reaction') ||
+      normalizedType.includes('compliment')
+    ) {
+      const allowed =
+        settings.likeComments !== undefined
+          ? settings.likeComments
+          : settings.like_comments !== undefined
+          ? settings.like_comments
+          : settings.likes_comments_calls !== undefined
+          ? settings.likes_comments_calls
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Profile visits
+    if (
+      normalizedType.includes('visit') ||
+      normalizedType.includes('view') ||
+      normalizedType.includes('profile')
+    ) {
+      const allowed =
+        settings.profileVisits !== undefined
+          ? settings.profileVisits
+          : settings.profile_visits !== undefined
+          ? settings.profile_visits
+          : settings.profile_visit !== undefined
+          ? settings.profile_visit
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Dating tips
+    if (normalizedType.includes('tip')) {
+      const allowed =
+        settings.datingTips !== undefined
+          ? settings.datingTips
+          : settings.dating_tips !== undefined
+          ? settings.dating_tips
+          : settings.new_tips_available !== undefined
+          ? settings.new_tips_available
+          : false;
+      return Boolean(allowed);
+    }
+
+    return true;
   }
 
   /**
@@ -250,7 +362,39 @@ export class NotificationService {
       throw dbErr;
     }
 
-    // 3. Query active device tokens for the recipient
+    // 3. Check user notification settings from notification_settings table before sending push
+    try {
+      const settingRecord = await NotificationSetting.findOne({
+        where: { userId: recipientId },
+      });
+
+      let settings: any = settingRecord;
+      if (!settings) {
+        const recipientUser = await User.findByPk(recipientId, {
+          attributes: ['id', 'notificationSettings'],
+        });
+        settings = recipientUser?.notificationSettings;
+      }
+
+      const isPushAllowed = this.shouldSendPush(settings, type);
+
+      if (!isPushAllowed) {
+        return {
+          inAppCreated: true,
+          pushStatus: 'suppressed_by_settings',
+          inAppNotificationId: createdRecord.id,
+          successCount: 0,
+          failureCount: 0,
+          message:
+            'Notification saved in DB, but push was suppressed by user notification settings',
+        };
+      }
+    } catch (checkErr: any) {
+      console.warn('[Notification Settings Check Warn]:', checkErr.message);
+      // Fallback: proceed with push if check encounters error
+    }
+
+    // 4. Query active device tokens for the recipient
     const devices = await UserDevice.findAll({
       where: { userId: recipientId, isActive: true },
       attributes: ['deviceToken', 'platform'],

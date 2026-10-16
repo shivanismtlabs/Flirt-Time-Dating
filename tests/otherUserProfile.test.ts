@@ -198,6 +198,10 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(Array.isArray(data.interests)).toBe(true);
       expect(data.interests.length).toBe(2);
       expect(data.sharedInterests).toEqual(['Cooking']);
+      expect(data.commonInterestsCount).toBe(1);
+      expect(data.profileMatchPercentage).toBe(50);
+      expect(data.profile_match_percentage).toBeUndefined();
+      expect(data.common_interests_count).toBeUndefined();
       expect(data.action).toBeNull();
       expect(data.myAction).toBeNull();
       expect(data.isMatched).toBe(false);
@@ -729,6 +733,51 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(Array.isArray(res.body.data.photos)).toBe(true);
       expect(res.body.data.photos.length).toBe(3);
       expect(res.body.data.totalPhotos).toBe(3);
+    });
+  });
+
+  describe('18. Profile Match Percentage & Compatibility Verification', () => {
+    it('should compute combined match percentage with preferences (70% interests + 30% lookingFor)', async () => {
+      // Set lookingFor for both viewer and target to matching preference
+      await viewerUser.update({ lookingFor: 'long_term' });
+      await targetUser.update({ lookingFor: 'relationship' }); // maps to 'long_term'
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      // 1 common interest / max(2, 2) = 50%
+      // Looking for matches = 100%
+      // Combined: round(0.7 * 50 + 0.3 * 100) = round(35 + 30) = 65%
+      expect(data.profileMatchPercentage).toBe(65);
+      expect(data.commonInterestsCount).toBe(1);
+    });
+
+    it('should compute 100% profileMatchPercentage when viewing self', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${viewerUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.profileMatchPercentage).toBe(100);
+    });
+
+    it('should return 0% profileMatchPercentage when there are no shared interests and no matching preferences', async () => {
+      // Remove all interests from target user
+      await UserInterest.destroy({ where: { userId: targetUser.id } });
+      await viewerUser.update({ lookingFor: 'casual' });
+      await targetUser.update({ lookingFor: 'long_term' });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.sharedInterests).toEqual([]);
+      expect(res.body.data.commonInterestsCount).toBe(0);
+      expect(res.body.data.profileMatchPercentage).toBe(0);
     });
   });
 });

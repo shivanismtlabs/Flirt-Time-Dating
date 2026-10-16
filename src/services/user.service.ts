@@ -3,6 +3,7 @@ import { User } from '../models/user.model';
 import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
+import { calculateProfileMatchPercentage } from '../utils/compatibility';
 
 export interface LocationDTO {
   city: string | null;
@@ -585,6 +586,8 @@ export interface OtherUserProfileResponse {
     icon: string | null;
   }>;
   sharedInterests: string[];
+  commonInterestsCount: number;
+  profileMatchPercentage: number;
   action: 'like' | 'nope' | 'super_like' | null;
   myAction: 'like' | 'nope' | 'super_like' | null;
   isMatched: boolean;
@@ -677,16 +680,42 @@ export const getOtherUserProfile = async (
     throw new ServiceError('Authenticated user not found', 404);
   }
 
-  // 4. Derive shared interests & vibe score
+  // 4. Derive shared interests, vibe score & profile match percentage
   const targetInterests = (targetUser.interests || []) as any[];
   const viewerInterests = (viewerUser.interests || []) as any[];
-  const viewerInterestNames = new Set(
-    viewerInterests.map((i: any) => i.name.toLowerCase())
-  );
 
-  const sharedInterests = targetInterests
-    .filter((i: any) => viewerInterestNames.has(i.name.toLowerCase()))
-    .map((i: any) => i.name);
+  // Match shared interests using canonical interest IDs, with fallback to display names
+  const viewerInterestIdSet = new Set<string>();
+  const viewerInterestNames = new Set<string>();
+  for (const i of viewerInterests) {
+    if (i.id) viewerInterestIdSet.add(i.id);
+    if (i.name) viewerInterestNames.add(i.name.toLowerCase());
+  }
+
+  const sharedNamesSet = new Set<string>();
+  for (const interest of targetInterests) {
+    if (
+      (interest.id && viewerInterestIdSet.has(interest.id)) ||
+      (interest.name && viewerInterestNames.has(interest.name.toLowerCase()))
+    ) {
+      sharedNamesSet.add(interest.name);
+    }
+  }
+  const sharedInterests = Array.from(sharedNamesSet);
+  const commonInterestsCount = sharedInterests.length;
+
+  const viewerInterestIds = viewerInterests.map((i: any) => i.id);
+  const candidateInterestIds = targetInterests.map((i: any) => i.id);
+
+  const profileMatchPercentage =
+    viewerUserId === targetUserId
+      ? 100
+      : calculateProfileMatchPercentage({
+          viewerInterestIds,
+          candidateInterestIds,
+          viewerLookingFor: viewerUser.lookingFor,
+          candidateLookingFor: targetUser.lookingFor,
+        });
 
   const vibeScore = calculateVibeScore(
     sharedInterests.length,
@@ -924,6 +953,8 @@ export const getOtherUserProfile = async (
       icon: i.icon || null,
     })),
     sharedInterests,
+    commonInterestsCount,
+    profileMatchPercentage,
     action,
     myAction,
     isMatched,

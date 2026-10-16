@@ -281,6 +281,11 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       interests: formattedInterests,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
+      // Subscription & Wallet fields
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 500,
       // More about me direct fields
       drinking: user.drinking || null,
       education: user.education || null,
@@ -303,6 +308,10 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     const profileResponse = {
       id: user.id,
       username: user.username,
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 500,
       profilePhoto: primaryProfilePhoto,
       profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,

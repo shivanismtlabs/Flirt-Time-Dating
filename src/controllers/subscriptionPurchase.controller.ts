@@ -61,6 +61,7 @@ export const verifySubscriptionPurchaseHandler = async (
         },
         status: result.subscription.status,
         isEntitled: result.isEntitled,
+        isSubscribed: result.isEntitled,
         startsAt: result.subscription.startsAt,
         expiresAt: result.subscription.expiresAt,
         autoRenewing: result.subscription.autoRenewing,

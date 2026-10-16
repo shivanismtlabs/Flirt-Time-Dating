@@ -463,6 +463,7 @@ export class DiscoveryService {
         age: calculateAge(user.dateOfBirth),
         profilePhoto: primaryPhotoKey ? formatThumbnailUrl(primaryPhotoKey, photoVersion) : null,
         isVerified: !!user.isFaceVerified,
+        isSubscribed: !!user.isSubscribed,
         city: user.city || 'Mumbai',
         distanceKm,
         vibeScore,

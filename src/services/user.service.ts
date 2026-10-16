@@ -519,6 +519,7 @@ export interface OtherUserProfileResponse {
   fullName: string;
   age: number | null;
   isVerified: boolean;
+  isSubscribed?: boolean;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
   photos: OtherUserProfilePhotoDTO[];
@@ -885,6 +886,7 @@ export const getOtherUserProfile = async (
     fullName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
+    isSubscribed: !!targetUser.isSubscribed,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
     photos: formattedPhotos,

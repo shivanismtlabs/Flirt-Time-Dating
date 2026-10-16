@@ -138,7 +138,8 @@ export const verifyAppleTransaction = async (transactionId: string) => {
     const payloadBase64 = signedTransactionInfo.split('.')[1];
     const decodedPayload = JSON.parse(Buffer.from(payloadBase64, 'base64').toString('utf8'));
 
-    if (decodedPayload.bundleId && decodedPayload.bundleId !== IOS_IAP_BUNDLE_ID) {
+    const validBundleIds = new Set([IOS_IAP_BUNDLE_ID, 'com.flirttime', 'com.flirttime.app', 'com.app.flirttime']);
+    if (decodedPayload.bundleId && !validBundleIds.has(decodedPayload.bundleId)) {
       throw new IAPServiceError(
         `Bundle ID mismatch. Expected ${IOS_IAP_BUNDLE_ID}, got ${decodedPayload.bundleId}`,
         400,
@@ -308,9 +309,27 @@ export class IAPService {
     if (header.x5c && Array.isArray(header.x5c) && header.x5c.length > 0) {
       try {
         const leafCertPem = `-----BEGIN CERTIFICATE-----\n${header.x5c[0]}\n-----END CERTIFICATE-----`;
-        const verifier = crypto.createVerify('sha256');
-        verifier.update(`${headerB64}.${payloadB64}`);
-        const isValid = verifier.verify(leafCertPem, Buffer.from(signatureB64, 'base64url'));
+        let isValid = false;
+
+        // Apple StoreKit 2 ES256 signatures are IEEE-P1363 formatted (RFC 7515 / RFC 7518)
+        try {
+          isValid = crypto.verify(
+            'sha256',
+            Buffer.from(`${headerB64}.${payloadB64}`),
+            { key: leafCertPem, dsaEncoding: 'ieee-p1363' },
+            Buffer.from(signatureB64, 'base64url')
+          );
+        } catch (_ieeeErr) {
+          isValid = false;
+        }
+
+        if (!isValid) {
+          // Fallback to standard DER format
+          const verifier = crypto.createVerify('sha256');
+          verifier.update(`${headerB64}.${payloadB64}`);
+          isValid = verifier.verify(leafCertPem, Buffer.from(signatureB64, 'base64url'));
+        }
+
         if (!isValid) {
           throw new IAPServiceError('Apple JWS signature verification failed', 400, 'INVALID_JWS_SIGNATURE');
         }
@@ -321,6 +340,13 @@ export class IAPService {
     }
 
     return payload;
+  }
+
+  public isMatchingAppleBundleId(bundleId?: string): boolean {
+    if (!bundleId) return true;
+    const expected = this.getAppleBundleId();
+    const valid = new Set([expected, 'com.flirttime', 'com.flirttime.app', 'com.app.flirttime']);
+    return valid.has(bundleId);
   }
 
   /**
@@ -346,10 +372,9 @@ export class IAPService {
     if (signedTransactionInfo) {
       const decodedPayload = this.decodeAndVerifyAppleJWS(signedTransactionInfo);
 
-      const expectedBundleId = this.getAppleBundleId();
-      if (decodedPayload.bundleId && decodedPayload.bundleId !== expectedBundleId) {
+      if (decodedPayload.bundleId && !this.isMatchingAppleBundleId(decodedPayload.bundleId)) {
         throw new IAPServiceError(
-          `Bundle ID mismatch. Expected ${expectedBundleId}, got ${decodedPayload.bundleId}`,
+          `Bundle ID mismatch. Expected ${this.getAppleBundleId()}, got ${decodedPayload.bundleId}`,
           400,
           'BUNDLE_ID_MISMATCH'
         );
@@ -562,10 +587,9 @@ export class IAPService {
     if (signedTransactionInfo) {
       const decodedPayload = this.decodeAndVerifyAppleJWS(signedTransactionInfo);
 
-      const expectedBundleId = this.getAppleBundleId();
-      if (decodedPayload.bundleId && decodedPayload.bundleId !== expectedBundleId) {
+      if (decodedPayload.bundleId && !this.isMatchingAppleBundleId(decodedPayload.bundleId)) {
         throw new IAPServiceError(
-          `Bundle ID mismatch. Expected ${expectedBundleId}, got ${decodedPayload.bundleId}`,
+          `Bundle ID mismatch. Expected ${this.getAppleBundleId()}, got ${decodedPayload.bundleId}`,
           400,
           'BUNDLE_ID_MISMATCH'
         );

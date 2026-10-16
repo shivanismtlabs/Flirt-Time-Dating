@@ -382,16 +382,13 @@ export const getOtherUserProfileHandler = async (req: AuthenticatedRequest, res:
 
     if (viewerUserId !== targetUserId) {
       // Asynchronously dispatch profile visit notification without blocking profile response
-      const viewerName = (req.user as any)?.username || 'Someone';
+      const viewerUser = req.user as any;
+      const viewerName =
+        viewerUser?.firstName || viewerUser?.nickName || viewerUser?.username || 'Someone';
       notificationService
-        .dispatchNotification(targetUserId, {
-          type: 'profile_visit',
-          title: 'New Profile Visit',
-          body: `${viewerName} checked out your profile!`,
-          senderId: viewerUserId,
-          entityId: viewerUserId,
-          navigation: { type: 'profile', targetId: viewerUserId },
-          idempotencyKey: `profile_visit_${viewerUserId}_${targetUserId}_${new Date().toISOString().slice(0, 13)}`,
+        .sendProfileVisitNotification(targetUserId, {
+          visitorId: viewerUserId,
+          visitorName: viewerName,
         })
         .catch((err) => {
           console.warn('[Profile Visit Notification Warn]:', err.message);
@@ -1227,12 +1224,7 @@ export const getNotificationSettingsHandler = async (
 
     const responseData = setting.toResponseJSON();
 
-    return sendSuccess(res, 'Notification settings fetched successfully', {
-      settings: responseData,
-      notify_settings: responseData,
-      notificationSettings: responseData,
-      ...responseData,
-    });
+    return sendSuccess(res, 'Notification settings fetched successfully', responseData);
   } catch (error: any) {
     return sendError(res, error.message || 'Error fetching notification settings', 500);
   }
@@ -1344,12 +1336,7 @@ export const updateNotificationSettingsHandler = async (
       }
     } catch {}
 
-    return sendSuccess(res, 'Notification settings updated successfully', {
-      settings: responseData,
-      notify_settings: responseData,
-      notificationSettings: responseData,
-      ...responseData,
-    });
+    return sendSuccess(res, 'Notification settings updated successfully', responseData);
   } catch (error: any) {
     return sendError(res, error.message || 'Error updating notification settings', 500);
   }

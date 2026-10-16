@@ -6,7 +6,8 @@ import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
-import { ChatMessage } from '../models';
+import { ChatMessage, Moment, User } from '../models';
+import { notificationService } from '../services/notification.service';
 
 /**
  * Controller to create and publish a new Moment
@@ -282,6 +283,23 @@ export const reactMomentHandler = async (
       reaction
     );
 
+    // Asynchronously dispatch reaction notification to moment author
+    (async () => {
+      try {
+        const momentRecord = await Moment.findByPk(momentId, { attributes: ['id', 'userId'] });
+        if (momentRecord && momentRecord.userId !== viewerId) {
+          const senderUser = await User.findByPk(viewerId, { attributes: ['id', 'firstName', 'nickName', 'username'] });
+          const senderName = senderUser?.firstName || senderUser?.nickName || senderUser?.username || 'Someone';
+          await notificationService.sendLikeNotification(momentRecord.userId, {
+            senderId: viewerId,
+            senderName,
+            momentId,
+            reaction,
+          });
+        }
+      } catch {}
+    })();
+
     return sendSuccess(res, 'Reaction saved successfully', result, 200);
   } catch (error: any) {
     if (error instanceof MomentServiceError) {
@@ -323,6 +341,24 @@ export const likeMomentHandler = async (
       momentId,
       action
     );
+
+    // Asynchronously dispatch like notification to moment author if liked
+    if (result.isLiked) {
+      (async () => {
+        try {
+          const momentRecord = await Moment.findByPk(momentId, { attributes: ['id', 'userId'] });
+          if (momentRecord && momentRecord.userId !== viewerId) {
+            const senderUser = await User.findByPk(viewerId, { attributes: ['id', 'firstName', 'nickName', 'username'] });
+            const senderName = senderUser?.firstName || senderUser?.nickName || senderUser?.username || 'Someone';
+            await notificationService.sendLikeNotification(momentRecord.userId, {
+              senderId: viewerId,
+              senderName,
+              momentId,
+            });
+          }
+        } catch {}
+      })();
+    }
 
     const message = result.isLiked
       ? 'Moment liked successfully'
@@ -545,6 +581,27 @@ export const likeMomentCommentHandler = async (
       commentId,
       { action, reaction, momentId }
     );
+
+    // Asynchronously dispatch like notification to comment author if liked
+    if (result.isLiked) {
+      (async () => {
+        try {
+          const commentMsg = await ChatMessage.findByPk(commentId, { attributes: ['id', 'senderId'] });
+          if (commentMsg && commentMsg.senderId !== userId) {
+            const senderUser = await User.findByPk(userId, { attributes: ['id', 'firstName', 'nickName', 'username'] });
+            const senderName = senderUser?.firstName || senderUser?.nickName || senderUser?.username || 'Someone';
+            await notificationService.dispatchNotification(commentMsg.senderId, {
+              type: 'comment_like',
+              title: 'Comment Liked ❤️',
+              body: `${senderName} liked your comment!`,
+              senderId: userId,
+              entityId: momentId || commentId,
+              navigation: { type: 'moment', targetId: momentId || commentId },
+            });
+          }
+        } catch {}
+      })();
+    }
 
     const message = result.isLiked
       ? 'Comment liked successfully'

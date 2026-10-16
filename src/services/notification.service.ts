@@ -606,6 +606,214 @@ export class NotificationService {
   }
 
   /**
+   * Dispatches notification for a new message
+   */
+  public async sendMessageNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      message: string;
+      conversationId?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const preview =
+      input.message.length > 70 ? `${input.message.slice(0, 67)}...` : input.message;
+    return this.dispatchNotification(recipientId, {
+      type: 'new_message',
+      title: input.senderName,
+      body: preview,
+      senderId: input.senderId,
+      entityId: input.conversationId || input.senderId,
+      navigation: {
+        type: 'chat',
+        targetId: input.conversationId || input.senderId,
+      },
+      data: {
+        type: 'chat',
+        conversationId: input.conversationId || '',
+        senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches mutual match notifications to both matched users
+   */
+  public async sendMatchNotification(
+    user1Id: string,
+    user2Id: string,
+    input: {
+      user1Name: string;
+      user2Name: string;
+      matchId: string;
+    }
+  ): Promise<void> {
+    try {
+      await Promise.allSettled([
+        this.dispatchNotification(user1Id, {
+          type: 'match',
+          title: "It's a Match! 🎉",
+          body: `You and ${input.user2Name} liked each other! Start chatting now.`,
+          senderId: user2Id,
+          entityId: input.matchId,
+          navigation: { type: 'match', targetId: input.matchId },
+          data: { matchId: input.matchId, partnerName: input.user2Name },
+        }),
+        this.dispatchNotification(user2Id, {
+          type: 'match',
+          title: "It's a Match! 🎉",
+          body: `You and ${input.user1Name} liked each other! Start chatting now.`,
+          senderId: user1Id,
+          entityId: input.matchId,
+          navigation: { type: 'match', targetId: input.matchId },
+          data: { matchId: input.matchId, partnerName: input.user1Name },
+        }),
+      ]);
+    } catch {}
+  }
+
+  /**
+   * Dispatches notification for a like or reaction on a profile or moment
+   */
+  public async sendLikeNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      isSuper?: boolean;
+      momentId?: string;
+      reaction?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const isSuper = !!input.isSuper;
+    const isMoment = !!input.momentId;
+    const title = isSuper
+      ? 'New Super Like! ⭐'
+      : isMoment
+      ? 'Moment Liked ❤️'
+      : 'New Like ❤️';
+    const body = isMoment
+      ? `${input.senderName} liked your moment!`
+      : isSuper
+      ? `${input.senderName} super liked your profile!`
+      : `${input.senderName} liked your profile!`;
+
+    return this.dispatchNotification(recipientId, {
+      type: isMoment ? 'moment_like' : isSuper ? 'super_like' : 'like',
+      title,
+      body,
+      senderId: input.senderId,
+      entityId: input.momentId || input.senderId,
+      navigation: {
+        type: isMoment ? 'moment' : 'profile',
+        targetId: input.momentId || input.senderId,
+      },
+      data: {
+        senderId: input.senderId,
+        senderName: input.senderName,
+        momentId: input.momentId || '',
+        reaction: input.reaction || 'like',
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification for a comment or reply on a moment
+   */
+  public async sendCommentNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      comment: string;
+      momentId: string;
+      commentId?: string;
+      isReply?: boolean;
+    }
+  ): Promise<PushNotificationResult> {
+    const snippet =
+      input.comment.length > 60 ? `${input.comment.slice(0, 57)}...` : input.comment;
+    const title = input.isReply
+      ? 'New Reply to Your Comment 💬'
+      : 'New Comment on Your Moment 💬';
+    const body = `${input.senderName}: "${snippet}"`;
+
+    return this.dispatchNotification(recipientId, {
+      type: input.isReply ? 'moment_comment_reply' : 'moment_comment',
+      title,
+      body,
+      senderId: input.senderId,
+      entityId: input.momentId,
+      navigation: {
+        type: 'moment',
+        targetId: input.momentId,
+      },
+      data: {
+        momentId: input.momentId,
+        commentId: input.commentId || '',
+        senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification for a profile visit
+   */
+  public async sendProfileVisitNotification(
+    recipientId: string,
+    input: {
+      visitorId: string;
+      visitorName: string;
+    }
+  ): Promise<PushNotificationResult> {
+    return this.dispatchNotification(recipientId, {
+      type: 'profile_visit',
+      title: 'Profile Visit 👀',
+      body: `${input.visitorName} viewed your profile!`,
+      senderId: input.visitorId,
+      entityId: input.visitorId,
+      navigation: {
+        type: 'profile',
+        targetId: input.visitorId,
+      },
+      data: {
+        visitorId: input.visitorId,
+        visitorName: input.visitorName,
+      },
+      idempotencyKey: `profile_visit_${input.visitorId}_${recipientId}_${new Date().toISOString().slice(0, 13)}`,
+    });
+  }
+
+  /**
+   * Dispatches a Dating Tip alert to a user
+   */
+  public async sendDatingTipNotification(
+    recipientId: string,
+    input: {
+      title?: string;
+      body: string;
+      tipId?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    return this.dispatchNotification(recipientId, {
+      type: 'dating_tip',
+      title: input.title || 'Dating Tip 💡',
+      body: input.body,
+      entityId: input.tipId || '',
+      navigation: {
+        type: 'dating_tips',
+        targetId: input.tipId || '',
+      },
+      data: {
+        tipId: input.tipId || '',
+      },
+    });
+  }
+
+  /**
    * Get Notifications grouped into Today, Yesterday, and Earlier sections with cursor pagination
    */
   public async getGroupedNotifications(

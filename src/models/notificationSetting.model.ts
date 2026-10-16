@@ -57,12 +57,6 @@ export class NotificationSetting
       profile_visits: this.profileVisits,
       dating_tips: this.datingTips,
       push_notifications: this.pushNotifications,
-      // Backward-compatible aliases for mobile screens
-      new_message: this.newMessages,
-      likes_comments_calls: this.likeComments,
-      profile_visit: this.profileVisits,
-      new_tips_available: this.datingTips,
-      push: this.pushNotifications,
     };
   }
 }

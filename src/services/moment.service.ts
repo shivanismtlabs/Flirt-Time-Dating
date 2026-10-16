@@ -27,6 +27,7 @@ import {
 import { calculateInterestMatchPercentage } from '../utils/compatibility';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
+import { notificationService } from './notification.service';
 
 export class MomentServiceError extends Error {
   public statusCode: number;
@@ -1797,6 +1798,26 @@ export class MomentService {
     conversation.lastMessageAt = now;
     await conversation.save();
 
+    if (moment.userId !== senderId) {
+      (async () => {
+        try {
+          const senderUser = await User.findByPk(senderId, {
+            attributes: ['id', 'username', 'fullName', 'nickName'],
+          });
+          const senderDisplayName =
+            senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
+          await notificationService.sendCommentNotification(moment.userId, {
+            senderId,
+            senderName: senderDisplayName,
+            comment: trimmedMessage,
+            momentId: moment.id,
+            commentId: chatMessage.id,
+            isReply: false,
+          });
+        } catch {}
+      })();
+    }
+
     return {
       id: chatMessage.id,
       commentId: chatMessage.id,
@@ -2620,25 +2641,13 @@ export class MomentService {
           trimmedMessage.length > 50
             ? `${trimmedMessage.slice(0, 47)}...`
             : trimmedMessage;
-        await Notification.create({
-          recipientId: targetRecipientId,
+        await notificationService.sendCommentNotification(targetRecipientId, {
           senderId,
-          type: 'moment_comment_reply',
-          title: 'New Reply to Your Comment 💬',
-          body: `${senderDisplayName} replied: "${snippet}"`,
-          entityId: chatMessage.id,
-          data: {
-            replyId: chatMessage.id,
-            commentId: rootCommentId,
-            parentCommentId: rootCommentId,
-            parentReplyId: effectiveParentReplyId,
-            replyToUserId: targetRecipientId,
-            replyToUsername: targetRecipientUsername,
-            momentId: moment.id,
-            senderId,
-            senderName: senderDisplayName,
-          },
-          isRead: false,
+          senderName: senderDisplayName,
+          comment: trimmedMessage,
+          momentId: moment.id,
+          commentId: chatMessage.id,
+          isReply: true,
         });
       } catch {}
     }
@@ -3778,6 +3787,33 @@ export class MomentService {
       conversation.lastMessage = giftMsgContent;
       conversation.lastMessageAt = new Date();
       await conversation.save();
+
+      if (moment.userId !== senderId) {
+        (async () => {
+          try {
+            const senderUser = await User.findByPk(senderId, {
+              attributes: ['id', 'username', 'fullName', 'nickName'],
+            });
+            const senderDisplayName =
+              senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
+            await notificationService.dispatchNotification(moment.userId, {
+              type: 'moment_gift',
+              title: 'Gift Received! 🎁',
+              body: `${senderDisplayName} sent you a gift (${gift.name} ${gift.icon}) on your Moment!`,
+              senderId,
+              entityId: moment.id,
+              navigation: { type: 'moment', targetId: moment.id },
+              data: {
+                type: 'gift',
+                momentId: moment.id,
+                giftCode: gift.code,
+                giftName: gift.name,
+                senderName: senderDisplayName,
+              },
+            });
+          } catch {}
+        })();
+      }
     } catch (_chatErr) {
       // Safe to ignore chat record failure
     }

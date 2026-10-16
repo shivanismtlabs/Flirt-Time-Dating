@@ -178,6 +178,8 @@ export const updateProfileSchema = z.object({
     coverPicture: z.string().trim().max(500).optional().nullable(),
     coverPhoto: z.string().trim().max(500).optional().nullable(),
     moreAboutMe: z.record(z.any()).optional().nullable(),
+    notify_settings: z.record(z.any()).optional().nullable(),
+    notificationSettings: z.record(z.any()).optional().nullable(),
   }),
 });
 
@@ -445,5 +447,46 @@ export const resendProfilePhoneOtpSchema = z.object({
       path: ['verificationId'],
     }),
 });
+
+export const notifySettingsObjectSchema = z.object({
+  new_message: z.boolean().optional(),
+  new_messages: z.boolean().optional(),
+  new_matches: z.boolean().optional(),
+  likes_comments_calls: z.boolean().optional(),
+  like_comments: z.boolean().optional(),
+  profile_visit: z.boolean().optional(),
+  profile_visits: z.boolean().optional(),
+  dating_tips: z.boolean().optional(),
+  new_tips_available: z.boolean().optional(),
+  push: z.boolean().optional(),
+  push_notifications: z.boolean().optional(),
+  email: z.boolean().optional(),
+  app_updates: z.boolean().optional(),
+  promotions: z.boolean().optional(),
+  discounts: z.boolean().optional(),
+});
+
+export const notificationSettingsSchema = z.object({
+  body: z.object({
+    notify_settings: notifySettingsObjectSchema.optional(),
+    notificationSettings: notifySettingsObjectSchema.optional(),
+    new_message: z.boolean().optional(),
+    new_messages: z.boolean().optional(),
+    new_matches: z.boolean().optional(),
+    likes_comments_calls: z.boolean().optional(),
+    like_comments: z.boolean().optional(),
+    profile_visit: z.boolean().optional(),
+    profile_visits: z.boolean().optional(),
+    dating_tips: z.boolean().optional(),
+    new_tips_available: z.boolean().optional(),
+    push: z.boolean().optional(),
+    push_notifications: z.boolean().optional(),
+    email: z.boolean().optional(),
+    app_updates: z.boolean().optional(),
+    promotions: z.boolean().optional(),
+    discounts: z.boolean().optional(),
+  }),
+});
+
 
 

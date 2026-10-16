@@ -312,9 +312,10 @@ export class NotificationService {
       data?: Record<string, any> | null;
       navigation?: NotificationNavigationDTO;
       idempotencyKey?: string;
+      isForeground?: boolean;
     }
   ): Promise<PushNotificationResult> {
-    const { type, title, body, senderId, entityId, navigation, idempotencyKey } = input;
+    const { type, title, body, senderId, entityId, navigation, idempotencyKey, isForeground } = input;
 
     // 1. Idempotency / deduplication check
     if (idempotencyKey || entityId) {
@@ -418,12 +419,17 @@ export class NotificationService {
     // 4. Dispatch Multicast Message via Firebase Admin
     try {
       const messaging = getFirebaseMessaging();
+      const isAppForeground = Boolean(isForeground);
       const message: MulticastMessage = {
         tokens,
-        notification: {
-          title,
-          body,
-        },
+        ...(isAppForeground
+          ? {} // When foregrounded: data-only FCM to prevent duplicate system tray popup
+          : {
+              notification: {
+                title,
+                body,
+              },
+            }),
         data: {
           id: String(createdRecord.id),
           type,
@@ -432,37 +438,54 @@ export class NotificationService {
           navType: String(navigation?.type || type),
           navTargetId: String(navigation?.targetId || entityId || ''),
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          isForeground: isAppForeground ? 'true' : 'false',
+          title,
+          body,
           ...(input.data
             ? Object.fromEntries(
                 Object.entries(input.data).map(([k, v]) => [k, String(v ?? '')])
               )
             : {}),
         },
-        android: {
-          priority: 'high',
-          notification: {
-            title,
-            body,
-            sound: 'default',
-            priority: 'high',
-            defaultSound: true,
-            defaultVibrateTimings: true,
-          },
-        },
-        apns: {
-          headers: {
-            'apns-priority': '10',
-            'apns-push-type': 'alert',
-          },
-          payload: {
-            aps: {
-              alert: { title, body },
-              sound: 'default',
-              badge: 1,
-              contentAvailable: true,
+        android: isAppForeground
+          ? { priority: 'high' }
+          : {
+              priority: 'high',
+              notification: {
+                title,
+                body,
+                sound: 'default',
+                priority: 'high',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+              },
             },
-          },
-        },
+        apns: isAppForeground
+          ? {
+              headers: {
+                'apns-priority': '5',
+                'apns-push-type': 'background',
+              },
+              payload: {
+                aps: {
+                  contentAvailable: true,
+                },
+              },
+            }
+          : {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: {
+                aps: {
+                  alert: { title, body },
+                  sound: 'default',
+                  badge: 1,
+                  contentAvailable: true,
+                },
+              },
+            },
       };
 
       const response: BatchResponse = await messaging.sendEachForMulticast(message);
@@ -908,6 +931,7 @@ export class NotificationService {
       coinsCredited: number;
       currentBalance: number;
       idempotencyKey?: string;
+      isForeground?: boolean;
     }
   ): Promise<PushNotificationResult> {
     const title = 'Coins Added! 🪙';
@@ -919,6 +943,7 @@ export class NotificationService {
       body,
       entityId: input.purchaseId,
       idempotencyKey: input.idempotencyKey || `coin_purchase_${input.purchaseId}`,
+      isForeground: input.isForeground,
       navigation: {
         type: 'wallet',
         targetId: input.purchaseId,

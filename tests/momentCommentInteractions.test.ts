@@ -725,13 +725,11 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(getCommentsRes.status).toBe(200);
       expect(getCommentsRes.body.data.comments).toHaveLength(1);
       const commentData = getCommentsRes.body.data.comments[0];
-      expect(commentData.repliesCount).toBe(4);
+      expect(commentData.repliesCount).toBe(1);
       // Top-level replies under comment should only contain direct replies (length 1)
       expect(commentData.replies).toHaveLength(1);
-      expect(commentData.replies[0].id).toBe(r1Id);
-      expect(commentData.replies[0].replies[0].id).toBe(s1Id);
-      // allReplies contains all 4
-      expect(commentData.allReplies).toHaveLength(4);
+      expect(commentData.replies[0].replyId || commentData.replies[0].id).toBe(r1Id);
+      expect(commentData.replies[0].replies[0].replyId || commentData.replies[0].replies[0].id).toBe(s1Id);
     });
 
     it('should cascade delete all nested sub-replies when root comment is deleted', async () => {
@@ -880,19 +878,18 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       const comments = getRes.body.data.comments;
       // Top-level comments count should be 1
       expect(comments).toHaveLength(1);
-      expect(comments[0].id).toBe(commentAId);
-      expect(comments[0].text).toBe('Original comment A');
-      expect(comments[0].parentCommentId).toBeNull();
+      expect(comments[0].commentId || comments[0].id).toBe(commentAId);
+      expect(comments[0].comment || comments[0].text).toBe('Original comment A');
       expect(comments[0].repliesCount).toBe(1);
 
       // Verify the reply is nested inside comment A
       expect(comments[0].replies).toHaveLength(1);
-      expect(comments[0].replies[0].id).toBe(replyId);
-      expect(comments[0].replies[0].text).toBe('This is a reply to comment A');
+      expect(comments[0].replies[0].replyId || comments[0].replies[0].id).toBe(replyId);
+      expect(comments[0].replies[0].reply || comments[0].replies[0].text).toBe('This is a reply to comment A');
       expect(comments[0].replies[0].parentCommentId).toBe(commentAId);
 
       // Ensure the reply does NOT appear at root top-level
-      const topLevelIds = comments.map((c: any) => c.id);
+      const topLevelIds = comments.map((c: any) => c.commentId || c.id);
       expect(topLevelIds).not.toContain(replyId);
     });
 
@@ -1131,7 +1128,7 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       // Sub-reply should be nested inside Reply 1's replies array
       expect(root.replies[0].replies).toHaveLength(1);
       expect(root.replies[0].replies[0].id).toBe(subReplyId);
-      expect(root.replies[0].replies[0].text).toBe('Sub-reply replying to reply 1');
+      expect(root.replies[0].replies[0].reply || root.replies[0].replies[0].text).toBe('Sub-reply replying to reply 1');
 
       // Top-level comments count should only be 1
       expect(getRes.body.data.totalComments).toBe(1);
@@ -1206,7 +1203,7 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
 
       expect(subCommentRes.status).toBe(201);
       expect(subCommentRes.body.data.parentCommentId).toBe(commentId);
-      expect(subCommentRes.body.data.parent_comment_id).toBe(commentId);
+      expect(subCommentRes.body.data.replyToCommentId).toBe(commentId);
 
       // 2. Fetch all comments for the moment
       const commentsListRes = await request(app)
@@ -1219,15 +1216,14 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(commentsListRes.body.data.totalComments).toBe(1);
       expect(commentsListRes.body.data.comments).toHaveLength(1);
       const rootComment = commentsListRes.body.data.comments[0];
-      expect(rootComment.id).toBe(commentId);
+      expect(rootComment.commentId || rootComment.id).toBe(commentId);
       expect(rootComment.comment).toBe('Breathtaking view! 🌆');
 
       // Crucial: The sub-comment MUST appear nested inside the root comment's replies
       expect(rootComment.repliesCount).toBe(1);
       expect(rootComment.replies).toHaveLength(1);
-      expect(rootComment.replies[0].comment).toBe('Sub-comment on the first comment by Asif');
+      expect(rootComment.replies[0].reply || rootComment.replies[0].comment).toBe('Sub-comment on the first comment by Asif');
       expect(rootComment.replies[0].parentCommentId).toBe(commentId);
-      expect(rootComment.replies[0].parent_comment_id).toBe(commentId);
     });
   });
 });

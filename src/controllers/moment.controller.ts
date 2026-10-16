@@ -438,7 +438,32 @@ export const getMomentCommentsHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { page, limit } = req.query as any;
+    const { page, limit, format, flat } = req.query as any;
+
+    const queryParentId = (
+      req.query.parentId ||
+      req.query.parent_id ||
+      req.query.commentId ||
+      req.query.comment_id
+    ) as string | undefined;
+
+    if (queryParentId && typeof queryParentId === 'string' && queryParentId.trim()) {
+      const repliesResult = await momentService.getMomentCommentReplies(
+        viewerId,
+        momentId,
+        queryParentId.trim(),
+        {
+          page: page ? Number(page) : undefined,
+          limit: limit ? Number(limit) : undefined,
+          format: format as string | undefined,
+          flat: flat === 'true' || flat === true,
+        }
+      );
+      return sendSuccess(res, 'Comment replies fetched successfully', {
+        ...repliesResult,
+        comments: repliesResult.replies,
+      }, 200);
+    }
 
     const result = await momentService.getMomentComments(viewerId, momentId, {
       page: page ? Number(page) : undefined,
@@ -638,6 +663,12 @@ export const replyMomentCommentHandler = async (
     const rawParentReplyId =
       req.body?.parentReplyId ||
       req.body?.parent_reply_id ||
+      (req.body?.parentId && req.body.parentId !== commentId ? req.body.parentId : null) ||
+      (req.body?.parent_id && req.body.parent_id !== commentId ? req.body.parent_id : null) ||
+      (req.body?.replyId && req.body.replyId !== commentId ? req.body.replyId : null) ||
+      (req.body?.reply_id && req.body.reply_id !== commentId ? req.body.reply_id : null) ||
+      (req.body?.replyToCommentId && req.body.replyToCommentId !== commentId ? req.body.replyToCommentId : null) ||
+      (req.body?.reply_to_comment_id && req.body.reply_to_comment_id !== commentId ? req.body.reply_to_comment_id : null) ||
       req.query?.parentReplyId ||
       req.query?.parent_reply_id;
 

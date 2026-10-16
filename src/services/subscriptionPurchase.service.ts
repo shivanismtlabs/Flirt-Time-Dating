@@ -10,6 +10,7 @@ import {
 } from '../models';
 import { iapService, IAPServiceError, VerifiedSubscriptionDetails } from './iap.service';
 import { subscriptionService } from './subscription.service';
+import { subscriptionDateService } from './subscriptionDate.service';
 import {
   VerifySubscriptionPurchaseInput,
   SubscriptionHistoryQuery,
@@ -246,6 +247,22 @@ export class SubscriptionPurchaseService {
         let balanceAfter = balanceBefore;
         let awardedBonus = 0;
 
+        const billingCycle = this.resolveBillingCycle(plan, storeDetails.productId);
+        const purchaseDate =
+          subscriptionDateService.parseStoreTimestamp(storeDetails.purchaseDate) || new Date();
+        const verifiedStoreExpiry = subscriptionDateService.parseStoreTimestamp(storeDetails.expiresDate);
+
+        // Authoritative Store Expiry (Requirement 4): Use provider-verified Apple/Google transaction expiry.
+        // Never overwrite verified dates with a locally guessed expiry. Fall back to interval only if store date is missing.
+        const effectiveExpiresDate =
+          verifiedStoreExpiry ||
+          subscriptionDateService.calculateIntervalExpiry(
+            purchaseDate,
+            billingCycle,
+            plan.duration_days,
+            storeDetails.productId
+          );
+
         // Create subscription record
         const subscription = await UserSubscription.create(
           {
@@ -258,8 +275,8 @@ export class SubscriptionPurchaseService {
             purchaseToken: storeDetails.purchaseToken || null,
             status: storeDetails.status,
             isEntitled: storeDetails.isEntitled,
-            startsAt: storeDetails.purchaseDate,
-            expiresAt: storeDetails.expiresDate,
+            startsAt: purchaseDate,
+            expiresAt: effectiveExpiresDate,
             gracePeriodExpiresAt: storeDetails.gracePeriodExpiresDate || null,
             autoRenewing: storeDetails.autoRenewing,
             cancelReason: storeDetails.cancelReason || null,
@@ -299,7 +316,7 @@ export class SubscriptionPurchaseService {
 
         // Update user subscription entitlement fields
         user.isSubscribed = storeDetails.isEntitled;
-        user.subscriptionExpiresAt = storeDetails.expiresDate;
+        user.subscriptionExpiresAt = effectiveExpiresDate;
         user.activeSubscriptionPlanId = plan.id;
         await user.save({ transaction: t });
 
@@ -361,7 +378,6 @@ export class SubscriptionPurchaseService {
     };
   }
 
-  /**
   /**
    * Resolves canonical billing cycle from plan duration, plan name, and store product ID.
    * Guarantees a seven-day plan never incorrectly shows a monthly billing cycle.
@@ -510,53 +526,73 @@ export class SubscriptionPurchaseService {
       });
     }
 
-    const now = new Date();
-    const expiresAtDate = new Date(sub.expiresAt);
-    const hasNotExpired = expiresAtDate.getTime() > now.getTime();
-    const isRevokedOrRefunded = sub.status === 'revoked' || sub.status === 'refunded';
+    // Resolve canonical billing cycle and plan duration
+    const billingCycle = this.resolveBillingCycle(plan, sub.productId);
+    const durationDays =
+      plan?.duration_days ??
+      (billingCycle === 'weekly' ? 7 : billingCycle === 'monthly' ? 30 : billingCycle === 'yearly' ? 365 : 7);
+    const includedCoins = Number(sub.bonusCoinsAmount || plan?.bonus_coins || 0);
 
-    // User is entitled now if not revoked/refunded, entitled flag is true, and (not expired OR in grace period)
+    const now = new Date();
+    const startsAtDate =
+      subscriptionDateService.parseStoreTimestamp(sub.startsAt) ||
+      subscriptionDateService.parseStoreTimestamp(sub.createdAt) ||
+      now;
+
+    // Authoritative Provider-Verified Expiry (Requirement 4 & 9):
+    // Use provider-verified store expiry. Never overwrite verified dates with a locally guessed expiry.
+    // Fall back to interval calculation only if sub.expiresAt is missing or invalid.
+    const rawExpiresAt = subscriptionDateService.parseStoreTimestamp(sub.expiresAt);
+    const expiresAtDate =
+      rawExpiresAt ||
+      subscriptionDateService.calculateIntervalExpiry(startsAtDate, billingCycle, durationDays, sub.productId);
+
+    const isExpired = subscriptionDateService.isExpired(expiresAtDate, now);
+    const hasNotExpired = !isExpired;
+    const isRevokedOrRefunded = sub.status === 'revoked' || sub.status === 'refunded';
+    const isGracePeriodActive =
+      sub.status === 'in_grace_period' &&
+      (!sub.gracePeriodExpiresAt || new Date(sub.gracePeriodExpiresAt).getTime() > now.getTime());
+
+    // User is entitled now if not revoked/refunded, entitled flag is true, and (not expired OR in active grace period)
     const isEntitledNow =
       !isRevokedOrRefunded &&
       Boolean(sub.isEntitled) &&
-      (hasNotExpired || sub.status === 'in_grace_period');
+      (hasNotExpired || isGracePeriodActive);
 
     // Authoritative subscription status
     let status: string;
     if (isRevokedOrRefunded) {
       status = sub.status;
-    } else if (!hasNotExpired && sub.status !== 'in_grace_period') {
-      status = 'expired';
+    } else if (isExpired) {
+      status = isGracePeriodActive ? 'in_grace_period' : 'expired';
     } else {
-      status = sub.status;
+      // Not expired: if canceled or autoRenewing is false, status is 'canceled'
+      if (!sub.autoRenewing || sub.status === 'canceled') {
+        status = 'canceled';
+      } else {
+        status = sub.status === 'expired' ? 'active' : sub.status;
+      }
     }
 
-    // Dynamic remaining validity calculated from authoritative expiresAt
-    const isExpired = !hasNotExpired;
-    let remainingValidity = {
-      days: 0,
-      hours: 0,
-      minutes: 0,
-    };
+    // Dynamic remaining validity calculated dynamically against current server time
+    // Expired subscriptions must not show positive remaining validity (Requirement 6)
+    const remainingValidity = subscriptionDateService.calculateRemainingValidity(expiresAtDate, now);
 
-    if (hasNotExpired) {
-      const diffMs = Math.max(0, expiresAtDate.getTime() - now.getTime());
-      const totalMinutes = Math.floor(diffMs / (60 * 1000));
-      const totalHours = Math.floor(totalMinutes / 60);
-      const days = Math.floor(totalHours / 24);
-      const hours = totalHours % 24;
-      const minutes = totalMinutes % 60;
-
-      remainingValidity = { days, hours, minutes };
-    }
-
-    // Auto-renewal status and next renewal date (only when verified and available)
+    // Auto-renewal status and next renewal date (only when verified, active, and unexpired)
     const autoRenewing = Boolean(sub.autoRenewing && isEntitledNow && status === 'active');
-    const nextRenewalDate = autoRenewing && !isExpired ? expiresAtDate.toISOString() : null;
+    const nextRenewalDate = subscriptionDateService.calculateNextRenewalDate(
+      { autoRenewing, status, expiresAt: expiresAtDate, isEntitled: isEntitledNow },
+      now
+    );
 
-    // Synchronize User table state if status transitioned to expired
+    // Synchronize User and Subscription table state if status transitioned
     if (!isEntitledNow && user.isSubscribed) {
       user.isSubscribed = false;
+      await user.save();
+    } else if (isEntitledNow && !user.isSubscribed) {
+      user.isSubscribed = true;
+      user.subscriptionExpiresAt = expiresAtDate;
       await user.save();
     }
     if (status === 'expired' && (sub.isEntitled || sub.status === 'active')) {
@@ -586,13 +622,6 @@ export class SubscriptionPurchaseService {
 
     benefits.sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
 
-    // Resolve canonical billing cycle (prevent 7-day plans from showing monthly)
-    const billingCycle = this.resolveBillingCycle(plan, sub.productId);
-    const durationDays =
-      plan?.duration_days ??
-      (billingCycle === 'weekly' ? 7 : billingCycle === 'monthly' ? 30 : 0);
-    const includedCoins = Number(sub.bonusCoinsAmount || plan?.bonus_coins || 0);
-
     const price = plan
       ? typeof plan.price === 'number'
         ? plan.price.toFixed(2)
@@ -610,7 +639,7 @@ export class SubscriptionPurchaseService {
         platform: sub.platform,
         productId: sub.productId,
         status,
-        startsAt: sub.startsAt instanceof Date ? sub.startsAt.toISOString() : sub.startsAt,
+        startsAt: startsAtDate.toISOString(),
         expiresAt: expiresAtDate.toISOString(),
         isExpired,
         remainingValidity,
@@ -743,18 +772,21 @@ export class SubscriptionPurchaseService {
           newStatus = 'active';
           isEntitled = true;
           if (transactionInfo.expiresDate) {
-            sub.expiresAt = new Date(Number(transactionInfo.expiresDate) || transactionInfo.expiresDate);
+            const parsedRenewalExpiry = subscriptionDateService.parseStoreTimestamp(transactionInfo.expiresDate);
+            if (parsedRenewalExpiry) {
+              sub.expiresAt = parsedRenewalExpiry;
+            }
           }
         } else if (notificationType === 'DID_CHANGE_RENEWAL_STATUS') {
           if (subtype === 'AUTO_RENEW_DISABLED') {
             sub.autoRenewing = false;
             newStatus = 'canceled';
             // Canceled remains entitled until expiresAt!
-            isEntitled = new Date(sub.expiresAt) > new Date();
+            isEntitled = !subscriptionDateService.isExpired(sub.expiresAt);
           } else if (subtype === 'AUTO_RENEW_ENABLED') {
             sub.autoRenewing = true;
             newStatus = 'active';
-            isEntitled = true;
+            isEntitled = !subscriptionDateService.isExpired(sub.expiresAt);
           }
         } else if (notificationType === 'REVOKE' || notificationType === 'REFUND') {
           newStatus = 'revoked';
@@ -850,7 +882,7 @@ export class SubscriptionPurchaseService {
           // SUBSCRIPTION_CANCELED
           newStatus = 'canceled';
           sub.autoRenewing = false;
-          isEntitled = new Date(sub.expiresAt) > new Date();
+          isEntitled = !subscriptionDateService.isExpired(sub.expiresAt);
         } else {
           // Query authoritative state from Google Play API for renewals / recoveries
           try {

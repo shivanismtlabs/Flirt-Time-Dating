@@ -140,6 +140,7 @@ export class NotificationOutboxService {
             coinsCredited: Number(payloadData.coinsCredited || 0),
             currentBalance: Number(payloadData.currentBalance || 0),
             idempotencyKey: outboxItem.idempotencyKey,
+            isForeground: Boolean(payloadData.isForeground),
           }
         );
       } else {

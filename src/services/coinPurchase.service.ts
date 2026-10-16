@@ -15,6 +15,8 @@ export interface VerifyCoinPurchaseInput {
   purchaseToken?: string;
   orderId?: string;
   packageName?: string;
+  isForeground?: boolean;
+  is_foreground?: boolean;
 }
 
 export interface VerifyPurchaseResult {
@@ -343,6 +345,7 @@ export class CoinPurchaseService {
         await user.save({ transaction: t });
 
         // Create notification outbox entry ATOMICALLY in the same transaction
+        const isForeground = Boolean(input.isForeground ?? input.is_foreground);
         const outbox = await notificationOutboxService.createOutboxEntry(
           {
             recipientId: user.id,
@@ -358,6 +361,7 @@ export class CoinPurchaseService {
               currentBalance: balanceAfter,
               type: 'coin_purchase',
               navType: 'wallet',
+              isForeground,
             },
           },
           t
@@ -476,6 +480,7 @@ export class CoinPurchaseService {
             retryUser.coins = balAfter;
             await retryUser.save({ transaction: retryTx });
 
+            const isForeground = Boolean(input.isForeground ?? input.is_foreground);
             const retryOutbox = await notificationOutboxService.createOutboxEntry(
               {
                 recipientId: retryUser.id,
@@ -491,6 +496,7 @@ export class CoinPurchaseService {
                   currentBalance: balAfter,
                   type: 'coin_purchase',
                   navType: 'wallet',
+                  isForeground,
                 },
               },
               retryTx

@@ -1799,16 +1799,13 @@ export class MomentService {
 
     return {
       id: chatMessage.id,
+      commentId: chatMessage.id,
+      momentId: moment.id,
+      comment: trimmedMessage,
       text: trimmedMessage,
       parentCommentId: null,
-      replyId: chatMessage.id,
-      commentId: chatMessage.id,
-      conversationId: conversation.id,
-      momentId: moment.id,
-      recipientId: moment.userId,
-      message: trimmedMessage,
-      comment: trimmedMessage,
       createdAt: chatMessage.createdAt,
+      repliesCount: 0,
       replies: [],
     };
   }
@@ -2032,63 +2029,46 @@ export class MomentService {
         const formatted = {
           id: r.id,
           replyId: r.id,
-          commentId: r.id,
+          reply: r.content,
           parentCommentId: c.id,
-          parentId: c.id,
-          parent_comment_id: c.id,
-          parent_id: c.id,
           parentReplyId: parentRepId,
-          parent_reply_id: parentRepId,
           replyToCommentId: parentRepId || c.id,
-          reply_to_comment_id: parentRepId || c.id,
           replyTo: {
             userId: replyToUId,
             username: replyToUName,
           },
-          replyToUserId: replyToUId,
-          replyToUsername: replyToUName,
-          momentId,
-          text: r.content,
-          reply: r.content,
-          comment: r.content,
-          message: r.content,
-          createdAt: r.createdAt,
-          timeAgo: formatTimeAgoShort(r.createdAt),
-          isMyComment: r.senderId === viewerId,
-          canDelete: r.senderId === viewerId || c.senderId === viewerId || moment.userId === viewerId,
-          likesCount: likesCountMap.get(r.id) || 0,
-          isLiked: userLikedSet.has(r.id),
           repliesCount: 0,
+          replies: [] as any[],
           user: {
             id: r.sender?.id,
             username: r.sender?.username || null,
             name: r.sender?.fullName || r.sender?.nickName || 'User',
             profilePhoto: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
-            avatar: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
             isVerified: !!r.sender?.isFaceVerified,
             isSubscribed: !!r.sender?.isSubscribed,
             city: r.sender?.city || null,
           },
+          likesCount: likesCountMap.get(r.id) || 0,
+          isLiked: userLikedSet.has(r.id),
+          isMyComment: r.senderId === viewerId,
+          canDelete: r.senderId === viewerId || c.senderId === viewerId || moment.userId === viewerId,
+          createdAt: r.createdAt,
+          timeAgo: formatTimeAgoShort(r.createdAt),
         };
         formattedList.push(formatted);
       }
 
-      // 1. Clean flat list of all replies (no nested duplicates)
-      const flatList = formattedList.map((item) => ({
-        ...item,
-        replies: [] as any[],
-      }));
-
-      // 2. Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
+      // Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
       const treeItemMap = new Map<string, any>();
       const treeList: any[] = [];
       for (const item of formattedList) {
         const treeItem = {
           ...item,
           user: { ...item.user },
+          replyTo: { ...item.replyTo },
           replies: [] as any[],
         };
-        treeItemMap.set(treeItem.id, treeItem);
+        treeItemMap.set(treeItem.replyId, treeItem);
         treeList.push(treeItem);
       }
 
@@ -2111,46 +2091,34 @@ export class MomentService {
       return {
         id: c.id,
         commentId: c.id,
-        replyId: c.id,
-        momentId,
-        text: c.content,
         comment: c.content,
-        message: c.content,
-        parentCommentId: null,
-        parentReplyId: null,
-        createdAt: c.createdAt,
-        timeAgo: formatTimeAgoShort(c.createdAt),
-        isMyComment: c.senderId === viewerId,
-        canDelete: c.senderId === viewerId || moment.userId === viewerId,
-        likesCount: likesCountMap.get(c.id) || 0,
-        isLiked: userLikedSet.has(c.id),
         repliesCount: directReplies.length,
-        totalRepliesCount: formattedList.length,
+        replies: directReplies,
         user: {
           id: c.sender?.id,
           username: c.sender?.username || null,
           name: c.sender?.fullName || c.sender?.nickName || 'User',
           profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
-          avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
           isVerified: !!c.sender?.isFaceVerified,
           isSubscribed: !!c.sender?.isSubscribed,
           city: c.sender?.city || null,
         },
-        replies: directReplies,
-        allReplies: flatList,
-        nestedReplies: directReplies,
+        likesCount: likesCountMap.get(c.id) || 0,
+        isLiked: userLikedSet.has(c.id),
+        isMyComment: c.senderId === viewerId,
+        canDelete: c.senderId === viewerId || moment.userId === viewerId,
+        createdAt: c.createdAt,
+        timeAgo: formatTimeAgoShort(c.createdAt),
       };
     });
 
     return {
       momentId,
       totalComments: count,
-      totalReplies: count,
       page,
       limit,
       totalPages: Math.ceil(count / limit),
       comments,
-      replies: comments,
     };
   }
 
@@ -2677,17 +2645,13 @@ export class MomentService {
 
     return {
       id: chatMessage.id,
-      text: trimmedMessage,
       replyId: chatMessage.id,
-      commentId: chatMessage.id,
+      commentId: rootCommentId,
+      reply: trimmedMessage,
+      text: trimmedMessage,
       parentCommentId: rootCommentId,
-      parentId: rootCommentId,
-      parent_comment_id: rootCommentId,
-      parent_id: rootCommentId,
       parentReplyId: effectiveParentReplyId,
-      parent_reply_id: effectiveParentReplyId,
       replyToCommentId: effectiveParentReplyId || rootCommentId,
-      reply_to_comment_id: effectiveParentReplyId || rootCommentId,
       replyTo: {
         userId: targetRecipientId,
         username: targetRecipientUsername,
@@ -2695,9 +2659,6 @@ export class MomentService {
       replyToUserId: targetRecipientId,
       replyToUsername: targetRecipientUsername,
       momentId: moment.id,
-      reply: trimmedMessage,
-      comment: trimmedMessage,
-      message: trimmedMessage,
       createdAt: chatMessage.createdAt instanceof Date ? chatMessage.createdAt.toISOString() : chatMessage.createdAt,
       timeAgo: formatTimeAgoShort(chatMessage.createdAt),
       likesCount: 0,
@@ -2710,9 +2671,6 @@ export class MomentService {
         username: replierUser?.username || null,
         name: replierUser?.fullName || replierUser?.nickName || 'User',
         profilePhoto: replierUser?.profilePicture
-          ? formatThumbnailUrl(replierUser.profilePicture)
-          : null,
-        avatar: replierUser?.profilePicture
           ? formatThumbnailUrl(replierUser.profilePicture)
           : null,
         isVerified: !!replierUser?.isFaceVerified,
@@ -2927,9 +2885,12 @@ export class MomentService {
 
       const formatted = {
         id: c.id,
+        replyId: c.id,
         text: c.content,
+        reply: c.content,
         parentCommentId: commentId,
         parentReplyId,
+        replyToCommentId: parentReplyId || commentId,
         replyTo: {
           userId: targetUserId || null,
           username: targetUsername || null,

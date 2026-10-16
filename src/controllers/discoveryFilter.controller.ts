@@ -186,26 +186,74 @@ export const searchDiscoveryProfiles = async (
       return searchUsersHandler(req, res);
     }
 
-    const parseResult = discoverySearchBodySchema.safeParse(bodyData);
+    // Helper functions to parse query parameters for GET requests
+    const parseArrayParam = (val: any): string[] | undefined => {
+      if (!val) return undefined;
+      if (Array.isArray(val)) return val.map(String).map((s) => s.trim()).filter(Boolean);
+      if (typeof val === 'string') {
+        return val.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+      return undefined;
+    };
+
+    const parseBoolParam = (val: any): boolean | undefined => {
+      if (val === undefined || val === null || val === '') return undefined;
+      return val === true || val === 'true' || val === '1' || val === 1;
+    };
+
+    const parseIntParam = (val: any): number | undefined => {
+      if (val === undefined || val === null || val === '') return undefined;
+      const parsed = parseInt(String(val), 10);
+      return isNaN(parsed) ? undefined : parsed;
+    };
+
+    const rawInput: any = { ...bodyData };
+
+    if (queryData.genders !== undefined && rawInput.genders === undefined) {
+      rawInput.genders = parseArrayParam(queryData.genders);
+    }
+    if (queryData.ageMin !== undefined && rawInput.ageMin === undefined) {
+      rawInput.ageMin = parseIntParam(queryData.ageMin);
+    }
+    if (queryData.ageMax !== undefined && rawInput.ageMax === undefined) {
+      rawInput.ageMax = parseIntParam(queryData.ageMax);
+    }
+    if (queryData.maxDistanceKm !== undefined && rawInput.maxDistanceKm === undefined) {
+      if (queryData.maxDistanceKm === 'null' || queryData.maxDistanceKm === 'anywhere') {
+        rawInput.maxDistanceKm = null;
+      } else {
+        rawInput.maxDistanceKm = parseIntParam(queryData.maxDistanceKm);
+      }
+    }
+    if (queryData.lookingFor !== undefined && rawInput.lookingFor === undefined) {
+      rawInput.lookingFor = parseArrayParam(queryData.lookingFor);
+    }
+    if (queryData.interestIds !== undefined && rawInput.interestIds === undefined) {
+      rawInput.interestIds = parseArrayParam(queryData.interestIds);
+    }
+    if (queryData.verifiedOnly !== undefined && rawInput.verifiedOnly === undefined) {
+      rawInput.verifiedOnly = parseBoolParam(queryData.verifiedOnly);
+    }
+    if (queryData.onlineOnly !== undefined && rawInput.onlineOnly === undefined) {
+      rawInput.onlineOnly = parseBoolParam(queryData.onlineOnly);
+    }
+    if (queryData.countOnly !== undefined && rawInput.countOnly === undefined) {
+      rawInput.countOnly = parseBoolParam(queryData.countOnly);
+    }
+    if (queryData.page !== undefined && rawInput.page === undefined) {
+      rawInput.page = parseIntParam(queryData.page);
+    }
+    if (queryData.limit !== undefined && rawInput.limit === undefined) {
+      rawInput.limit = parseIntParam(queryData.limit);
+    }
+
+    const parseResult = discoverySearchBodySchema.safeParse(rawInput);
     if (!parseResult.success) {
       const firstError = parseResult.error.errors[0]?.message || 'Validation failed';
       return sendError(res, firstError, 400, parseResult.error.errors);
     }
 
-    // Merge query params for pagination / countOnly if supplied via URL
-    const queryPage = req.query.page ? parseInt(req.query.page as string, 10) : undefined;
-    const queryLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
-    const queryCountOnly =
-      req.query.countOnly === 'true' || req.query.countOnly === '1' ? true : undefined;
-
-    const mergedInput = {
-      ...parseResult.data,
-      page: queryPage !== undefined && !isNaN(queryPage) ? queryPage : parseResult.data.page,
-      limit: queryLimit !== undefined && !isNaN(queryLimit) ? queryLimit : parseResult.data.limit,
-      countOnly: queryCountOnly !== undefined ? queryCountOnly : parseResult.data.countOnly,
-    };
-
-    const result = await discoveryFilterService.search(currentUserId, mergedInput);
+    const result = await discoveryFilterService.search(currentUserId, parseResult.data);
     return sendSuccess(res, 'Discovery search results retrieved successfully', result, 200);
   } catch (error: any) {
     if (error instanceof DiscoveryFilterServiceError) {

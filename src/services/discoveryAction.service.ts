@@ -1,6 +1,18 @@
 import { Op } from 'sequelize';
-import { sequelize, User, SwipeAction, Match, UserBlock } from '../models';
+import moment from 'moment-timezone';
+import {
+  sequelize,
+  User,
+  SwipeAction,
+  Match,
+  UserBlock,
+  UserSubscription,
+  SubscriptionPlan,
+  SubscriptionFeature,
+} from '../models';
 import { notificationService } from './notification.service';
+
+export const DAILY_SWIPE_LIMIT = 10;
 
 export interface RecordActionResult {
   targetUserId: string;
@@ -24,8 +36,78 @@ export class DiscoveryActionError extends Error {
 
 export class DiscoveryActionService {
   /**
+   * Authoritatively determines server-side whether a user has an active, valid subscription
+   * granting unlimited discovery swipes.
+   */
+  public async hasUnlimitedSwipes(
+    userId: string,
+    transaction?: any
+  ): Promise<boolean> {
+    const now = new Date();
+
+    // 1. Check UserSubscription table for authoritative store purchases
+    const latestSub = await UserSubscription.findOne({
+      where: { userId },
+      order: [['created_at', 'DESC']],
+      include: [
+        {
+          model: SubscriptionPlan,
+          as: 'plan',
+          include: [
+            {
+              model: SubscriptionFeature,
+              as: 'features',
+              through: { attributes: [] },
+              required: false,
+            },
+          ],
+        },
+      ],
+      transaction,
+    });
+
+    if (latestSub) {
+      const isRevokedOrRefunded =
+        latestSub.status === 'revoked' || latestSub.status === 'refunded';
+      if (isRevokedOrRefunded) {
+        return false;
+      }
+
+      const expiresAt = new Date(latestSub.expiresAt);
+      const isNotExpired = expiresAt.getTime() > now.getTime();
+      const isGracePeriodActive =
+        latestSub.status === 'in_grace_period' &&
+        (!latestSub.gracePeriodExpiresAt ||
+          new Date(latestSub.gracePeriodExpiresAt).getTime() > now.getTime());
+
+      const isEntitledNow =
+        Boolean(latestSub.isEntitled) && (isNotExpired || isGracePeriodActive);
+
+      if (!isEntitledNow) {
+        return false;
+      }
+
+      // In FlirtTime, all active entitled subscriptions grant unlimited discovery swipes
+      return true;
+    }
+
+    // 2. Fallback check for user record (unit tests or direct manual subscription grants)
+    const user = await User.findByPk(userId, { transaction });
+    if (!user) return false;
+
+    if (user.subscriptionExpiresAt) {
+      const expiry = new Date(user.subscriptionExpiresAt);
+      return expiry.getTime() > now.getTime() && Boolean(user.isSubscribed);
+    }
+
+    // If isSubscribed is true without an expiry timestamp or UserSubscription record
+    return Boolean(user.isSubscribed);
+  }
+
+  /**
    * Persists a discovery swipe action (like, nope, super_like), prevents self-action,
-   * validates user eligibility and block lists, and handles mutual match creation safely.
+   * validates user eligibility and block lists, enforces atomic daily swipe limits,
+   * and handles mutual match creation safely.
    */
   public async recordAction(
     currentUserId: string,
@@ -85,7 +167,8 @@ export class DiscoveryActionService {
       });
 
       if (existingSwipe) {
-        // If the same action is repeated, treat as idempotent
+        // If the same action is repeated, treat as idempotent retry
+        // Prevent duplicate retries from consuming additional quota
         if (existingSwipe.action === action) {
           const [u1, u2] = [currentUserId, targetUserId].sort();
           const existingMatch = await Match.findOne({
@@ -115,6 +198,44 @@ export class DiscoveryActionService {
           409,
           'ACTION_CONFLICT'
         );
+      }
+
+      // 5. Atomic Daily Swipe Limit Enforcement (under concurrency)
+      // Lock current user record to serialize concurrent swipe requests
+      await User.findByPk(currentUserId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      const isUnlimited = await this.hasUnlimitedSwipes(currentUserId, t);
+
+      if (!isUnlimited) {
+        const configuredTz = process.env.APP_TIMEZONE || process.env.TIMEZONE || 'UTC';
+        const tz = moment.tz.zone(configuredTz) ? configuredTz : 'UTC';
+        const now = new Date();
+        const startOfDay = moment.tz(now, tz).startOf('day').toDate();
+        const endOfDay = moment.tz(now, tz).endOf('day').toDate();
+
+        const todaySwipesCount = await SwipeAction.count({
+          where: {
+            userId: currentUserId,
+            createdAt: {
+              [Op.gte]: startOfDay,
+              [Op.lte]: endOfDay,
+            },
+          },
+          transaction: t,
+        });
+
+        if (todaySwipesCount >= DAILY_SWIPE_LIMIT) {
+          await t.rollback();
+          isCommitted = true;
+          throw new DiscoveryActionError(
+            'Daily swipe limit reached. Upgrade to a subscription for unlimited swipes.',
+            429,
+            'DAILY_SWIPE_LIMIT_REACHED'
+          );
+        }
       }
 
       // Record the new swipe action

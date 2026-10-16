@@ -125,24 +125,24 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       // Moments for candidate 1
       await Moment.create({
         userId: candidateMatch.id,
-        mediaType: 'image',
-        mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/m1.jpg',
+        audience: 'everyone',
+        publishedAt: new Date(),
         caption: 'First active moment',
         status: 'active',
         expiresAt: new Date(Date.now() + 86400000), // unexpired
       });
       await Moment.create({
         userId: candidateMatch.id,
-        mediaType: 'image',
-        mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/m2.jpg',
+        audience: 'everyone',
+        publishedAt: new Date(),
         caption: 'Second active moment',
         status: 'active',
         expiresAt: null, // persistent
       });
       await Moment.create({
         userId: candidateMatch.id,
-        mediaType: 'image',
-        mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/m_exp.jpg',
+        audience: 'everyone',
+        publishedAt: new Date(),
         caption: 'Expired moment',
         status: 'active',
         expiresAt: new Date(Date.now() - 3600000), // expired -> should not count
@@ -182,8 +182,8 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       await UserInterest.create({ userId: candidateNone.id, interestId: intHiking.id });
       await Moment.create({
         userId: candidateNone.id,
-        mediaType: 'image',
-        mediaUrl: 'https://flirttime.s3.ap-south-1.amazonaws.com/moments/m3.jpg',
+        audience: 'everyone',
+        publishedAt: new Date(),
         status: 'active',
         expiresAt: null,
       });
@@ -396,10 +396,12 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       await UserSubscription.create({
         userId: viewer.id,
         planId: plan.id,
-        productId: plan.apple_product_id,
+        productId: plan.apple_product_id || 'com.flirttime.weekly_prem',
+        storeTransactionId: 'tx_sub_valid_123',
         platform: 'ios',
         status: 'active',
         isEntitled: true,
+        autoRenewing: true,
         startsAt: new Date(),
         expiresAt: new Date(Date.now() + 7 * 86400000), // 7 days in future
       });
@@ -424,9 +426,11 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       await UserSubscription.create({
         userId: viewer.id,
         productId: 'expired_plan',
+        storeTransactionId: 'tx_sub_exp_456',
         platform: 'ios',
         status: 'expired',
         isEntitled: false,
+        autoRenewing: false,
         startsAt: new Date(Date.now() - 30 * 86400000),
         expiresAt: new Date(Date.now() - 1 * 86400000), // expired yesterday
       });

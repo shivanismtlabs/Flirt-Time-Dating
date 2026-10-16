@@ -162,6 +162,12 @@ router.post(
 );
 
 router.post(
+  '/:momentId/comments/:commentId',
+  validate(replyMomentSchema),
+  replyMomentHandler
+);
+
+router.post(
   '/:momentId/replies',
   validate(replyMomentSchema),
   replyMomentHandler

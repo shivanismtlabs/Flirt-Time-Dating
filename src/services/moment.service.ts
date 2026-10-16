@@ -1651,17 +1651,26 @@ export class MomentService {
     message: string,
     options?: {
       parentCommentId?: string | null;
+      parent_comment_id?: string | null;
       parentId?: string | null;
+      parent_id?: string | null;
       replyToCommentId?: string | null;
+      reply_to_comment_id?: string | null;
       commentId?: string | null;
+      comment_id?: string | null;
       parentReplyId?: string | null;
+      parent_reply_id?: string | null;
     }
   ) {
     const parentId =
       options?.parentCommentId ||
+      options?.parent_comment_id ||
       options?.parentId ||
+      options?.parent_id ||
       options?.replyToCommentId ||
-      options?.commentId;
+      options?.reply_to_comment_id ||
+      options?.commentId ||
+      options?.comment_id;
 
     if (parentId) {
       const uuidRegex =
@@ -1678,7 +1687,7 @@ export class MomentService {
         momentId,
         parentId,
         message,
-        { parentReplyId: options?.parentReplyId || null }
+        { parentReplyId: options?.parentReplyId || options?.parent_reply_id || null }
       );
     }
 
@@ -1834,9 +1843,15 @@ export class MomentService {
     const isReply = (meta: any) => {
       return Boolean(
         meta?.parentCommentId ||
+        meta?.parent_comment_id ||
         meta?.parentId ||
+        meta?.parent_id ||
         meta?.parentReplyId ||
-        meta?.replyToCommentId
+        meta?.parent_reply_id ||
+        meta?.replyToCommentId ||
+        meta?.reply_to_comment_id ||
+        meta?.replyId ||
+        meta?.reply_id
       );
     };
 
@@ -1851,9 +1866,13 @@ export class MomentService {
           { metadata: { [Op.notLike]: '%"type":"gift"%' } },
           { metadata: { [Op.notLike]: '%"type": "gift"%' } },
           { metadata: { [Op.notLike]: '%"parentCommentId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_comment_id"%' } },
           { metadata: { [Op.notLike]: '%"parentId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_id"%' } },
           { metadata: { [Op.notLike]: '%"parentReplyId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_reply_id"%' } },
           { metadata: { [Op.notLike]: '%"replyToCommentId"%' } },
+          { metadata: { [Op.notLike]: '%"reply_to_comment_id"%' } },
           { content: { [Op.notLike]: '🎁%' } },
         ],
       },
@@ -1888,9 +1907,13 @@ export class MomentService {
             {
               [Op.or]: [
                 { metadata: { [Op.like]: '%"parentCommentId"%' } },
+                { metadata: { [Op.like]: '%"parent_comment_id"%' } },
                 { metadata: { [Op.like]: '%"parentReplyId"%' } },
+                { metadata: { [Op.like]: '%"parent_reply_id"%' } },
                 { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+                { metadata: { [Op.like]: '%"reply_to_comment_id"%' } },
                 { metadata: { [Op.like]: '%"parentId"%' } },
+                { metadata: { [Op.like]: '%"parent_id"%' } },
               ],
             },
           ],
@@ -1937,7 +1960,15 @@ export class MomentService {
       while (curr && !visited.has(curr.id)) {
         visited.add(curr.id);
         const meta = parseMeta(curr);
-        const pCommentId = meta?.parentCommentId || meta?.parentId || meta?.replyToCommentId;
+        const pCommentId =
+          meta?.parentCommentId ||
+          meta?.parent_comment_id ||
+          meta?.parentId ||
+          meta?.parent_id ||
+          meta?.parentReplyId ||
+          meta?.parent_reply_id ||
+          meta?.replyToCommentId ||
+          meta?.reply_to_comment_id;
         if (!pCommentId) {
           return curr.id;
         }
@@ -1970,8 +2001,18 @@ export class MomentService {
         const meta = parseMeta(r) || {};
 
         const parentRepId =
-          meta?.parentReplyId ||
-          (meta?.parentCommentId && meta.parentCommentId !== c.id ? meta.parentCommentId : null) ||
+          (meta?.parentReplyId && meta.parentReplyId !== c.id
+            ? meta.parentReplyId
+            : null) ||
+          (meta?.parent_reply_id && meta.parent_reply_id !== c.id
+            ? meta.parent_reply_id
+            : null) ||
+          (meta?.parentCommentId && meta.parentCommentId !== c.id
+            ? meta.parentCommentId
+            : null) ||
+          (meta?.parent_comment_id && meta.parent_comment_id !== c.id
+            ? meta.parent_comment_id
+            : null) ||
           null;
 
         let replyToUName = meta?.replyToUsername || null;
@@ -1987,7 +2028,17 @@ export class MomentService {
           replyId: r.id,
           commentId: r.id,
           parentCommentId: c.id,
+          parentId: c.id,
+          parent_comment_id: c.id,
+          parent_id: c.id,
           parentReplyId: parentRepId,
+          parent_reply_id: parentRepId,
+          replyToCommentId: parentRepId || c.id,
+          reply_to_comment_id: parentRepId || c.id,
+          replyTo: {
+            userId: replyToUId,
+            username: replyToUName,
+          },
           replyToUserId: replyToUId,
           replyToUsername: replyToUName,
           momentId,
@@ -2506,8 +2557,13 @@ export class MomentService {
     const metadata = JSON.stringify({
       momentId: moment.id,
       parentCommentId: rootCommentId,
+      parent_comment_id: rootCommentId,
+      parentId: rootCommentId,
+      parent_id: rootCommentId,
       parentReplyId: effectiveParentReplyId,
+      parent_reply_id: effectiveParentReplyId,
       replyToCommentId: effectiveParentReplyId || rootCommentId,
+      reply_to_comment_id: effectiveParentReplyId || rootCommentId,
       replyToUserId: targetRecipientId,
       replyToUsername: targetRecipientUsername,
       mediaUrl: firstMedia ? firstMedia.mediaUrl : null,
@@ -2595,7 +2651,13 @@ export class MomentService {
       replyId: chatMessage.id,
       commentId: chatMessage.id,
       parentCommentId: rootCommentId,
+      parentId: rootCommentId,
+      parent_comment_id: rootCommentId,
+      parent_id: rootCommentId,
       parentReplyId: effectiveParentReplyId,
+      parent_reply_id: effectiveParentReplyId,
+      replyToCommentId: effectiveParentReplyId || rootCommentId,
+      reply_to_comment_id: effectiveParentReplyId || rootCommentId,
       replyTo: {
         userId: targetRecipientId,
         username: targetRecipientUsername,

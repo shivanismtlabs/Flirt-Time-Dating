@@ -1193,6 +1193,42 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
         expect(foundC2.repliesCount).toBe(2);
       }
     });
+
+    it('should correctly nest sub-comment created with snake_case parent_comment_id and NOT show it as a new comment', async () => {
+      // 1. Post sub-comment to existing top-level comment (commentId) using parent_comment_id (snake_case)
+      const subCommentRes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          comment: 'Sub-comment on the first comment by Asif',
+          parent_comment_id: commentId,
+        });
+
+      expect(subCommentRes.status).toBe(201);
+      expect(subCommentRes.body.data.parentCommentId).toBe(commentId);
+      expect(subCommentRes.body.data.parent_comment_id).toBe(commentId);
+
+      // 2. Fetch all comments for the moment
+      const commentsListRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${creatorToken}`);
+
+      expect(commentsListRes.status).toBe(200);
+
+      // Crucial: Total top-level comments must remain exactly 1 (the original root comment)
+      expect(commentsListRes.body.data.totalComments).toBe(1);
+      expect(commentsListRes.body.data.comments).toHaveLength(1);
+      const rootComment = commentsListRes.body.data.comments[0];
+      expect(rootComment.id).toBe(commentId);
+      expect(rootComment.comment).toBe('Breathtaking view! 🌆');
+
+      // Crucial: The sub-comment MUST appear nested inside the root comment's replies
+      expect(rootComment.repliesCount).toBe(1);
+      expect(rootComment.replies).toHaveLength(1);
+      expect(rootComment.replies[0].comment).toBe('Sub-comment on the first comment by Asif');
+      expect(rootComment.replies[0].parentCommentId).toBe(commentId);
+      expect(rootComment.replies[0].parent_comment_id).toBe(commentId);
+    });
   });
 });
 

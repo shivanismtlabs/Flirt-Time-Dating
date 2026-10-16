@@ -354,14 +354,38 @@ export const replyMomentHandler = async (
     const momentId = req.params.momentId as string;
     const message =
       req.body.comment || req.body.message || req.body.text || req.body.reply;
-    const parentCommentId =
+    const rawParentCommentId =
       req.params.commentId ||
-      req.body.parentCommentId ||
-      req.body.parentId ||
-      req.body.replyToCommentId ||
-      req.body.commentId ||
-      null;
-    const parentReplyId = req.body.parentReplyId || null;
+      req.body?.parentCommentId ||
+      req.body?.parent_comment_id ||
+      req.body?.parentId ||
+      req.body?.parent_id ||
+      req.body?.replyToCommentId ||
+      req.body?.reply_to_comment_id ||
+      req.body?.commentId ||
+      req.body?.comment_id ||
+      req.body?.replyId ||
+      req.body?.reply_id ||
+      req.query?.parentCommentId ||
+      req.query?.parent_comment_id ||
+      req.query?.commentId ||
+      req.query?.comment_id;
+
+    const parentCommentId =
+      typeof rawParentCommentId === 'string' && rawParentCommentId.trim()
+        ? rawParentCommentId.trim()
+        : null;
+
+    const rawParentReplyId =
+      req.body?.parentReplyId ||
+      req.body?.parent_reply_id ||
+      req.query?.parentReplyId ||
+      req.query?.parent_reply_id;
+
+    const parentReplyId =
+      typeof rawParentReplyId === 'string' && rawParentReplyId.trim()
+        ? rawParentReplyId.trim()
+        : null;
 
     if (parentCommentId) {
       const uuidRegex =
@@ -590,14 +614,37 @@ export const replyMomentCommentHandler = async (
     }
 
     let momentId = req.params.momentId as string | undefined;
+    const rawCommentId =
+      req.params.commentId ||
+      req.body?.parentCommentId ||
+      req.body?.parent_comment_id ||
+      req.body?.parentId ||
+      req.body?.parent_id ||
+      req.body?.commentId ||
+      req.body?.comment_id ||
+      req.body?.replyToCommentId ||
+      req.body?.reply_to_comment_id ||
+      req.body?.replyId ||
+      req.body?.reply_id;
+
     const commentId =
-      (req.params.commentId ||
-        req.body?.parentCommentId ||
-        req.body?.parentId ||
-        req.body?.commentId) as string;
+      typeof rawCommentId === 'string' && rawCommentId.trim()
+        ? rawCommentId.trim()
+        : '';
+
     const message =
       req.body?.reply || req.body?.comment || req.body?.message || req.body?.text;
-    const parentReplyId = req.body?.parentReplyId || null;
+
+    const rawParentReplyId =
+      req.body?.parentReplyId ||
+      req.body?.parent_reply_id ||
+      req.query?.parentReplyId ||
+      req.query?.parent_reply_id;
+
+    const parentReplyId =
+      typeof rawParentReplyId === 'string' && rawParentReplyId.trim()
+        ? rawParentReplyId.trim()
+        : null;
 
     const uuidRegex =
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

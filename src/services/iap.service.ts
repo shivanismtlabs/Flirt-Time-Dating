@@ -2,6 +2,7 @@ import axios from 'axios';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env';
+import { subscriptionDateService } from './subscriptionDate.service';
 
 export const IOS_IAP_BUNDLE_ID = env.APPLE_BUNDLE_ID || 'com.flirttime.app';
 export const ANDROID_IAP_PACKAGE_NAME = env.GOOGLE_PACKAGE_NAME || 'com.app.flirttime';
@@ -749,12 +750,15 @@ export class IAPService {
       const resolvedProductId = String(decodedPayload.productId || expectedProductId || '');
       const rawEnv = (decodedPayload.environment || '').toLowerCase();
       const environment: 'production' | 'sandbox' = rawEnv.includes('sandbox') ? 'sandbox' : 'production';
-      const purchaseDate = decodedPayload.purchaseDate
-        ? new Date(Number(decodedPayload.purchaseDate) || decodedPayload.purchaseDate)
-        : new Date();
-      const expiresDate = decodedPayload.expiresDate
-        ? new Date(Number(decodedPayload.expiresDate) || decodedPayload.expiresDate)
-        : new Date(purchaseDate.getTime() + 7 * 86400000);
+      const purchaseDate =
+        subscriptionDateService.parseStoreTimestamp(decodedPayload.purchaseDate) || new Date();
+      const verifiedStoreExpiresDate = subscriptionDateService.parseStoreTimestamp(decodedPayload.expiresDate);
+
+      // Authoritative Store Expiry (Requirement 4): Use provider-verified Apple transaction expiry.
+      // Never overwrite verified dates with a locally guessed expiry. Fall back to interval only if store date is missing.
+      const expiresDate =
+        verifiedStoreExpiresDate ||
+        subscriptionDateService.calculateIntervalExpiry(purchaseDate, 'weekly', undefined, resolvedProductId);
 
       let status: VerifiedSubscriptionDetails['status'] = 'active';
       let isEntitled = true;
@@ -778,8 +782,8 @@ export class IAPService {
             cancelReason = 'user_canceled_auto_renew';
           }
           if (renewalPayload.gracePeriodExpiresDate) {
-            gracePeriodExpiresDate = new Date(
-              Number(renewalPayload.gracePeriodExpiresDate) || renewalPayload.gracePeriodExpiresDate
+            gracePeriodExpiresDate = subscriptionDateService.parseStoreTimestamp(
+              renewalPayload.gracePeriodExpiresDate
             );
           }
         } catch (_renewalErr) {}
@@ -837,15 +841,20 @@ export class IAPService {
 
     if (transactionId) {
       const decoded = await verifyAppleTransaction(transactionId);
-      const purchaseDate = new Date();
-      const expiresDate = new Date(purchaseDate.getTime() + 7 * 86400000);
+      const resolvedPid = expectedProductId || decoded?.productId || 'com.flirttime.weekly';
+      const purchaseDate =
+        subscriptionDateService.parseStoreTimestamp(decoded?.purchaseDate) || new Date();
+      const verifiedStoreExpires = subscriptionDateService.parseStoreTimestamp(decoded?.expiresDate);
+      const expiresDate =
+        verifiedStoreExpires ||
+        subscriptionDateService.calculateIntervalExpiry(purchaseDate, 'weekly', undefined, resolvedPid);
 
       return {
         platform: 'ios',
         storeTransactionId: transactionId,
-        originalTransactionId: transactionId,
-        productId: expectedProductId || 'com.flirttime.weekly',
-        environment: 'sandbox',
+        originalTransactionId: decoded?.originalTransactionId ? String(decoded.originalTransactionId) : transactionId,
+        productId: resolvedPid,
+        environment: (decoded?.environment || 'sandbox').toLowerCase().includes('sandbox') ? 'sandbox' : 'production',
         purchaseDate,
         expiresDate,
         gracePeriodExpiresDate: null,
@@ -965,10 +974,15 @@ export class IAPService {
 
     if (playDetails) {
       const now = Date.now();
-      const startTime = playDetails.startTimeMillis ? parseInt(playDetails.startTimeMillis, 10) : now;
-      const expiryTime = playDetails.expiryTimeMillis ? parseInt(playDetails.expiryTimeMillis, 10) : now + 7 * 86400000;
-      const purchaseDate = new Date(startTime);
-      const expiresDate = new Date(expiryTime);
+      const purchaseDate =
+        subscriptionDateService.parseStoreTimestamp(playDetails.startTimeMillis) || new Date(now);
+      const verifiedExpiry = subscriptionDateService.parseStoreTimestamp(playDetails.expiryTimeMillis);
+
+      // Authoritative Store Expiry (Requirement 4): Use provider-verified Google Play transaction expiry.
+      const expiresDate =
+        verifiedExpiry ||
+        subscriptionDateService.calculateIntervalExpiry(purchaseDate, 'weekly', undefined, productId);
+      const expiryTime = expiresDate.getTime();
       const autoRenewing = Boolean(playDetails.autoRenewing);
       const isAcknowledged = playDetails.acknowledgementState === 1;
 
@@ -1034,7 +1048,12 @@ export class IAPService {
     if (process.env.NODE_ENV === 'test') {
       const now = Date.now();
       const purchaseDate = new Date();
-      const expiresDate = new Date(now + 7 * 86400000);
+      const expiresDate = subscriptionDateService.calculateIntervalExpiry(
+        purchaseDate,
+        'weekly',
+        undefined,
+        productId
+      );
       const storeTxId = orderId || `GPA.${now}-${Math.floor(Math.random() * 100000)}..0`;
 
       return {

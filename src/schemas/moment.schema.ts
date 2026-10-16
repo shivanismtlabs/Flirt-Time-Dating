@@ -138,6 +138,12 @@ export const getMomentCommentsSchema = z.object({
     .object({
       page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
       limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+      parentId: z.string().uuid('Invalid parent ID format').optional().nullable(),
+      parent_id: z.string().uuid('Invalid parent ID format').optional().nullable(),
+      commentId: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      comment_id: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      format: z.string().optional(),
+      flat: z.union([z.boolean(), z.string()]).optional(),
     })
     .optional(),
 });

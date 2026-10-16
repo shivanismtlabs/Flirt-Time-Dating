@@ -488,7 +488,7 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
     });
 
     it('should retrieve monthly subscription with monthly billing cycle and included coins', async () => {
-      const expiresDate = new Date(Date.now() + 29 * 86400000);
+      const expiresDate = new Date(Date.now() + 30 * 86400000);
 
       await UserSubscription.create({
         userId: testUser.id,
@@ -599,6 +599,95 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
       });
       expect(res.body.data.subscription.autoRenewing).toBe(false);
       expect(res.body.data.subscription.nextRenewalDate).toBeNull();
+    });
+
+    it('should preserve provider-verified store expiry as authoritative and never overwrite with locally guessed expiry (Requirement 4)', async () => {
+      // Suppose provider returned a verified expiry of 2 days from purchase
+      const purchaseTime = new Date('2026-10-15T12:00:06.000Z');
+      const verifiedStoreExpiry = new Date('2026-10-17T12:00:06.000Z'); // 2-day verified store window
+
+      const subRecord = await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'authoritative_store_tx',
+        originalTransactionId: 'authoritative_store_tx',
+        status: 'active',
+        isEntitled: true,
+        startsAt: purchaseTime,
+        expiresAt: verifiedStoreExpiry,
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      await testUser.update({ isSubscribed: true });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      const subData = res.body.data.subscription;
+      expect(subData).toBeDefined();
+
+      // Provider-verified date MUST NOT be overwritten by a local 7-day guess!
+      expect(subData.expiresAt).toBe(verifiedStoreExpiry.toISOString());
+      expect(subData.startsAt).toBe(purchaseTime.toISOString());
+
+      const reloadedSub = await UserSubscription.findByPk(subRecord.id);
+      expect(new Date(reloadedSub!.expiresAt).getTime()).toBe(verifiedStoreExpiry.getTime());
+    });
+
+    it('should calculate 7-day interval expiration date and dynamic remaining validity when store verification has no explicit expiresDate', async () => {
+      const mockTxId = `fallback_interval_tx_${Date.now()}`;
+      const purchaseTime = new Date('2026-10-15T12:00:06.000Z');
+
+      // Apple JWS payload with purchaseDate but missing expiresDate
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'com.flirttime.weekly',
+        transactionId: mockTxId,
+        originalTransactionId: mockTxId,
+        purchaseDate: purchaseTime.getTime(),
+        // expiresDate omitted
+      });
+
+      const verifyRes = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          productId: 'com.flirttime.weekly',
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.success).toBe(true);
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isSubscribed).toBe(true);
+
+      const subData = res.body.data.subscription;
+      expect(subData).toBeDefined();
+      expect(subData.status).toBe('active');
+      expect(subData.isExpired).toBe(false);
+
+      // Exactly 7 days from purchaseTime (2026-10-15T12:00:06.000Z -> 2026-10-22T12:00:06.000Z)
+      const expectedExpiry = new Date(purchaseTime.getTime() + 7 * 86400000);
+      expect(subData.startsAt).toBe(purchaseTime.toISOString());
+      expect(subData.expiresAt).toBe(expectedExpiry.toISOString());
+      expect(subData.nextRenewalDate).toBe(expectedExpiry.toISOString());
     });
 
     it('should return clean missing-subscription payload for user who never subscribed', async () => {

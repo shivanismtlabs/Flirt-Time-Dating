@@ -725,7 +725,8 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(getCommentsRes.status).toBe(200);
       expect(getCommentsRes.body.data.comments).toHaveLength(1);
       const commentData = getCommentsRes.body.data.comments[0];
-      expect(commentData.repliesCount).toBe(4);
+      expect(commentData.repliesCount).toBe(1);
+      expect(commentData.totalRepliesCount).toBe(4);
       // Top-level replies under comment should only contain direct replies (length 1)
       expect(commentData.replies).toHaveLength(1);
       expect(commentData.replies[0].id).toBe(r1Id);

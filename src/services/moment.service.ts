@@ -2000,20 +2000,26 @@ export class MomentService {
       for (const r of rawReplies) {
         const meta = parseMeta(r) || {};
 
-        const parentRepId =
-          (meta?.parentReplyId && meta.parentReplyId !== c.id
-            ? meta.parentReplyId
-            : null) ||
-          (meta?.parent_reply_id && meta.parent_reply_id !== c.id
-            ? meta.parent_reply_id
-            : null) ||
-          (meta?.parentCommentId && meta.parentCommentId !== c.id
-            ? meta.parentCommentId
-            : null) ||
-          (meta?.parent_comment_id && meta.parent_comment_id !== c.id
-            ? meta.parent_comment_id
-            : null) ||
-          null;
+        let parentRepId: string | null = null;
+        const explicitParentReply =
+          meta?.parentReplyId ||
+          meta?.parent_reply_id;
+
+        if (explicitParentReply && explicitParentReply !== c.id) {
+          parentRepId = explicitParentReply;
+        } else {
+          const candidateId =
+            meta?.parentCommentId ||
+            meta?.parent_comment_id ||
+            meta?.parentId ||
+            meta?.parent_id ||
+            meta?.replyToCommentId ||
+            meta?.reply_to_comment_id;
+
+          if (candidateId && candidateId !== c.id && replyMap.has(candidateId)) {
+            parentRepId = candidateId;
+          }
+        }
 
         let replyToUName = meta?.replyToUsername || null;
         let replyToUId = meta?.replyToUserId || null;
@@ -2111,13 +2117,15 @@ export class MomentService {
         comment: c.content,
         message: c.content,
         parentCommentId: null,
+        parentReplyId: null,
         createdAt: c.createdAt,
         timeAgo: formatTimeAgoShort(c.createdAt),
         isMyComment: c.senderId === viewerId,
         canDelete: c.senderId === viewerId || moment.userId === viewerId,
         likesCount: likesCountMap.get(c.id) || 0,
         isLiked: userLikedSet.has(c.id),
-        repliesCount: formattedList.length,
+        repliesCount: directReplies.length,
+        totalRepliesCount: formattedList.length,
         user: {
           id: c.sender?.id,
           username: c.sender?.username || null,
@@ -2400,7 +2408,13 @@ export class MomentService {
     let rootCommentId = commentId;
     let effectiveParentReplyId = options?.parentReplyId || null;
 
-    if (parentCommentMeta?.parentCommentId) {
+    const parentCommentMetaId =
+      parentCommentMeta?.parentCommentId ||
+      parentCommentMeta?.parent_comment_id ||
+      parentCommentMeta?.parentId ||
+      parentCommentMeta?.parent_id;
+
+    if (parentCommentMetaId) {
       // parentComment passed in URL is itself a reply to a comment
       let curr: any = parentComment;
       const visited = new Set<string>();
@@ -2412,8 +2426,13 @@ export class MomentService {
             m = typeof curr.metadata === 'string' ? JSON.parse(curr.metadata) : curr.metadata;
           } catch {}
         }
-        if (m?.parentCommentId) {
-          rootCommentId = m.parentCommentId;
+        const mParentId =
+          m?.parentCommentId ||
+          m?.parent_comment_id ||
+          m?.parentId ||
+          m?.parent_id;
+        if (mParentId) {
+          rootCommentId = mParentId;
           const ancestor = await ChatMessage.findByPk(rootCommentId, {
             include: [{ model: User, as: 'sender', attributes: ['id', 'username', 'fullName', 'nickName'] }],
           });
@@ -2479,7 +2498,17 @@ export class MomentService {
       }
 
       // Check if parentReply belongs to rootCommentId thread
-      if (replyParentCommentId && replyParentCommentId !== rootCommentId && replyParentCommentId !== commentId) {
+      const prParentId =
+        replyParentCommentId ||
+        (() => {
+          if (!parentReply.metadata) return null;
+          try {
+            const parsed = typeof parentReply.metadata === 'string' ? JSON.parse(parentReply.metadata) : parentReply.metadata;
+            return parsed?.parent_comment_id || parsed?.parentId || parsed?.parent_id;
+          } catch { return null; }
+        })();
+
+      if (prParentId && prParentId !== rootCommentId && prParentId !== commentId) {
         let traceCurr: any = parentReply;
         let belongsToThread = false;
         const prVisited = new Set<string>();
@@ -2491,12 +2520,13 @@ export class MomentService {
               m = typeof traceCurr.metadata === 'string' ? JSON.parse(traceCurr.metadata) : traceCurr.metadata;
             } catch {}
           }
-          if (m?.parentCommentId === rootCommentId || m?.parentCommentId === commentId) {
+          const mParent = m?.parentCommentId || m?.parent_comment_id || m?.parentId || m?.parent_id;
+          if (mParent === rootCommentId || mParent === commentId) {
             belongsToThread = true;
             break;
           }
-          if (m?.parentCommentId) {
-            const nextPr = await ChatMessage.findByPk(m.parentCommentId);
+          if (mParent) {
+            const nextPr = await ChatMessage.findByPk(mParent);
             traceCurr = nextPr;
           } else {
             break;
@@ -2857,12 +2887,26 @@ export class MomentService {
       // Canonical parentReplyId:
       // Direct reply to the comment: parentReplyId is null
       // Reply to another reply: parentReplyId is the target reply's ID
-      const parentReplyId =
-        meta?.parentReplyId && meta.parentReplyId !== commentId
-          ? meta.parentReplyId
-          : meta?.parentCommentId && meta.parentCommentId !== commentId && replyMap.has(meta.parentCommentId)
-          ? meta.parentCommentId
-          : null;
+      let parentReplyId: string | null = null;
+      const explicitParentReply =
+        meta?.parentReplyId ||
+        meta?.parent_reply_id;
+
+      if (explicitParentReply && explicitParentReply !== commentId) {
+        parentReplyId = explicitParentReply;
+      } else {
+        const candidateId =
+          meta?.parentCommentId ||
+          meta?.parent_comment_id ||
+          meta?.parentId ||
+          meta?.parent_id ||
+          meta?.replyToCommentId ||
+          meta?.reply_to_comment_id;
+
+        if (candidateId && candidateId !== commentId && replyMap.has(candidateId)) {
+          parentReplyId = candidateId;
+        }
+      }
 
       let targetUserId: string | null = meta?.replyToUserId || null;
       let targetUsername: string | null = meta?.replyToUsername || null;

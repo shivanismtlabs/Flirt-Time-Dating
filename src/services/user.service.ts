@@ -583,11 +583,7 @@ export interface OtherUserProfileResponse {
     thumbnailUrl: string;
   } | null;
   city: string;
-  state?: string | null;
-  country?: string | null;
-  county?: string | null;
-  location?: LocationDTO;
-  fullLocation?: string | null;
+  fullLocation: string;
   distanceKm: number | null;
   bio: string | null;
   moreAboutMe?: MoreAboutMeDTO;
@@ -982,11 +978,7 @@ export const getOtherUserProfile = async (
         }
       : null,
     city: targetUser.city || 'Mumbai',
-    state: otherLocation.state || null,
-    country: otherLocation.country || null,
-    county: otherLocation.county || null,
-    location: otherLocation,
-    fullLocation: otherLocation.fullLocation || targetUser.city || 'Mumbai',
+    fullLocation: otherLocation.fullLocation || (targetUser.city ? targetUser.city.trim() : null) || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
     moreAboutMe: formatMoreAboutMe(targetUser),

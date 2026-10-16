@@ -182,6 +182,11 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.isVerified).toBe(true);
       expect(data.profilePhoto).toContain('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
       expect(data.city).toBe('Mumbai');
+      expect(data.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(data.location).toBeUndefined();
+      expect(data.state).toBeUndefined();
+      expect(data.country).toBeUndefined();
+      expect(data.county).toBeUndefined();
       expect(typeof data.distanceKm).toBe('number');
       expect(data.bio).toBe('Plant mom. Amateur chef. Professional overthinker.');
       expect(typeof data.vibeScore).toBe('number');

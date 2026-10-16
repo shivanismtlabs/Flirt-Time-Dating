@@ -2596,17 +2596,23 @@ export class MomentService {
       commentId: chatMessage.id,
       parentCommentId: rootCommentId,
       parentReplyId: effectiveParentReplyId,
+      replyTo: {
+        userId: targetRecipientId,
+        username: targetRecipientUsername,
+      },
       replyToUserId: targetRecipientId,
       replyToUsername: targetRecipientUsername,
       momentId: moment.id,
       reply: trimmedMessage,
       comment: trimmedMessage,
       message: trimmedMessage,
-      createdAt: chatMessage.createdAt,
+      createdAt: chatMessage.createdAt instanceof Date ? chatMessage.createdAt.toISOString() : chatMessage.createdAt,
       timeAgo: formatTimeAgoShort(chatMessage.createdAt),
       likesCount: 0,
       isLiked: false,
+      isMyComment: true,
       canDelete: true,
+      repliesCount: 0,
       user: {
         id: replierUser?.id,
         username: replierUser?.username || null,
@@ -2758,6 +2764,23 @@ export class MomentService {
         }
       } catch {}
     }
+    const userMap = new Map<string, { id: string; username: string | null; name: string }>();
+    if (parentComment.sender) {
+      userMap.set(parentComment.sender.id, {
+        id: parentComment.sender.id,
+        username: parentComment.sender.username || null,
+        name: parentComment.sender.fullName || parentComment.sender.nickName || 'User',
+      });
+    }
+    for (const r of allMomentReplies) {
+      if (r.sender) {
+        userMap.set(r.sender.id, {
+          id: r.sender.id,
+          username: r.sender.username || null,
+          name: r.sender.fullName || r.sender.nickName || 'User',
+        });
+      }
+    }
 
     const rawFormattedList: any[] = [];
 
@@ -2769,78 +2792,74 @@ export class MomentService {
         } catch {}
       }
 
+      // Canonical parentReplyId:
+      // Direct reply to the comment: parentReplyId is null
+      // Reply to another reply: parentReplyId is the target reply's ID
       const parentReplyId =
-        meta?.parentReplyId ||
-        (meta?.parentCommentId && meta.parentCommentId !== commentId ? meta.parentCommentId : null) ||
-        null;
+        meta?.parentReplyId && meta.parentReplyId !== commentId
+          ? meta.parentReplyId
+          : meta?.parentCommentId && meta.parentCommentId !== commentId && replyMap.has(meta.parentCommentId)
+          ? meta.parentCommentId
+          : null;
 
-      let replyToUName = meta?.replyToUsername || null;
-      let replyToUId = meta?.replyToUserId || null;
-      if (!replyToUName) {
+      let targetUserId: string | null = meta?.replyToUserId || null;
+      let targetUsername: string | null = meta?.replyToUsername || null;
+
+      if (!targetUserId) {
         if (parentReplyId && replyMap.has(parentReplyId)) {
           const pr = replyMap.get(parentReplyId);
-          replyToUName = pr.sender?.username || pr.sender?.fullName || null;
-          replyToUId = pr.senderId || null;
-        } else if (!parentReplyId && parentComment) {
-          replyToUName = parentComment.sender?.username || parentComment.sender?.fullName || null;
-          replyToUId = parentComment.senderId || null;
+          targetUserId = pr.senderId || null;
+          targetUsername = pr.sender?.username || pr.sender?.fullName || null;
+        } else {
+          targetUserId = parentComment.senderId || null;
+          targetUsername = parentComment.sender?.username || parentComment.sender?.fullName || null;
         }
+      } else if (userMap.has(targetUserId)) {
+        const u = userMap.get(targetUserId);
+        targetUsername = u?.username || u?.name || targetUsername;
       }
 
       const formatted = {
         id: c.id,
-        replyId: c.id,
-        commentId: c.id,
+        text: c.content,
         parentCommentId: commentId,
         parentReplyId,
-        replyToUserId: replyToUId,
-        replyToUsername: replyToUName,
-        momentId,
-        text: c.content,
-        reply: c.content,
-        comment: c.content,
-        message: c.content,
-        createdAt: c.createdAt,
+        replyTo: {
+          userId: targetUserId || null,
+          username: targetUsername || null,
+        },
+        createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
         timeAgo: formatTimeAgoShort(c.createdAt),
+        likesCount: likesCountMap.get(c.id) || 0,
+        isLiked: userLikedSet.has(c.id),
         isMyComment: c.senderId === viewerId,
         canDelete:
           c.senderId === viewerId ||
           parentComment.senderId === viewerId ||
           moment.userId === viewerId,
-        likesCount: likesCountMap.get(c.id) || 0,
-        isLiked: userLikedSet.has(c.id),
         repliesCount: 0,
         user: {
           id: c.sender?.id,
           username: c.sender?.username || null,
           name: c.sender?.fullName || c.sender?.nickName || 'User',
-          profilePhoto: c.sender?.profilePicture
-            ? formatThumbnailUrl(c.sender.profilePicture)
-            : null,
           avatar: c.sender?.profilePicture
             ? formatThumbnailUrl(c.sender.profilePicture)
             : null,
           isVerified: !!c.sender?.isFaceVerified,
-          isSubscribed: !!c.sender?.isSubscribed,
-          city: c.sender?.city || null,
         },
+        replies: [] as any[],
       };
       rawFormattedList.push(formatted);
     }
 
-    // 1. Clean flat list of all replies (each item has empty replies: [], no nested duplication)
-    const flatList = rawFormattedList.map((item) => ({
-      ...item,
-      replies: [] as any[],
-    }));
-
-    // 2. Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
+    // Nested hierarchical tree of replies (child replies placed recursively inside parent reply's replies array)
     const treeItemMap = new Map<string, any>();
     const treeList: any[] = [];
     for (const item of rawFormattedList) {
       const treeItem = {
         ...item,
         user: { ...item.user },
+        replyTo: { ...item.replyTo },
         replies: [] as any[],
       };
       treeItemMap.set(treeItem.id, treeItem);
@@ -2848,9 +2867,13 @@ export class MomentService {
     }
 
     // Link nested sub-replies into parent reply's replies array
+    const directReplies: any[] = [];
     for (const item of treeList) {
       if (item.parentReplyId && treeItemMap.has(item.parentReplyId)) {
         treeItemMap.get(item.parentReplyId).replies.push(item);
+      } else {
+        item.parentReplyId = null;
+        directReplies.push(item);
       }
     }
 
@@ -2859,50 +2882,41 @@ export class MomentService {
       item.repliesCount = item.replies.length;
     }
 
-    // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
-    const directReplies = treeList.filter(
-      (item) => !item.parentReplyId || item.parentReplyId === commentId || !treeItemMap.has(item.parentReplyId)
-    );
-
     const isFlat = options?.format === 'flat' || options?.flat === true;
-    const targetList = isFlat ? flatList : directReplies;
+    const targetList = isFlat
+      ? rawFormattedList.map((item) => ({ ...item, replies: [] }))
+      : directReplies;
 
-    const totalReplies = rawFormattedList.length;
+    const totalReplies = matchingReplies.length;
     const paginatedReplies = targetList.slice(offset, offset + limit);
     const totalPages = Math.ceil(targetList.length / limit) || 1;
 
     return {
-      commentId,
       momentId,
-      totalReplies,
-      page,
-      limit,
-      totalPages,
       parentComment: {
         id: parentComment.id,
-        commentId: parentComment.id,
         text: parentComment.content,
-        comment: parentComment.content,
-        message: parentComment.content,
-        createdAt: parentComment.createdAt,
+        createdAt:
+          parentComment.createdAt instanceof Date
+            ? parentComment.createdAt.toISOString()
+            : parentComment.createdAt,
         user: {
           id: parentComment.sender?.id,
           username: parentComment.sender?.username || null,
           name: parentComment.sender?.fullName || parentComment.sender?.nickName || 'User',
-          profilePhoto: parentComment.sender?.profilePicture
-            ? formatThumbnailUrl(parentComment.sender.profilePicture)
-            : null,
           avatar: parentComment.sender?.profilePicture
             ? formatThumbnailUrl(parentComment.sender.profilePicture)
             : null,
           isVerified: !!parentComment.sender?.isFaceVerified,
-          isSubscribed: !!parentComment.sender?.isSubscribed,
-          city: parentComment.sender?.city || null,
         },
       },
       replies: paginatedReplies,
-      allReplies: flatList,
-      nestedReplies: directReplies,
+      pagination: {
+        page,
+        limit,
+        totalReplies,
+        totalPages,
+      },
     };
   }
 

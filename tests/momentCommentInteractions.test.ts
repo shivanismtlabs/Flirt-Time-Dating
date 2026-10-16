@@ -404,14 +404,20 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
 
       expect(getRes.status).toBe(200);
       expect(getRes.body.success).toBe(true);
-      expect(getRes.body.data.commentId).toBe(commentId);
-      expect(getRes.body.data.totalReplies).toBe(2);
-      expect(getRes.body.data.parentComment.comment).toBe('Breathtaking view! 🌆');
+      expect(getRes.body.data.momentId).toBe(momentId);
+      expect(getRes.body.data.parentComment.id).toBe(commentId);
+      expect(getRes.body.data.parentComment.text).toBe('Breathtaking view! 🌆');
+      expect(getRes.body.data.parentComment.user).toBeDefined();
+      expect(getRes.body.data.parentComment.user.id).toBe(commenterUser.id);
       expect(getRes.body.data.replies).toHaveLength(2);
-      expect(getRes.body.data.replies[0].reply).toBe('Reply 1 from Rohit');
+      expect(getRes.body.data.replies[0].text).toBe('Reply 1 from Rohit');
       expect(getRes.body.data.replies[0].likesCount).toBe(1);
       expect(getRes.body.data.replies[0].isLiked).toBe(true); // Kabir liked it
-      expect(getRes.body.data.replies[1].reply).toBe('Reply 2 from Ananya');
+      expect(getRes.body.data.replies[0].replyTo).toBeDefined();
+      expect(getRes.body.data.replies[0].replyTo.userId).toBe(commenterUser.id);
+      expect(getRes.body.data.replies[1].text).toBe('Reply 2 from Ananya');
+      expect(getRes.body.data.pagination.totalReplies).toBe(2);
+      expect(getRes.body.data.pagination.page).toBe(1);
 
       // Test pagination
       const pageRes = await request(app)
@@ -419,8 +425,8 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
         .set('Authorization', `Bearer ${commenterToken}`);
       expect(pageRes.status).toBe(200);
       expect(pageRes.body.data.replies).toHaveLength(1);
-      expect(pageRes.body.data.totalReplies).toBe(2);
-      expect(pageRes.body.data.totalPages).toBe(2);
+      expect(pageRes.body.data.pagination.totalReplies).toBe(2);
+      expect(pageRes.body.data.pagination.totalPages).toBe(2);
     });
 
     it('should allow author of reply, moment creator, or comment author to delete a reply', async () => {
@@ -673,32 +679,36 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
 
       expect(getRepliesRes.status).toBe(200);
       expect(getRepliesRes.body.success).toBe(true);
-      expect(getRepliesRes.body.data.totalReplies).toBe(4);
+      expect(getRepliesRes.body.data.pagination.totalReplies).toBe(4);
       // Top-level replies should only contain direct replies (r1), with child replies properly nested in .replies
       expect(getRepliesRes.body.data.replies).toHaveLength(1);
       expect(getRepliesRes.body.data.replies[0].id).toBe(r1Id);
+      expect(getRepliesRes.body.data.replies[0].parentReplyId).toBeNull();
 
       // Verify nested replies hierarchy on R1 -> S1 -> T1 -> U1
       const r1Item = getRepliesRes.body.data.replies[0];
       expect(r1Item.replies).toHaveLength(1);
       expect(r1Item.replies[0].id).toBe(s1Id);
+      expect(r1Item.replies[0].text).toBe('Sub-reply S1 by Ananya to Rohit');
+      expect(r1Item.replies[0].parentReplyId).toBe(r1Id);
+      expect(r1Item.replies[0].replyTo.userId).toBe(replierUser.id);
+      expect(r1Item.replies[0].replyTo.username).toBe(replierUser.username);
 
       const s1Item = r1Item.replies[0];
       expect(s1Item.replies).toHaveLength(1);
       expect(s1Item.replies[0].id).toBe(t1Id);
+      expect(s1Item.replies[0].parentReplyId).toBe(s1Id);
+      expect(s1Item.replies[0].replyTo.userId).toBe(creatorUser.id);
 
       const t1Item = s1Item.replies[0];
       expect(t1Item.replies).toHaveLength(1);
       expect(t1Item.replies[0].id).toBe(u1Id);
+      expect(t1Item.replies[0].parentReplyId).toBe(t1Id);
+      expect(t1Item.replies[0].replyTo.userId).toBe(commenterUser.id);
 
-      // Verify allReplies contains all 4 replies flat with clean replies: []
-      expect(getRepliesRes.body.data.allReplies).toHaveLength(4);
-      const allReturnedIds = getRepliesRes.body.data.allReplies.map((r: any) => r.id);
-      expect(allReturnedIds).toContain(r1Id);
-      expect(allReturnedIds).toContain(s1Id);
-      expect(allReturnedIds).toContain(t1Id);
-      expect(allReturnedIds).toContain(u1Id);
-      expect(getRepliesRes.body.data.allReplies[0].replies).toHaveLength(0);
+      // Verify redundant allReplies and nestedReplies are removed from the GET response
+      expect((getRepliesRes.body.data as any).allReplies).toBeUndefined();
+      expect((getRepliesRes.body.data as any).nestedReplies).toBeUndefined();
 
       // When requested with format=flat
       const getRepliesFlatRes = await request(app)

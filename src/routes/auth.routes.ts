@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { register, login, getProfile } from '../controllers/auth.controller';
 import { deleteAccountHandler } from '../controllers/user.controller';
+import { register, login, getProfile, logout } from '../controllers/auth.controller';
 import { appleAuth } from '../controllers/authApple.controller';
 import { firebaseAuth } from '../controllers/authFirebase.controller';
 import { requestPhoneOtp } from '../controllers/authPhoneRequest.controller';
@@ -22,6 +22,7 @@ import {
   verifyEmailOtpSchema,
   resendEmailOtpSchema,
   deleteAccountSchema,
+  logoutSchema,
 } from '../schemas/auth.schema';
 import { authenticate } from '../middlewares/auth.middleware';
 
@@ -37,6 +38,7 @@ router.get('/me', authenticate, getProfile);
 router.delete('/account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
 router.post('/delete-account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
 router.delete('/delete-account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
+router.post('/logout', authenticate, validate(logoutSchema), logout);
 
 
 // Phone Auth Routes

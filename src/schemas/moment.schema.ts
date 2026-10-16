@@ -104,14 +104,28 @@ export const reactMomentSchema = z.object({
 export const replyMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format').optional(),
   }),
   body: z
     .object({
       message: z.string().trim().min(1).max(1000).optional(),
       comment: z.string().trim().min(1).max(1000).optional(),
       text: z.string().trim().min(1).max(1000).optional(),
+      reply: z.string().trim().min(1).max(1000).optional(),
+      parentCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parent_comment_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parent_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      replyToCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      reply_to_comment_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      commentId: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      comment_id: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      replyId: z.string().uuid('Invalid reply ID format').optional().nullable(),
+      reply_id: z.string().uuid('Invalid reply ID format').optional().nullable(),
+      parentReplyId: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
+      parent_reply_id: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
     })
-    .refine((data) => Boolean(data.message || data.comment || data.text), {
+    .refine((data) => Boolean(data.message || data.comment || data.text || data.reply), {
       message: 'Comment or reply message cannot be empty',
     }),
 });
@@ -254,6 +268,97 @@ export const deleteMomentCommentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format').optional(),
     commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+});
+
+export const likeMomentCommentSchema = z.object({
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+      commentId: z.string().uuid('Invalid comment ID format').optional(),
+      replyId: z.string().uuid('Invalid reply ID format').optional(),
+    })
+    .refine((data) => !!(data.commentId || data.replyId), {
+      message: 'Either commentId or replyId is required',
+    }),
+  body: z
+    .object({
+      like: z.boolean().optional(),
+      isLiked: z.boolean().optional(),
+      action: z.enum(['like', 'unlike', 'toggle']).optional(),
+      type: z.enum(['like', 'unlike', 'toggle']).optional(),
+      reaction: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const getMomentCommentLikesSchema = z.object({
+  params: z
+    .object({
+      momentId: z.string().uuid('Invalid moment ID format').optional(),
+      commentId: z.string().uuid('Invalid comment ID format').optional(),
+      replyId: z.string().uuid('Invalid reply ID format').optional(),
+    })
+    .refine((data) => !!(data.commentId || data.replyId), {
+      message: 'Either commentId or replyId is required',
+    }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+    })
+    .optional(),
+});
+
+export const replyMomentCommentSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  body: z
+    .object({
+      reply: z.string().trim().min(1).max(1000).optional(),
+      comment: z.string().trim().min(1).max(1000).optional(),
+      message: z.string().trim().min(1).max(1000).optional(),
+      text: z.string().trim().min(1).max(1000).optional(),
+      parentCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parent_comment_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parent_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      replyToCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      reply_to_comment_id: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      commentId: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      comment_id: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      replyId: z.string().uuid('Invalid reply ID format').optional().nullable(),
+      reply_id: z.string().uuid('Invalid reply ID format').optional().nullable(),
+      parentReplyId: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
+      parent_reply_id: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
+    })
+    .refine((data) => Boolean(data.reply || data.comment || data.message || data.text), {
+      message: 'Reply message cannot be empty',
+    }),
+});
+
+export const getMomentCommentRepliesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).transform(Number).optional().default('1'),
+      limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
+      format: z.string().optional(),
+      flat: z.string().optional(),
+    })
+    .optional(),
+});
+
+export const deleteMomentCommentReplySchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format'),
+    replyId: z.string().uuid('Invalid reply ID format'),
   }),
 });
 

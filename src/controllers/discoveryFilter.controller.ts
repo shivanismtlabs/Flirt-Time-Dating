@@ -165,6 +165,27 @@ export const searchDiscoveryProfiles = async (
     }
 
     const bodyData = req.body || {};
+    const queryData = req.query || {};
+
+    // If text search or name/city search query is specified, delegate to searchUsersHandler
+    const hasTextSearch = Boolean(
+      queryData.query ||
+      queryData.search ||
+      queryData.q ||
+      queryData.name ||
+      queryData.city ||
+      bodyData.query ||
+      bodyData.search ||
+      bodyData.q ||
+      bodyData.name ||
+      bodyData.city
+    );
+
+    if (hasTextSearch) {
+      const { searchUsersHandler } = await import('./userSearch.controller');
+      return searchUsersHandler(req, res);
+    }
+
     const parseResult = discoverySearchBodySchema.safeParse(bodyData);
     if (!parseResult.success) {
       const firstError = parseResult.error.errors[0]?.message || 'Validation failed';

@@ -136,6 +136,11 @@ export const discoverySearchBodySchema = z
       .optional(),
     verifiedOnly: z.boolean().optional(),
     onlineOnly: z.boolean().optional(),
+    query: z.string().trim().optional(),
+    search: z.string().trim().optional(),
+    q: z.string().trim().optional(),
+    name: z.string().trim().optional(),
+    city: z.string().trim().optional(),
     page: z.number().int().min(1).optional().default(1),
     limit: z.number().int().min(1).max(50).optional().default(20),
     cursor: z.string().optional(),
@@ -158,6 +163,11 @@ export const discoverySearchSchema = z.object({
   body: discoverySearchBodySchema.optional(),
   query: z
     .object({
+      query: z.string().trim().optional(),
+      search: z.string().trim().optional(),
+      q: z.string().trim().optional(),
+      name: z.string().trim().optional(),
+      city: z.string().trim().optional(),
       page: z
         .string()
         .regex(/^\d+$/, 'page must be a positive integer')

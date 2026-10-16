@@ -129,6 +129,7 @@ export interface PublicProfileCardDTO {
   city: string;
   distanceKm: number | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   isOnline: boolean;
   profilePhotoUrl: string | null;
   about: string | null;
@@ -690,6 +691,7 @@ export class DiscoveryFilterService {
         city: targetUser.city || 'Mumbai',
         distanceKm,
         isVerified: !!targetUser.isFaceVerified,
+        isSubscribed: !!targetUser.isSubscribed,
         isOnline,
         profilePhotoUrl,
         about: targetUser.about || null,

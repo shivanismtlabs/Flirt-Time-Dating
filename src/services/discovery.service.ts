@@ -23,6 +23,7 @@ export interface DiscoveryUserProfile {
   age: number | null;
   profilePhoto: string | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   city: string;
   distanceKm: number | null;
   vibeScore: number | null;
@@ -76,6 +77,7 @@ export interface InterestUserCard {
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   distanceKm: number | null;
   sharedInterest: {
     id: string;
@@ -249,7 +251,6 @@ export class DiscoveryService {
         where: {
           reporterId: currentUserId,
           status: { [Op.ne]: 'dismissed' },
-          momentId: null,
         } as any,
         attributes: ['targetUserId'],
       }),
@@ -464,6 +465,7 @@ export class DiscoveryService {
         age: calculateAge(user.dateOfBirth),
         profilePhoto: primaryPhotoKey ? formatThumbnailUrl(primaryPhotoKey, photoVersion) : null,
         isVerified: !!user.isFaceVerified,
+        isSubscribed: !!user.isSubscribed,
         city: user.city || 'Mumbai',
         distanceKm,
         vibeScore,
@@ -726,6 +728,7 @@ export class DiscoveryService {
         age: calculateAge(user.dateOfBirth),
         profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
         isVerified: Boolean(user.isFaceVerified),
+        isSubscribed: Boolean(user.isSubscribed),
         distanceKm,
         sharedInterest: {
           id: targetInterest.id,
@@ -875,6 +878,7 @@ export class DiscoveryService {
             age: calculateAge(user.dateOfBirth),
             profilePhotoUrl: resolveProfilePhoto(user.profilePicture, user.photos),
             isVerified: Boolean(user.isFaceVerified),
+            isSubscribed: Boolean(user.isSubscribed),
             distanceKm,
             sharedInterest: {
               id: interest.id,

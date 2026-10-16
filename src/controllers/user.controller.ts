@@ -35,7 +35,20 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response) =>
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const updatedProfile = await updateUserProfile(userId, req.body);
+    const rawBody = req.body || {};
+    const nestedProfile =
+      typeof rawBody.profile === 'object' && rawBody.profile !== null
+        ? rawBody.profile
+        : typeof rawBody.user === 'object' && rawBody.user !== null
+        ? rawBody.user
+        : {};
+
+    const payload = {
+      ...nestedProfile,
+      ...rawBody,
+    };
+
+    const updatedProfile = await updateUserProfile(userId, payload);
 
     return sendSuccess(res, 'Profile updated successfully', updatedProfile);
   } catch (error: any) {
@@ -253,6 +266,10 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       bio: user.about || null,
       location,
       city: user.city || null,
+      state: location.state || null,
+      country: location.country || null,
+      county: location.county || null,
+      fullLocation: location.fullLocation || user.city || null,
       latitude: user.latitude ?? null,
       longitude: user.longitude ?? null,
       profilePhoto: primaryProfilePhoto,
@@ -265,6 +282,11 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       interests: formattedInterests,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
+      // Subscription & Wallet fields
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       // More about me direct fields
       drinking: user.drinking || null,
       education: user.education || null,
@@ -287,6 +309,10 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     const profileResponse = {
       id: user.id,
       username: user.username,
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       profilePhoto: primaryProfilePhoto,
       profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,
@@ -294,6 +320,13 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       coverPhotoUrl: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       profile: profileData,
       location,
+      city: user.city || null,
+      state: location.state || null,
+      country: location.country || null,
+      county: location.county || null,
+      fullLocation: location.fullLocation || user.city || null,
+      latitude: user.latitude ?? null,
+      longitude: user.longitude ?? null,
       moreAboutMe,
       interests: formattedInterests,
       moments: permanentMoments,

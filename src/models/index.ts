@@ -14,6 +14,7 @@ import { UserReport } from './userReport.model';
 import { Moment } from './moment.model';
 import { MomentMedia } from './momentMedia.model';
 import { MomentReaction } from './momentReaction.model';
+import { MomentCommentLike } from './momentCommentLike.model';
 import { Conversation } from './conversation.model';
 import { ChatMessage } from './chatMessage.model';
 import { ConnectionRequest } from './connectionRequest.model';
@@ -37,6 +38,7 @@ import { CoinTransaction } from './coinTransaction.model';
 import { UserSubscription } from './userSubscription.model';
 import { SubscriptionEventLog } from './subscriptionEventLog.model';
 import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
+import { NotificationOutbox } from './notificationOutbox.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -372,6 +374,29 @@ ChatMessage.belongsTo(User, {
   as: 'recipient',
 });
 
+// ChatMessage (Comment) <-> MomentCommentLike associations
+ChatMessage.hasMany(MomentCommentLike, {
+  foreignKey: 'commentId',
+  as: 'commentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(ChatMessage, {
+  foreignKey: 'commentId',
+  as: 'comment',
+});
+
+User.hasMany(MomentCommentLike, {
+  foreignKey: 'userId',
+  as: 'momentCommentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 // User <-> ConnectionRequest
 User.hasMany(ConnectionRequest, {
   foreignKey: 'requesterId',
@@ -579,6 +604,18 @@ UserSubscription.belongsTo(SubscriptionPlan, {
   as: 'plan',
 });
 
+// User <-> NotificationOutbox associations
+User.hasMany(NotificationOutbox, {
+  foreignKey: 'recipientId',
+  as: 'notificationOutbox',
+  onDelete: 'CASCADE',
+});
+
+NotificationOutbox.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
 export {
   sequelize,
   User,
@@ -617,6 +654,8 @@ export {
   UserSubscription,
   SubscriptionEventLog,
   UserDiscoveryPreference,
+  MomentCommentLike,
+  NotificationOutbox,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -785,7 +824,9 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
-                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;
+              ELSE
+                ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
@@ -975,6 +1016,7 @@ export const initDb = async (force = false): Promise<void> => {
           await QuickMomentReaction.sync();
           await QuickMomentView.sync();
           await MomentGift.sync();
+          await MomentCommentLike.sync();
         } catch (_qmSyncErr: any) {
           console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
         }
@@ -1037,6 +1079,7 @@ export const initDb = async (force = false): Promise<void> => {
     await ensureSubscriptionTables();
     await ensureCoinPurchaseTables();
     await UserDiscoveryPreference.sync();
+    await MomentCommentLike.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -1131,11 +1174,12 @@ export const ensureMomentGiftTables = async (): Promise<void> => {
   try {
     if (sequelize.getDialect() === 'postgres') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 0;');
+        await sequelize.query('ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;');
       } catch (_e) {}
     } else if (sequelize.getDialect() === 'sqlite') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;');
       } catch (_e) {}
     }
     await MomentGift.sync();
@@ -1202,8 +1246,9 @@ export const ensureCoinPurchaseTables = async (): Promise<void> => {
   try {
     await CoinPurchase.sync();
     await CoinTransaction.sync();
+    await NotificationOutbox.sync();
   } catch (err: any) {
-    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction tables:', err.message);
+    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction / NotificationOutbox tables:', err.message);
   }
 };
 

@@ -43,6 +43,7 @@ export interface ReportItem {
   targetType: string;
   targetUserId: string;
   targetName: string | null;
+  username?: string | null;
   targetPhoto: string | null;
   momentId?: string | null;
   momentThumbnail?: string | null;
@@ -470,17 +471,18 @@ export class ModerationService {
 
     const blockedUsers: BlockedUserItem[] = rows.map((block) => {
       const target = (block as any).blockedUser;
+      const username = target?.username || 'Unknown';
       const displayName =
+        target?.username ||
         target?.firstName ||
         (target?.fullName ? target.fullName.split(' ')[0] : null) ||
         target?.nickName ||
-        target?.username ||
         'User';
 
       return {
         userId: block.blockedUserId,
         name: displayName,
-        username: target?.username || 'Unknown',
+        username,
         profilePhoto: target?.profilePicture ? formatMediaUrl(target.profilePicture) : null,
         reason: block.reason || null,
         blockedAt: block.createdAt,
@@ -566,7 +568,7 @@ export class ModerationService {
         {
           model: User,
           as: 'targetUser',
-          attributes: ['id', 'username', 'fullName', 'profilePicture'],
+          attributes: ['id', 'username', 'fullName', 'firstName', 'profilePicture'],
           required: false,
         },
         {
@@ -591,10 +593,11 @@ export class ModerationService {
 
     const reports: ReportItem[] = rows.map((r: any) => {
       const firstMediaUrl = r.moment?.media?.[0]?.mediaUrl;
+      const targetUsername = r.targetUser?.username || null;
       const targetName =
+        targetUsername ||
         r.targetUser?.firstName ||
         (r.targetUser?.fullName ? r.targetUser.fullName.split(' ')[0] : null) ||
-        r.targetUser?.username ||
         null;
 
       return {
@@ -602,6 +605,7 @@ export class ModerationService {
         targetType: r.targetType,
         targetUserId: r.targetUserId,
         targetName,
+        username: targetUsername,
         targetPhoto: r.targetUser?.profilePicture
           ? formatMediaUrl(r.targetUser.profilePicture)
           : null,
@@ -659,13 +663,13 @@ export class ModerationService {
             {
               model: User,
               as: 'reporter',
-              attributes: ['id', 'username', 'email', 'fullName'],
+              attributes: ['id', 'username', 'email', 'fullName', 'firstName'],
               required: false,
             },
             {
               model: User,
               as: 'targetUser',
-              attributes: ['id', 'username', 'email', 'fullName', 'profilePicture'],
+              attributes: ['id', 'username', 'email', 'fullName', 'firstName', 'profilePicture'],
               required: false,
             },
             {
@@ -691,15 +695,17 @@ export class ModerationService {
 
     const reports: ReportItem[] = totalCountResult.rows.map((r: any) => {
       const firstMediaUrl = r.moment?.media?.[0]?.mediaUrl;
+      const targetUsername = r.targetUser?.username || null;
       const targetName =
+        targetUsername ||
         r.targetUser?.firstName ||
         (r.targetUser?.fullName ? r.targetUser.fullName.split(' ')[0] : null) ||
-        r.targetUser?.username ||
         null;
+      const reporterUsername = r.reporter?.username || null;
       const reporterName =
+        reporterUsername ||
         r.reporter?.firstName ||
         (r.reporter?.fullName ? r.reporter.fullName.split(' ')[0] : null) ||
-        r.reporter?.username ||
         null;
 
       return {
@@ -707,6 +713,7 @@ export class ModerationService {
         targetType: r.targetType,
         targetUserId: r.targetUserId,
         targetName,
+        username: targetUsername,
         targetPhoto: r.targetUser?.profilePicture
           ? formatMediaUrl(r.targetUser.profilePicture)
           : null,

@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import { User } from '../models/user.model';
+import { UserDevice } from '../models/userDevice.model';
+import { notificationService } from '../services/notification.service';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
 import { sendSuccess, sendError } from '../utils/response';
@@ -105,3 +107,39 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
     return sendError(res, error.message || 'Error fetching profile', 500);
   }
 };
+
+/**
+ * User Logout
+ * POST /api/v1/auth/logout
+ *
+ * In accordance with FlirtTime API Standards:
+ * - Deactivates user's registered device token or all device tokens if requested.
+ * - Adheres strictly to the standard response envelope:
+ *   {
+ *     "success": true,
+ *     "message": "User logged out successfully",
+ *     "data": {}
+ *   }
+ */
+export const logout = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    if (!req.user?.id) {
+      return sendError(res, 'Not authenticated', 401);
+    }
+
+    const userId = req.user.id;
+    const { deviceToken, fcmToken, allDevices } = req.body || {};
+    const rawToken = (deviceToken || fcmToken || '').trim();
+
+    if (allDevices === true) {
+      await UserDevice.update({ isActive: false }, { where: { userId } });
+    } else if (rawToken) {
+      await notificationService.deactivateDeviceToken(rawToken, userId);
+    }
+
+    return sendSuccess(res, 'User logged out successfully', {});
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error logging out', 500);
+  }
+};
+

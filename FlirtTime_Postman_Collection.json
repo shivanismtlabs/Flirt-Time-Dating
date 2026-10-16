@@ -358,6 +358,40 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "Logout User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Logs out authenticated user and optionally deactivates FCM device token."
+          },
+          "response": []
         }
       ]
     },
@@ -787,7 +821,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Meera Patel\",\n  \"nickName\": \"Meera\",\n  \"dateOfBirth\": \"1998-05-15\",\n  \"gender\": \"female\",\n  \"about\": \"Travel enthusiast and food lover looking for genuine vibes:)\"\n}"
+              "raw": "{\n  \"fullName\": \"Madsudan Patel\",\n  \"username\": \"madupatel\",\n  \"dateOfBirth\": \"2007-06-07\",\n  \"gender\": \"male\",\n  \"about\": \"Def a. SCD kasndklat and you will never get a chance for this one day you are not going anywhere with your life in it you will be a legend and you are\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"latitude\": 19.076,\n  \"longitude\": 72.8777\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
@@ -2090,6 +2124,50 @@
               "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
             }
           ]
+        },
+        {
+          "name": "Search Users by Name or City with Pagination",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/search?query=Cindy&page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "Cindy",
+                  "description": "Search keyword matching user name or city"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Items per page (default: 10, max: 50)"
+                }
+              ]
+            },
+            "description": "Search users by name or city with proper pagination. Directly powers the 'Search by name or city' screen in the FlirtTime app. Strictly excludes current user, blocked users, reported users, and inactive accounts."
+          },
+          "response": []
         }
       ]
     },
@@ -3882,6 +3960,153 @@
               ]
             },
             "description": "Deletes a comment/reply on a Moment. Allowed for either the comment author OR the creator of the moment (canDelete: true). Returns 403 Forbidden if an unauthorized user attempts to delete."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Moment Comment Reply or Sub-reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reply\": \"Totally agree, stunning capture! ✨\",\n  \"parentReplyId\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to create a reply or sub-reply to an existing comment. Pass optional parentReplyId to reply directly to another reply."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Comment Replies",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to fetch paginated replies for a specific comment, including parentComment metadata, likesCount, and isLiked status."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Moment Comment Reply",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies/:replyId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies",
+                ":replyId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Comment UUID"
+                },
+                {
+                  "key": "replyId",
+                  "value": "<REPLY_ID>",
+                  "description": "Reply UUID to delete"
+                }
+              ]
+            },
+            "description": "Canonical API to delete a specific reply. Authorized for the reply author, parent comment author, or moment creator."
           },
           "response": []
         },

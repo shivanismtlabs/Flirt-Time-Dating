@@ -1,3 +1,4 @@
+import { Op } from 'sequelize';
 import { User } from '../models/user.model';
 import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
@@ -6,8 +7,12 @@ import { calculateAge } from './discovery.service';
 export interface LocationDTO {
   city: string | null;
   state: string | null;
+  country: string | null;
+  county: string | null;
   name?: string | null;
   label?: string | null;
+  fullLocation?: string | null;
+  formattedLocation?: string | null;
   latitude?: number | null;
   longitude?: number | null;
 }
@@ -41,6 +46,7 @@ export interface UpdateProfileInput {
   fullName?: string;
   firstName?: string | null;
   lastName?: string | null;
+  username?: string;
   nickName?: string;
   dateOfBirth?: string;
   gender?: string;
@@ -50,16 +56,29 @@ export interface UpdateProfileInput {
     | {
         city?: string | null;
         state?: string | null;
+        country?: string | null;
+        county?: string | null;
         name?: string | null;
         label?: string | null;
+        fullLocation?: string | null;
+        formattedLocation?: string | null;
         address?: string | null;
-        latitude?: number | null;
-        longitude?: number | null;
+        latitude?: number | string | null;
+        longitude?: number | string | null;
+        longitutute?: number | string | null;
+        lat?: number | string | null;
+        lng?: number | string | null;
       }
     | null;
   city?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
+  state?: string | null;
+  country?: string | null;
+  county?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  longitutute?: number | string | null;
+  lat?: number | string | null;
+  lng?: number | string | null;
   drinking?: string | null;
   education?: string | null;
   height?: string | null;
@@ -216,11 +235,48 @@ export const updateUserProfile = async (
       user.fullName = `${user.firstName} ${user.lastName}`;
     }
   }
+  // Handle Username update (with unique check and validation)
+  const incomingUsername =
+    data.username !== undefined
+      ? data.username
+      : (data as any).userName !== undefined
+      ? (data as any).userName
+      : (data as any).user_name;
+
+  if (incomingUsername !== undefined && incomingUsername !== null) {
+    const cleanUsername = String(incomingUsername).trim();
+    if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+      throw new ServiceError('Username must be between 3 and 50 characters', 400);
+    }
+    const existingUser = await User.findOne({
+      where: {
+        username: cleanUsername,
+        id: { [Op.ne]: userId },
+      },
+    });
+    if (existingUser) {
+      throw new ServiceError('Username is already taken', 400);
+    }
+    user.username = cleanUsername;
+    // When nickName is not explicitly provided in the request payload, sync nickName to username
+    if (data.nickName === undefined && (data as any).nickname === undefined) {
+      user.nickName = cleanUsername;
+    }
+  }
+
+  // Handle NickName update (backward compatibility)
   if (data.nickName !== undefined) {
     user.nickName = data.nickName.trim();
   }
 
-  // Handle Location / City / Coordinates
+  const parseCoord = (val: any): number | null | undefined => {
+    if (val === undefined) return undefined;
+    if (val === null || val === '') return null;
+    const num = Number(val);
+    return isNaN(num) ? null : num;
+  };
+
+  // Handle Location / City / State / Country / County / Coordinates
   if (data.location !== undefined) {
     if (typeof data.location === 'string') {
       user.city = data.location.trim() || null;
@@ -228,34 +284,66 @@ export const updateUserProfile = async (
       const loc = data.location;
       if (loc.name && loc.name.trim()) {
         user.city = loc.name.trim();
-      } else if (loc.city && loc.city.trim()) {
-        user.city = loc.state && loc.state.trim()
-          ? `${loc.city.trim()}, ${loc.state.trim()}`
-          : loc.city.trim();
-      } else if (loc.label && loc.label.trim()) {
-        user.city = loc.label.trim();
-      } else if (loc.address && loc.address.trim()) {
-        user.city = loc.address.trim();
+      } else if (loc.fullLocation && loc.fullLocation.trim()) {
+        user.city = loc.fullLocation.trim();
+      } else {
+        const parts: string[] = [];
+        if (loc.city && loc.city.trim()) parts.push(loc.city.trim());
+        if (loc.county && loc.county.trim()) parts.push(loc.county.trim());
+        if (loc.state && loc.state.trim()) parts.push(loc.state.trim());
+        if (loc.country && loc.country.trim()) parts.push(loc.country.trim());
+
+        if (parts.length > 0) {
+          user.city = parts.join(', ');
+        } else if (loc.label && loc.label.trim()) {
+          user.city = loc.label.trim();
+        } else if (loc.address && loc.address.trim()) {
+          user.city = loc.address.trim();
+        }
       }
-      if (loc.latitude !== undefined) {
-        user.latitude = loc.latitude;
+      const locLat = parseCoord(loc.latitude ?? (loc as any).lat);
+      if (locLat !== undefined) {
+        user.latitude = locLat;
       }
-      if (loc.longitude !== undefined) {
-        user.longitude = loc.longitude;
+      const locLng = parseCoord(loc.longitude ?? (loc as any).longitutute ?? (loc as any).lng);
+      if (locLng !== undefined) {
+        user.longitude = locLng;
       }
     } else if (data.location === null) {
       user.city = null;
     }
   }
 
-  if (data.city !== undefined) {
-    user.city = data.city ? data.city.trim() : null;
+  // Handle direct root fields if location object was not provided
+  if (data.location === undefined) {
+    if (
+      data.city !== undefined ||
+      data.state !== undefined ||
+      data.country !== undefined ||
+      data.county !== undefined
+    ) {
+      const parts: string[] = [];
+      if (data.city && data.city.trim()) parts.push(data.city.trim());
+      if (data.county && data.county.trim()) parts.push(data.county.trim());
+      if (data.state && data.state.trim()) parts.push(data.state.trim());
+      if (data.country && data.country.trim()) parts.push(data.country.trim());
+
+      if (parts.length > 0) {
+        user.city = parts.join(', ');
+      } else if (data.city === null || data.city === '') {
+        user.city = null;
+      }
+    }
   }
-  if (data.latitude !== undefined) {
-    user.latitude = data.latitude;
+
+  // Direct root latitude / longitude (also supports lat / lng / longitutute)
+  const rootLat = parseCoord(data.latitude ?? (data as any).lat);
+  if (rootLat !== undefined) {
+    user.latitude = rootLat;
   }
-  if (data.longitude !== undefined) {
-    user.longitude = data.longitude;
+  const rootLng = parseCoord(data.longitude ?? (data as any).longitutute ?? (data as any).lng);
+  if (rootLng !== undefined) {
+    user.longitude = rootLng;
   }
 
   if (data.about !== undefined) {
@@ -352,9 +440,17 @@ export const updateUserProfile = async (
 
   user.isProfileComplete = true;
 
-  await user.save();
+  try {
+    await user.save();
+  } catch (err: any) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      throw new ServiceError('Username is already taken', 400);
+    }
+    throw err;
+  }
 
   const moreAboutMe = formatMoreAboutMe(user);
+  const userLocation = parseLocation(user.city, user.latitude, user.longitude);
 
   return {
     id: user.id,
@@ -369,8 +465,12 @@ export const updateUserProfile = async (
     age: calculateAge(user.dateOfBirth),
     gender: user.gender,
     about: user.about,
-    location: parseLocation(user.city, user.latitude, user.longitude),
+    location: userLocation,
     city: user.city || null,
+    state: userLocation.state || null,
+    country: userLocation.country || null,
+    county: userLocation.county || null,
+    fullLocation: userLocation.fullLocation || user.city || null,
     latitude: user.latitude ?? null,
     longitude: user.longitude ?? null,
     drinking: user.drinking,
@@ -397,6 +497,11 @@ export const updateUserProfile = async (
       : null,
     moreAboutMe,
     isProfileComplete: user.isProfileComplete,
+    isVerified: !!user.isFaceVerified,
+    isSubscribed: !!user.isSubscribed,
+    subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+    coins: typeof user.coins === 'number' ? user.coins : 0,
     role: user.role,
     isActive: user.isActive,
     createdAt: user.createdAt,
@@ -419,6 +524,9 @@ export interface OtherUserProfileResponse {
   fullName: string;
   age: number | null;
   isVerified: boolean;
+  isSubscribed?: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
   photos: OtherUserProfilePhotoDTO[];
@@ -427,6 +535,11 @@ export interface OtherUserProfileResponse {
     thumbnailUrl: string;
   } | null;
   city: string;
+  state?: string | null;
+  country?: string | null;
+  county?: string | null;
+  location?: LocationDTO;
+  fullLocation?: string | null;
   distanceKm: number | null;
   bio: string | null;
   moreAboutMe?: MoreAboutMeDTO;
@@ -531,7 +644,9 @@ export const getOtherUserProfile = async (
       {
         model: UserPhoto,
         as: 'photos',
-        where: { status: 'approved' },
+        where: {
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
+        },
         required: false,
       },
     ],
@@ -704,7 +819,7 @@ export const getOtherUserProfile = async (
 
   if (moments.length === 0 && rawPhotos.length > 0) {
     moments = rawPhotos
-      .filter((p) => !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
+      .filter((p) => p.status === 'approved' && !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
       .map((p) => ({
         id: p.id,
         momentId: p.id,
@@ -770,12 +885,17 @@ export const getOtherUserProfile = async (
     targetUser.nickName ||
     targetUser.username;
 
+  const otherLocation = parseLocation(targetUser.city, targetUser.latitude, targetUser.longitude);
+
   return {
     userId: targetUser.id,
     username: targetUser.username,
     fullName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
+    isSubscribed: !!targetUser.isSubscribed,
+    subscriptionExpiresAt: targetUser.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: targetUser.activeSubscriptionPlanId || null,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
     photos: formattedPhotos,
@@ -786,6 +906,11 @@ export const getOtherUserProfile = async (
         }
       : null,
     city: targetUser.city || 'Mumbai',
+    state: otherLocation.state || null,
+    country: otherLocation.country || null,
+    county: otherLocation.county || null,
+    location: otherLocation,
+    fullLocation: otherLocation.fullLocation || targetUser.city || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
     moreAboutMe: formatMoreAboutMe(targetUser),
@@ -839,7 +964,7 @@ export const getOtherUserPhotos = async (
         model: UserPhoto,
         as: 'photos',
         where: {
-          [Op.or]: [{ status: 'approved' }, { status: null }],
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
         },
         required: false,
       },
@@ -975,8 +1100,151 @@ export const calculateProfileCompletion = (
   return Math.min(100, Math.max(0, score));
 };
 
+const INDIAN_STATES = new Set([
+  'andhra pradesh', 'arunachal pradesh', 'assam', 'bihar', 'chhattisgarh',
+  'goa', 'gujarat', 'haryana', 'himachal pradesh', 'jharkhand', 'karnataka',
+  'kerala', 'madhya pradesh', 'maharashtra', 'manipur', 'meghalaya', 'mizoram',
+  'nagaland', 'odisha', 'punjab', 'rajasthan', 'sikkim', 'tamil nadu',
+  'telangana', 'tripura', 'uttar pradesh', 'uttarakhand', 'west bengal',
+  'delhi', 'ncr', 'chandigarh', 'puducherry', 'jammu and kashmir', 'ladakh',
+]);
+
+const INDIAN_CITIES = new Map<string, { state: string; country: string }>([
+  ['mumbai', { state: 'Maharashtra', country: 'India' }],
+  ['pune', { state: 'Maharashtra', country: 'India' }],
+  ['nagpur', { state: 'Maharashtra', country: 'India' }],
+  ['thane', { state: 'Maharashtra', country: 'India' }],
+  ['nashik', { state: 'Maharashtra', country: 'India' }],
+  ['navi mumbai', { state: 'Maharashtra', country: 'India' }],
+  ['indore', { state: 'Madhya Pradesh', country: 'India' }],
+  ['bhopal', { state: 'Madhya Pradesh', country: 'India' }],
+  ['jabalpur', { state: 'Madhya Pradesh', country: 'India' }],
+  ['gwalior', { state: 'Madhya Pradesh', country: 'India' }],
+  ['bengaluru', { state: 'Karnataka', country: 'India' }],
+  ['bangalore', { state: 'Karnataka', country: 'India' }],
+  ['mysuru', { state: 'Karnataka', country: 'India' }],
+  ['mysore', { state: 'Karnataka', country: 'India' }],
+  ['hyderabad', { state: 'Telangana', country: 'India' }],
+  ['ahmedabad', { state: 'Gujarat', country: 'India' }],
+  ['surat', { state: 'Gujarat', country: 'India' }],
+  ['vadodara', { state: 'Gujarat', country: 'India' }],
+  ['kolkata', { state: 'West Bengal', country: 'India' }],
+  ['chennai', { state: 'Tamil Nadu', country: 'India' }],
+  ['coimbatore', { state: 'Tamil Nadu', country: 'India' }],
+  ['madurai', { state: 'Tamil Nadu', country: 'India' }],
+  ['jaipur', { state: 'Rajasthan', country: 'India' }],
+  ['udaipur', { state: 'Rajasthan', country: 'India' }],
+  ['jodhpur', { state: 'Rajasthan', country: 'India' }],
+  ['lucknow', { state: 'Uttar Pradesh', country: 'India' }],
+  ['kanpur', { state: 'Uttar Pradesh', country: 'India' }],
+  ['agra', { state: 'Uttar Pradesh', country: 'India' }],
+  ['varanasi', { state: 'Uttar Pradesh', country: 'India' }],
+  ['noida', { state: 'Uttar Pradesh', country: 'India' }],
+  ['greater noida', { state: 'Uttar Pradesh', country: 'India' }],
+  ['ghaziabad', { state: 'Uttar Pradesh', country: 'India' }],
+  ['delhi', { state: 'Delhi', country: 'India' }],
+  ['new delhi', { state: 'Delhi', country: 'India' }],
+  ['gurugram', { state: 'Haryana', country: 'India' }],
+  ['gurgaon', { state: 'Haryana', country: 'India' }],
+  ['faridabad', { state: 'Haryana', country: 'India' }],
+  ['chandigarh', { state: 'Chandigarh', country: 'India' }],
+  ['kochi', { state: 'Kerala', country: 'India' }],
+  ['cochin', { state: 'Kerala', country: 'India' }],
+  ['thiruvananthapuram', { state: 'Kerala', country: 'India' }],
+  ['trivandrum', { state: 'Kerala', country: 'India' }],
+  ['kozhikode', { state: 'Kerala', country: 'India' }],
+  ['patna', { state: 'Bihar', country: 'India' }],
+  ['ranchi', { state: 'Jharkhand', country: 'India' }],
+  ['bhubaneswar', { state: 'Odisha', country: 'India' }],
+  ['guwahati', { state: 'Assam', country: 'India' }],
+  ['dehradun', { state: 'Uttarakhand', country: 'India' }],
+  ['shimla', { state: 'Himachal Pradesh', country: 'India' }],
+  ['amritsar', { state: 'Punjab', country: 'India' }],
+  ['ludhiana', { state: 'Punjab', country: 'India' }],
+  ['goa', { state: 'Goa', country: 'India' }],
+  ['panaji', { state: 'Goa', country: 'India' }],
+]);
+
+const US_STATES = new Set([
+  'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado',
+  'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho',
+  'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana',
+  'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota',
+  'mississippi', 'missouri', 'montana', 'nebraska', 'nevada',
+  'new hampshire', 'new jersey', 'new mexico', 'new york',
+  'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon',
+  'pennsylvania', 'rhode island', 'south carolina', 'south dakota',
+  'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington',
+  'west virginia', 'wisconsin', 'wyoming',
+  'al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi',
+  'id', 'il', 'in', 'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi',
+  'mn', 'ms', 'mo', 'mt', 'ne', 'nv', 'nh', 'nj', 'nm', 'ny', 'nc',
+  'nd', 'oh', 'ok', 'or', 'pa', 'ri', 'sc', 'sd', 'tn', 'tx', 'ut',
+  'vt', 'va', 'wa', 'wv', 'wi', 'wy'
+]);
+
+const KNOWN_COUNTRIES = new Map<string, string>([
+  ['india', 'India'],
+  ['united states', 'United States'],
+  ['united states of america', 'United States'],
+  ['usa', 'United States'],
+  ['u.s.a.', 'United States'],
+  ['united kingdom', 'United Kingdom'],
+  ['uk', 'United Kingdom'],
+  ['u.k.', 'United Kingdom'],
+  ['canada', 'Canada'],
+  ['australia', 'Australia'],
+  ['germany', 'Germany'],
+  ['france', 'France'],
+  ['italy', 'Italy'],
+  ['spain', 'Spain'],
+  ['brazil', 'Brazil'],
+  ['mexico', 'Mexico'],
+  ['japan', 'Japan'],
+  ['china', 'China'],
+  ['singapore', 'Singapore'],
+  ['united arab emirates', 'United Arab Emirates'],
+  ['uae', 'United Arab Emirates'],
+  ['netherlands', 'Netherlands'],
+  ['switzerland', 'Switzerland'],
+  ['sweden', 'Sweden'],
+  ['norway', 'Norway'],
+  ['russia', 'Russia'],
+  ['south africa', 'South Africa'],
+  ['new zealand', 'New Zealand'],
+  ['ireland', 'Ireland'],
+  ['indonesia', 'Indonesia'],
+  ['thailand', 'Thailand'],
+  ['malaysia', 'Malaysia'],
+  ['philippines', 'Philippines'],
+  ['vietnam', 'Vietnam'],
+  ['saudi arabia', 'Saudi Arabia'],
+  ['turkey', 'Turkey'],
+]);
+
+const MAJOR_WORLD_CITIES = new Map<string, { state: string | null; country: string }>([
+  ['london', { state: null, country: 'United Kingdom' }],
+  ['paris', { state: null, country: 'France' }],
+  ['berlin', { state: null, country: 'Germany' }],
+  ['tokyo', { state: null, country: 'Japan' }],
+  ['singapore', { state: null, country: 'Singapore' }],
+  ['dubai', { state: 'Dubai', country: 'United Arab Emirates' }],
+  ['toronto', { state: 'Ontario', country: 'Canada' }],
+  ['vancouver', { state: 'British Columbia', country: 'Canada' }],
+  ['sydney', { state: 'New South Wales', country: 'Australia' }],
+  ['melbourne', { state: 'Victoria', country: 'Australia' }],
+  ['new york', { state: 'New York', country: 'United States' }],
+  ['los angeles', { state: 'California', country: 'United States' }],
+  ['chicago', { state: 'Illinois', country: 'United States' }],
+  ['houston', { state: 'Texas', country: 'United States' }],
+  ['san francisco', { state: 'California', country: 'United States' }],
+  ['seattle', { state: 'Washington', country: 'United States' }],
+  ['austin', { state: 'Texas', country: 'United States' }],
+]);
+
 /**
- * Parses city string (e.g. "Indore, Madhya Pradesh" or "Indore") into structured city & state
+ * Parses city string (e.g. "Indore, Madhya Pradesh", "Mumbai", "Austin, Travis County, Texas, United States")
+ * into structured city, state, country, county, and formatted full location.
  */
 export const parseLocation = (
   cityString?: string | null,
@@ -987,21 +1255,158 @@ export const parseLocation = (
     return {
       city: null,
       state: null,
+      country: null,
+      county: null,
       name: null,
       label: null,
+      fullLocation: null,
+      formattedLocation: null,
       latitude: latitude ?? null,
       longitude: longitude ?? null,
     };
   }
+
   const trimmed = cityString.trim();
-  const parts = trimmed.split(',').map((p) => p.trim());
-  const city = parts[0] || null;
-  const state = parts.length >= 2 ? parts.slice(1).join(', ') : null;
+  const rawParts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
+
+  let city: string | null = null;
+  let county: string | null = null;
+  let state: string | null = null;
+  let country: string | null = null;
+
+  if (rawParts.length === 0) {
+    return {
+      city: null,
+      state: null,
+      country: null,
+      county: null,
+      name: null,
+      label: null,
+      fullLocation: null,
+      formattedLocation: null,
+      latitude: latitude ?? null,
+      longitude: longitude ?? null,
+    };
+  }
+
+  if (rawParts.length === 1) {
+    const p0 = rawParts[0];
+    const p0Lower = p0.toLowerCase();
+    city = p0;
+
+    const indianCity = INDIAN_CITIES.get(p0Lower);
+    const worldCity = MAJOR_WORLD_CITIES.get(p0Lower);
+    if (indianCity) {
+      state = indianCity.state;
+      country = indianCity.country;
+    } else if (worldCity) {
+      state = worldCity.state;
+      country = worldCity.country;
+    } else if (KNOWN_COUNTRIES.has(p0Lower)) {
+      country = KNOWN_COUNTRIES.get(p0Lower)!;
+      city = null;
+    }
+  } else if (rawParts.length === 2) {
+    const p0 = rawParts[0];
+    const p1 = rawParts[1];
+    const p0Lower = p0.toLowerCase();
+    const p1Lower = p1.toLowerCase();
+
+    city = p0;
+
+    if (p1Lower.includes('county')) {
+      county = p1;
+      const indianCity = INDIAN_CITIES.get(p0Lower);
+      if (indianCity) {
+        state = indianCity.state;
+        country = indianCity.country;
+      }
+    } else if (KNOWN_COUNTRIES.has(p1Lower)) {
+      country = KNOWN_COUNTRIES.get(p1Lower)!;
+      const indianCity = INDIAN_CITIES.get(p0Lower);
+      if (indianCity) {
+        state = indianCity.state;
+      }
+    } else if (INDIAN_STATES.has(p1Lower)) {
+      state = p1;
+      country = 'India';
+    } else if (US_STATES.has(p1Lower)) {
+      state = p1;
+      country = 'United States';
+    } else {
+      state = p1;
+      const indianCity = INDIAN_CITIES.get(p0Lower);
+      if (indianCity) {
+        country = indianCity.country;
+      }
+    }
+  } else if (rawParts.length === 3) {
+    const p0 = rawParts[0];
+    const p1 = rawParts[1];
+    const p2 = rawParts[2];
+    const p1Lower = p1.toLowerCase();
+    const p2Lower = p2.toLowerCase();
+
+    city = p0;
+
+    if (p1Lower.includes('county')) {
+      county = p1;
+      state = p2;
+      if (US_STATES.has(p2Lower)) {
+        country = 'United States';
+      } else if (INDIAN_STATES.has(p2Lower)) {
+        country = 'India';
+      } else if (KNOWN_COUNTRIES.has(p2Lower)) {
+        country = KNOWN_COUNTRIES.get(p2Lower)!;
+        state = null;
+      }
+    } else {
+      state = p1;
+      country = KNOWN_COUNTRIES.get(p2Lower) || p2;
+    }
+  } else {
+    // 4 or more parts: e.g. "Austin, Travis County, Texas, United States"
+    city = rawParts[0];
+    let remaining = rawParts.slice(1);
+
+    const countyIndex = remaining.findIndex((p) => p.toLowerCase().includes('county'));
+    if (countyIndex !== -1) {
+      county = remaining[countyIndex];
+      remaining = remaining.filter((_, idx) => idx !== countyIndex);
+    }
+
+    if (remaining.length >= 2) {
+      state = remaining.slice(0, remaining.length - 1).join(', ');
+      const lastPart = remaining[remaining.length - 1];
+      country = KNOWN_COUNTRIES.get(lastPart.toLowerCase()) || lastPart;
+    } else if (remaining.length === 1) {
+      const part = remaining[0];
+      const partLower = part.toLowerCase();
+      if (KNOWN_COUNTRIES.has(partLower)) {
+        country = KNOWN_COUNTRIES.get(partLower)!;
+      } else {
+        state = part;
+      }
+    }
+  }
+
+  const fullParts: string[] = [];
+  if (city) fullParts.push(city);
+  if (county) fullParts.push(county);
+  if (state) fullParts.push(state);
+  if (country) fullParts.push(country);
+
+  const fullLocation = fullParts.length > 0 ? fullParts.join(', ') : trimmed;
+
   return {
     city,
     state,
+    country,
+    county,
     name: trimmed,
-    label: trimmed,
+    label: fullLocation,
+    fullLocation,
+    formattedLocation: fullLocation,
     latitude: latitude ?? null,
     longitude: longitude ?? null,
   };

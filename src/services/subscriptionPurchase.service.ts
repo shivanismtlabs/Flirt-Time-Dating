@@ -9,6 +9,7 @@ import {
   CoinTransaction,
 } from '../models';
 import { iapService, IAPServiceError, VerifiedSubscriptionDetails } from './iap.service';
+import { subscriptionService } from './subscription.service';
 import {
   VerifySubscriptionPurchaseInput,
   SubscriptionHistoryQuery,
@@ -126,7 +127,7 @@ export class SubscriptionPurchaseService {
           subscription: existingFast,
           plan: existingFast.plan || plan,
           isEntitled: existingFast.isEntitled,
-          currentBalance: typeof currentUser?.coins === 'number' ? currentUser.coins : 500,
+          currentBalance: typeof currentUser?.coins === 'number' ? currentUser.coins : 0,
           bonusCoinsCredited: 0,
         };
       }
@@ -225,7 +226,7 @@ export class SubscriptionPurchaseService {
           return {
             alreadyProcessed: true,
             subscription: duplicateInTx,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
             bonusCoinsCredited: 0,
           };
         }
@@ -241,7 +242,7 @@ export class SubscriptionPurchaseService {
         }
 
         const bonusCoinsToCredit = Number(plan.bonus_coins || 0);
-        let balanceBefore = typeof user.coins === 'number' ? user.coins : 500;
+        let balanceBefore = typeof user.coins === 'number' ? user.coins : 0;
         let balanceAfter = balanceBefore;
         let awardedBonus = 0;
 
@@ -339,7 +340,7 @@ export class SubscriptionPurchaseService {
           txResult = {
             alreadyProcessed: true,
             subscription: existingAfterRace,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
             bonusCoinsCredited: 0,
           };
         } else {
@@ -361,15 +362,99 @@ export class SubscriptionPurchaseService {
   }
 
   /**
-   * Returns current subscription and entitlement status for the authenticated user
+  /**
+   * Resolves canonical billing cycle from plan duration, plan name, and store product ID.
+   * Guarantees a seven-day plan never incorrectly shows a monthly billing cycle.
+   */
+  public resolveBillingCycle(
+    plan?: SubscriptionPlan | null,
+    productId?: string | null
+  ): string {
+    const pId = (productId || '').toLowerCase();
+    const planName = (plan?.name || '').toLowerCase();
+    const rawCycle = (plan?.billing_cycle || '').toLowerCase().trim();
+    const durationDays = plan?.duration_days ?? 0;
+
+    // 1. Precise duration matches
+    if (durationDays > 0 && durationDays <= 7) {
+      return 'weekly';
+    }
+    if (durationDays >= 28 && durationDays <= 31) {
+      return 'monthly';
+    }
+    if (durationDays >= 85 && durationDays <= 93) {
+      return 'quarterly';
+    }
+    if (durationDays >= 360 && durationDays <= 366) {
+      return 'yearly';
+    }
+
+    // 2. Keyword heuristics on product ID and plan name
+    if (pId.includes('week') || planName.includes('week')) {
+      return 'weekly';
+    }
+    if (pId.includes('month') || planName.includes('month')) {
+      return 'monthly';
+    }
+    if (pId.includes('quarter') || planName.includes('quarter')) {
+      return 'quarterly';
+    }
+    if (
+      pId.includes('year') ||
+      pId.includes('annual') ||
+      planName.includes('year') ||
+      planName.includes('annual')
+    ) {
+      return 'yearly';
+    }
+
+    // 3. Fallback
+    return rawCycle || 'monthly';
+  }
+
+  /**
+   * Returns current subscription and entitlement status for the authenticated user.
+   * Standardized for the FlirtTime Subscription Screen:
+   * - Authoritative source of truth from UserSubscription and verified store transactions.
+   * - No redundant nesting, duplicated dates, or duplicate plan details.
+   * - Accurate weekly vs monthly billing cycle derivation.
+   * - Dynamic remaining validity (days, hours, minutes, isExpired).
+   * - Dedicated benefits array.
    */
   public async getMySubscription(userId: string): Promise<{
     isSubscribed: boolean;
-    subscription: any | null;
-    plan: any | null;
-    features: any[];
-    expiresAt: Date | null;
-    autoRenewing: boolean;
+    subscription: {
+      id: string;
+      platform: 'ios' | 'android';
+      productId: string;
+      status: string;
+      startsAt: string;
+      expiresAt: string;
+      isExpired: boolean;
+      remainingValidity: {
+        days: number;
+        hours: number;
+        minutes: number;
+      };
+      autoRenewing: boolean;
+      nextRenewalDate: string | null;
+    } | null;
+    plan: {
+      id: number | null;
+      name: string;
+      productId: string;
+      billingCycle: string;
+      durationDays: number;
+      price: string;
+      currency: string;
+      includedCoins: number;
+    } | null;
+    benefits: Array<{
+      id: number;
+      text: string;
+      image: string | null;
+      sortOrder: number;
+    }>;
   }> {
     const user = await User.findByPk(userId);
     if (!user) {
@@ -401,30 +486,122 @@ export class SubscriptionPurchaseService {
         isSubscribed: false,
         subscription: null,
         plan: null,
-        features: [],
-        expiresAt: null,
-        autoRenewing: false,
+        benefits: [],
       };
     }
 
-    const now = new Date();
-    const hasNotExpired = new Date(sub.expiresAt) > now;
-    const isEntitledNow = sub.isEntitled && (hasNotExpired || sub.status === 'in_grace_period');
+    let plan: SubscriptionPlan | null | undefined = sub.plan;
+    if (!plan && sub.productId) {
+      plan = await SubscriptionPlan.findOne({
+        where: {
+          [Op.or]: [
+            { apple_product_id: sub.productId },
+            { google_product_id: sub.productId },
+          ],
+        },
+        include: [
+          {
+            model: SubscriptionFeature,
+            as: 'features',
+            through: { attributes: ['sort_order'] },
+            required: false,
+          },
+        ],
+      });
+    }
 
-    // Reconcile user flag if expired
+    const now = new Date();
+    const expiresAtDate = new Date(sub.expiresAt);
+    const hasNotExpired = expiresAtDate.getTime() > now.getTime();
+    const isRevokedOrRefunded = sub.status === 'revoked' || sub.status === 'refunded';
+
+    // User is entitled now if not revoked/refunded, entitled flag is true, and (not expired OR in grace period)
+    const isEntitledNow =
+      !isRevokedOrRefunded &&
+      Boolean(sub.isEntitled) &&
+      (hasNotExpired || sub.status === 'in_grace_period');
+
+    // Authoritative subscription status
+    let status: string;
+    if (isRevokedOrRefunded) {
+      status = sub.status;
+    } else if (!hasNotExpired && sub.status !== 'in_grace_period') {
+      status = 'expired';
+    } else {
+      status = sub.status;
+    }
+
+    // Dynamic remaining validity calculated from authoritative expiresAt
+    const isExpired = !hasNotExpired;
+    let remainingValidity = {
+      days: 0,
+      hours: 0,
+      minutes: 0,
+    };
+
+    if (hasNotExpired) {
+      const diffMs = Math.max(0, expiresAtDate.getTime() - now.getTime());
+      const totalMinutes = Math.floor(diffMs / (60 * 1000));
+      const totalHours = Math.floor(totalMinutes / 60);
+      const days = Math.floor(totalHours / 24);
+      const hours = totalHours % 24;
+      const minutes = totalMinutes % 60;
+
+      remainingValidity = { days, hours, minutes };
+    }
+
+    // Auto-renewal status and next renewal date (only when verified and available)
+    const autoRenewing = Boolean(sub.autoRenewing && isEntitledNow && status === 'active');
+    const nextRenewalDate = autoRenewing && !isExpired ? expiresAtDate.toISOString() : null;
+
+    // Synchronize User table state if status transitioned to expired
     if (!isEntitledNow && user.isSubscribed) {
       user.isSubscribed = false;
       await user.save();
+    }
+    if (status === 'expired' && (sub.isEntitled || sub.status === 'active')) {
       await sub.update({ isEntitled: false, status: 'expired' });
     }
 
-    const plan = sub.plan;
-    const features = plan?.features ? (plan.features as any[]).map((f) => ({
-      id: f.id,
-      text: f.text,
-      image: f.image,
-      sort_order: f.PlanFeature?.sort_order ?? f.sort_order ?? 0,
-    })) : [];
+    // Deduplicate and sort configured benefits
+    const rawFeatures = (plan?.features as any[]) || [];
+    const seenFeatureIds = new Set<number>();
+    const benefits: Array<{ id: number; text: string; image: string | null; sortOrder: number }> = [];
+
+    for (const f of rawFeatures) {
+      const fId = Number(f.id);
+      if (seenFeatureIds.has(fId)) continue;
+      seenFeatureIds.add(fId);
+
+      const rawSort = f.PlanFeature?.sort_order ?? f.plan_feature?.sort_order ?? f.sort_order ?? 0;
+      const imageUrl = f.image ? subscriptionService.resolveFeatureImageUrl(f.image) : null;
+
+      benefits.push({
+        id: fId,
+        text: String(f.text || ''),
+        image: imageUrl,
+        sortOrder: Number(rawSort),
+      });
+    }
+
+    benefits.sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
+
+    // Resolve canonical billing cycle (prevent 7-day plans from showing monthly)
+    const billingCycle = this.resolveBillingCycle(plan, sub.productId);
+    const durationDays =
+      plan?.duration_days ??
+      (billingCycle === 'weekly' ? 7 : billingCycle === 'monthly' ? 30 : 0);
+    const includedCoins = Number(sub.bonusCoinsAmount || plan?.bonus_coins || 0);
+
+    const price = plan
+      ? typeof plan.price === 'number'
+        ? plan.price.toFixed(2)
+        : String(plan.price)
+      : typeof sub.price === 'number'
+      ? sub.price.toFixed(2)
+      : sub.price != null
+      ? String(sub.price)
+      : '0.00';
 
     return {
       isSubscribed: isEntitledNow,
@@ -432,25 +609,25 @@ export class SubscriptionPurchaseService {
         id: sub.id,
         platform: sub.platform,
         productId: sub.productId,
-        status: isEntitledNow ? sub.status : 'expired',
-        startsAt: sub.startsAt,
-        expiresAt: sub.expiresAt,
-        autoRenewing: sub.autoRenewing,
-        cancelReason: sub.cancelReason,
-        acknowledged: sub.acknowledged,
+        status,
+        startsAt: sub.startsAt instanceof Date ? sub.startsAt.toISOString() : sub.startsAt,
+        expiresAt: expiresAtDate.toISOString(),
+        isExpired,
+        remainingValidity,
+        autoRenewing,
+        nextRenewalDate,
       },
-      plan: plan
-        ? {
-            id: plan.id,
-            name: plan.name,
-            price: plan.price,
-            duration_days: plan.duration_days,
-            billing_cycle: plan.billing_cycle,
-          }
-        : null,
-      features,
-      expiresAt: sub.expiresAt,
-      autoRenewing: sub.autoRenewing,
+      plan: {
+        id: plan?.id ?? null,
+        name: plan?.name ?? sub.productId,
+        productId: sub.productId,
+        billingCycle,
+        durationDays,
+        price,
+        currency: plan?.currency || sub.currency || 'USD',
+        includedCoins,
+      },
+      benefits,
     };
   }
 
@@ -597,6 +774,17 @@ export class SubscriptionPurchaseService {
           { where: { id: sub.userId } }
         );
       }
+
+      // Check if refund or revocation applies to a coin purchase
+      if (notificationType === 'REVOKE' || notificationType === 'REFUND') {
+        try {
+          const { coinPurchaseService } = await import('./coinPurchase.service');
+          await coinPurchaseService.handlePurchaseRefundOrRevocation(
+            { storeTransactionId: origTxId },
+            `Apple notification: ${notificationType}`
+          );
+        } catch (_refundErr) {}
+      }
     }
 
     await eventLog.update({ processed: true, processingResult: 'SUCCESS' });
@@ -690,6 +878,23 @@ export class SubscriptionPurchaseService {
           { where: { id: sub.userId } }
         );
       }
+    }
+
+    // Check if Google notification is for voided/canceled coin purchases
+    const voidedToken =
+      decodedData.voidedPurchaseNotification?.purchaseToken ||
+      (decodedData.oneTimeProductNotification?.notificationType === 2
+        ? decodedData.oneTimeProductNotification?.purchaseToken
+        : null);
+
+    if (voidedToken) {
+      try {
+        const { coinPurchaseService } = await import('./coinPurchase.service');
+        await coinPurchaseService.handlePurchaseRefundOrRevocation(
+          { purchaseToken: voidedToken },
+          'Google Play voided / canceled purchase notification'
+        );
+      } catch (_gRefundErr) {}
     }
 
     await eventLog.update({ processed: true, processingResult: 'SUCCESS' });

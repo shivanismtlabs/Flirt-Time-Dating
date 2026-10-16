@@ -50,17 +50,38 @@ export const dateOfBirthSchema = z
     }
   });
 
+export const coordinateSchema = z
+  .union([
+    z.number(),
+    z
+      .string()
+      .trim()
+      .refine((val) => val === '' || !isNaN(Number(val)), {
+        message: 'Coordinate must be a valid number',
+      })
+      .transform((val) => (val === '' ? null : Number(val))),
+  ])
+  .optional()
+  .nullable();
+
 export const locationInputSchema = z
   .union([
-    z.string().trim().max(100),
+    z.string().trim().max(255),
     z.object({
       city: z.string().trim().max(100).optional().nullable(),
       state: z.string().trim().max(100).optional().nullable(),
-      name: z.string().trim().max(100).optional().nullable(),
-      label: z.string().trim().max(100).optional().nullable(),
+      country: z.string().trim().max(100).optional().nullable(),
+      county: z.string().trim().max(100).optional().nullable(),
+      name: z.string().trim().max(255).optional().nullable(),
+      label: z.string().trim().max(255).optional().nullable(),
+      fullLocation: z.string().trim().max(255).optional().nullable(),
+      formattedLocation: z.string().trim().max(255).optional().nullable(),
       address: z.string().trim().max(255).optional().nullable(),
-      latitude: z.number().optional().nullable(),
-      longitude: z.number().optional().nullable(),
+      latitude: coordinateSchema,
+      longitude: coordinateSchema,
+      longitutute: coordinateSchema,
+      lat: coordinateSchema,
+      lng: coordinateSchema,
     }),
   ])
   .optional()
@@ -87,6 +108,26 @@ export const updateProfileSchema = z.object({
       .max(50, 'lastName must not exceed 50 characters')
       .optional()
       .nullable(),
+    username: z
+      .string()
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters')
+      .optional(),
+    userName: z
+      .string()
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters')
+      .optional(),
+    user_name: z
+      .string()
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters')
+      .optional(),
+    profile: z.record(z.any()).optional(),
+    user: z.record(z.any()).optional(),
     nickName: z
       .string()
       .trim()
@@ -96,8 +137,14 @@ export const updateProfileSchema = z.object({
     dateOfBirth: dateOfBirthSchema.optional(),
     location: locationInputSchema,
     city: z.string().trim().max(100).optional().nullable(),
-    latitude: z.number().optional().nullable(),
-    longitude: z.number().optional().nullable(),
+    state: z.string().trim().max(100).optional().nullable(),
+    country: z.string().trim().max(100).optional().nullable(),
+    county: z.string().trim().max(100).optional().nullable(),
+    latitude: coordinateSchema,
+    longitude: coordinateSchema,
+    longitutute: coordinateSchema,
+    lat: coordinateSchema,
+    lng: coordinateSchema,
     gender: z
       .string()
       .trim()

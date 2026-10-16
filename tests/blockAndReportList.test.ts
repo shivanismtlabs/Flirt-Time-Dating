@@ -145,7 +145,7 @@ describe('Block and Report APIs', () => {
       const meeraBlock = res.body.data.blockedUsers.find((b: any) => b.userId === userB.id);
       expect(meeraBlock).toEqual({
         userId: userB.id,
-        name: 'Meera',
+        name: 'user_meera',
         username: 'user_meera',
         profilePhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
         reason: 'Harassment',
@@ -274,7 +274,8 @@ describe('Block and Report APIs', () => {
         id: expect.any(String),
         targetType: 'user',
         targetUserId: userB.id,
-        targetName: 'Meera',
+        targetName: 'user_meera',
+        username: 'user_meera',
         targetPhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
         momentId: null,
         momentThumbnail: null,
@@ -289,7 +290,8 @@ describe('Block and Report APIs', () => {
         id: expect.any(String),
         targetType: 'moment',
         targetUserId: userB.id,
-        targetName: 'Meera',
+        targetName: 'user_meera',
+        username: 'user_meera',
         targetPhoto: 'https://flirttime-media.s3.amazonaws.com/profiles/meera.jpg',
         momentId: momentB.id,
         momentThumbnail: 'https://flirttime-media.s3.amazonaws.com/moments/sunset.jpg',

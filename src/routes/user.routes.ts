@@ -61,11 +61,20 @@ import {
   deletePhoto,
 } from '../controllers/onboarding.controller';
 import { updateInterestsSchema } from '../schemas/onboarding.schema';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
+
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
 
 const router = Router();
 
 // All user management routes require authentication
 router.use(authenticate);
+
+// User Search API: GET /api/v1/users/search and POST /api/v1/users/search
+router.get('/search', validate(userSearchSchema), searchUsersHandler);
+router.post('/search', validate(userSearchSchema), searchUsersHandler);
 
 // Device token registration for push notifications (and aliases)
 router.post('/device-token', validate(registerDeviceTokenSchema), registerDeviceTokenHandler);
@@ -74,6 +83,7 @@ router.post('/token', validate(registerDeviceTokenSchema), registerDeviceTokenHa
 
 // Profile Onboarding & Edit Profile Endpoints
 router.get('/profile', (req, res) => getProfile(req, res));
+router.post('/profile', validate(updateProfileSchema), updateProfile);
 router.patch('/profile', validate(updateProfileSchema), updateProfile);
 router.put('/profile', validate(updateProfileSchema), updateProfile);
 router.post('/profile-photo', handleUploadProfilePhoto, uploadProfilePhoto);
@@ -111,6 +121,11 @@ router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutM
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));
 router.get('/:userId/photos', validate(getOtherUserProfileSchema), (req, res) => getOtherUserPhotosHandler(req, res));
+router.post('/:userId/compliment', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/:userId/compliments', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliments', validate(sendComplimentSchema), sendComplimentHandler);
+
 
 // User Visible Moments Thumbnails Screen
 router.get(

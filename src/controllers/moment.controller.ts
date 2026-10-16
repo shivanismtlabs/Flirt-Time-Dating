@@ -6,6 +6,7 @@ import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
+import { ChatMessage } from '../models';
 
 /**
  * Controller to create and publish a new Moment
@@ -351,7 +352,61 @@ export const replyMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const message = req.body.comment || req.body.message || req.body.text;
+    const message =
+      req.body.comment || req.body.message || req.body.text || req.body.reply;
+    const rawParentCommentId =
+      req.params.commentId ||
+      req.body?.parentCommentId ||
+      req.body?.parent_comment_id ||
+      req.body?.parentId ||
+      req.body?.parent_id ||
+      req.body?.replyToCommentId ||
+      req.body?.reply_to_comment_id ||
+      req.body?.commentId ||
+      req.body?.comment_id ||
+      req.body?.replyId ||
+      req.body?.reply_id ||
+      req.query?.parentCommentId ||
+      req.query?.parent_comment_id ||
+      req.query?.commentId ||
+      req.query?.comment_id;
+
+    const parentCommentId =
+      typeof rawParentCommentId === 'string' && rawParentCommentId.trim()
+        ? rawParentCommentId.trim()
+        : null;
+
+    const rawParentReplyId =
+      req.body?.parentReplyId ||
+      req.body?.parent_reply_id ||
+      req.query?.parentReplyId ||
+      req.query?.parent_reply_id;
+
+    const parentReplyId =
+      typeof rawParentReplyId === 'string' && rawParentReplyId.trim()
+        ? rawParentReplyId.trim()
+        : null;
+
+    if (parentCommentId) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(parentCommentId)) {
+        return sendError(res, 'Invalid parent comment ID format', 400, 'INVALID_COMMENT_ID');
+      }
+      if (parentReplyId && !uuidRegex.test(parentReplyId)) {
+        return sendError(res, 'Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+      }
+
+      const result = await momentService.replyToMomentComment(
+        senderId,
+        momentId,
+        parentCommentId,
+        message,
+        { parentReplyId }
+      );
+
+      return sendSuccess(res, 'Reply posted successfully', result, 201);
+    }
 
     const result = await momentService.replyToMoment(
       senderId,
@@ -427,6 +482,283 @@ export const deleteMomentCommentHandler = async (
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Error deleting comment', 500);
+  }
+};
+
+/**
+ * Controller to like or toggle like on a Moment Comment
+ * POST /api/v1/moments/:momentId/comments/:commentId/like (or /toggle-like)
+ */
+export const likeMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = (req.params.replyId || req.params.commentId) as string;
+    const momentId = req.params.momentId as string | undefined;
+
+    let action: 'like' | 'unlike' | 'toggle' | undefined;
+    if (typeof req.body?.isLiked === 'boolean') {
+      action = req.body.isLiked ? 'like' : 'unlike';
+    } else if (typeof req.body?.like === 'boolean') {
+      action = req.body.like ? 'like' : 'unlike';
+    } else if (req.body?.action) {
+      action = req.body.action;
+    } else if (req.body?.type) {
+      action = req.body.type;
+    }
+
+    const reaction = req.body?.reaction;
+
+    const result = await momentService.toggleLikeMomentComment(
+      userId,
+      commentId,
+      { action, reaction, momentId }
+    );
+
+    const message = result.isLiked
+      ? 'Comment liked successfully'
+      : 'Comment unliked successfully';
+
+    return sendSuccess(res, message, result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error processing comment like', 500);
+  }
+};
+
+/**
+ * Controller to explicitly unlike a Moment Comment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId/like or POST /api/v1/moments/:momentId/comments/:commentId/unlike
+ */
+export const unlikeMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = (req.params.replyId || req.params.commentId) as string;
+    const momentId = req.params.momentId as string | undefined;
+
+    const result = await momentService.toggleLikeMomentComment(
+      userId,
+      commentId,
+      { action: 'unlike', momentId }
+    );
+
+    return sendSuccess(res, 'Comment unliked successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error processing comment unlike', 500);
+  }
+};
+
+/**
+ * Controller to get all users who liked a Moment Comment
+ * GET /api/v1/moments/:momentId/comments/:commentId/likes
+ */
+export const getMomentCommentLikesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const commentId = (req.params.replyId || req.params.commentId) as string;
+    const momentId = req.params.momentId as string | undefined;
+    const { page, limit } = req.query as any;
+
+    const result = await momentService.getMomentCommentLikes(viewerId, commentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+      momentId,
+    });
+
+    return sendSuccess(res, 'Comment likes fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching comment likes', 500);
+  }
+};
+
+/**
+ * Controller to reply to an existing comment on a Moment
+ * POST /api/v1/moments/:momentId/comments/:commentId/replies
+ */
+export const replyMomentCommentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const senderId = req.user?.id;
+    if (!senderId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    let momentId = req.params.momentId as string | undefined;
+    const rawCommentId =
+      req.params.commentId ||
+      req.body?.parentCommentId ||
+      req.body?.parent_comment_id ||
+      req.body?.parentId ||
+      req.body?.parent_id ||
+      req.body?.commentId ||
+      req.body?.comment_id ||
+      req.body?.replyToCommentId ||
+      req.body?.reply_to_comment_id ||
+      req.body?.replyId ||
+      req.body?.reply_id;
+
+    const commentId =
+      typeof rawCommentId === 'string' && rawCommentId.trim()
+        ? rawCommentId.trim()
+        : '';
+
+    const message =
+      req.body?.reply || req.body?.comment || req.body?.message || req.body?.text;
+
+    const rawParentReplyId =
+      req.body?.parentReplyId ||
+      req.body?.parent_reply_id ||
+      req.query?.parentReplyId ||
+      req.query?.parent_reply_id;
+
+    const parentReplyId =
+      typeof rawParentReplyId === 'string' && rawParentReplyId.trim()
+        ? rawParentReplyId.trim()
+        : null;
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!commentId || !uuidRegex.test(commentId)) {
+      return sendError(res, 'Invalid comment ID format', 400, 'INVALID_COMMENT_ID');
+    }
+    if (parentReplyId && !uuidRegex.test(parentReplyId)) {
+      return sendError(res, 'Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+    }
+
+    if (!momentId) {
+      const parentComment = await ChatMessage.findByPk(commentId);
+      if (!parentComment) {
+        return sendError(res, 'Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
+      }
+      try {
+        const meta =
+          typeof parentComment.metadata === 'string'
+            ? JSON.parse(parentComment.metadata)
+            : parentComment.metadata;
+        momentId = meta?.momentId;
+      } catch {}
+      if (!momentId) {
+        return sendError(res, 'Associated moment not found for this comment', 404, 'MOMENT_NOT_FOUND');
+      }
+    }
+
+    const result = await momentService.replyToMomentComment(
+      senderId,
+      momentId,
+      commentId,
+      message,
+      { parentReplyId }
+    );
+
+    return sendSuccess(res, 'Reply posted successfully', result, 201);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error replying to comment', 500);
+  }
+};
+
+/**
+ * Controller to get replies for a specific Comment
+ * GET /api/v1/moments/:momentId/comments/:commentId/replies
+ */
+export const getMomentCommentRepliesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const commentId = req.params.commentId as string;
+    const { page, limit, format, flat } = req.query as any;
+
+    const result = await momentService.getMomentCommentReplies(
+      viewerId,
+      momentId,
+      commentId,
+      {
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+        format: typeof format === 'string' ? format : undefined,
+        flat: flat === 'true' || flat === true,
+      }
+    );
+
+    return sendSuccess(res, 'Comment replies fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching comment replies', 500);
+  }
+};
+
+/**
+ * Controller to delete a specific reply to a Moment Comment
+ * DELETE /api/v1/moments/:momentId/comments/:commentId/replies/:replyId
+ */
+export const deleteMomentCommentReplyHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const commentId = req.params.commentId as string;
+    const replyId = req.params.replyId as string;
+
+    const result = await momentService.deleteMomentCommentReply(
+      userId,
+      momentId,
+      commentId,
+      replyId
+    );
+
+    return sendSuccess(res, 'Reply deleted successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof MomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error deleting reply', 500);
   }
 };
 

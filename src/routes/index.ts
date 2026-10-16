@@ -28,6 +28,8 @@ import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
 import { getProfile, updateProfile } from '../controllers/user.controller';
 import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
 
 const router = Router();
 
@@ -61,7 +63,18 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 
 // Direct Profile aliases: /api/v1/profile, /api/profile
 router.get('/profile', authenticate, getProfile);
+router.post('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
+
+// Direct Compliments aliases: /api/v1/compliments, /api/v1/compliment
+router.post('/compliments', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+
+// Direct Search aliases: /api/v1/search, /api/search
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
+router.get('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
+router.post('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
 
 export default router;

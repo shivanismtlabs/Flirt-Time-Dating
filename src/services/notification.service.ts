@@ -398,6 +398,47 @@ export class NotificationService {
   }
 
   /**
+   * Dispatches In-App and Push Notification for a profile compliment
+   */
+  public async sendComplimentNotification(
+    targetUserId: string,
+    input: {
+      requesterId: string;
+      requesterName: string;
+      complimentId: string;
+      message: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const title = 'New Compliment!';
+    const preview =
+      input.message.length > 80
+        ? `${input.message.substring(0, 77)}...`
+        : input.message;
+    const body = `${input.requesterName} sent you a compliment: "${preview}"`;
+
+    return this.dispatchNotification(targetUserId, {
+      type: 'compliment',
+      title,
+      body,
+      senderId: input.requesterId,
+      entityId: input.complimentId,
+      navigation: {
+        type: 'compliments',
+        targetId: input.complimentId,
+      },
+      data: {
+        type: 'compliment',
+        interactionType: 'compliments',
+        complimentId: input.complimentId,
+        requestId: input.complimentId,
+        senderId: input.requesterId,
+        senderName: input.requesterName,
+        message: input.message,
+      },
+    });
+  }
+
+  /**
    * Get Notifications grouped into Today, Yesterday, and Earlier sections with cursor pagination
    */
   public async getGroupedNotifications(
@@ -710,6 +751,43 @@ export class NotificationService {
       successCount: response.successCount,
       failureCount: response.failureCount,
     };
+  }
+
+  /**
+   * Dispatches In-App and Push Notification for a verified coin purchase
+   */
+  public async sendCoinPurchaseNotification(
+    recipientId: string,
+    input: {
+      purchaseId: string;
+      packageName: string;
+      coinsCredited: number;
+      currentBalance: number;
+      idempotencyKey?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const title = 'Coins Added! 🪙';
+    const body = `Your purchase of ${input.packageName} was successful. ${input.coinsCredited} coins have been added to your wallet.`;
+
+    return this.dispatchNotification(recipientId, {
+      type: 'coin_purchase',
+      title,
+      body,
+      entityId: input.purchaseId,
+      idempotencyKey: input.idempotencyKey || `coin_purchase_${input.purchaseId}`,
+      navigation: {
+        type: 'wallet',
+        targetId: input.purchaseId,
+      },
+      data: {
+        purchaseId: input.purchaseId,
+        packageName: input.packageName,
+        coinsCredited: String(input.coinsCredited),
+        currentBalance: String(input.currentBalance),
+        type: 'coin_purchase',
+        navType: 'wallet',
+      },
+    });
   }
 }
 

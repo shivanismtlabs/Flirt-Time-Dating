@@ -6,6 +6,7 @@ import {
   moderationService,
   ModerationServiceError,
 } from '../services/moderation.service';
+import { ChatMessage } from '../models';
 
 /**
  * Controller to create and publish a new Moment
@@ -351,7 +352,37 @@ export const replyMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const message = req.body.comment || req.body.message || req.body.text;
+    const message =
+      req.body.comment || req.body.message || req.body.text || req.body.reply;
+    const parentCommentId =
+      req.params.commentId ||
+      req.body.parentCommentId ||
+      req.body.parentId ||
+      req.body.replyToCommentId ||
+      req.body.commentId ||
+      null;
+    const parentReplyId = req.body.parentReplyId || null;
+
+    if (parentCommentId) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(parentCommentId)) {
+        return sendError(res, 'Invalid parent comment ID format', 400, 'INVALID_COMMENT_ID');
+      }
+      if (parentReplyId && !uuidRegex.test(parentReplyId)) {
+        return sendError(res, 'Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+      }
+
+      const result = await momentService.replyToMomentComment(
+        senderId,
+        momentId,
+        parentCommentId,
+        message,
+        { parentReplyId }
+      );
+
+      return sendSuccess(res, 'Reply posted successfully', result, 201);
+    }
 
     const result = await momentService.replyToMoment(
       senderId,
@@ -558,11 +589,41 @@ export const replyMomentCommentHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const momentId = req.params.momentId as string;
-    const commentId = req.params.commentId as string;
+    let momentId = req.params.momentId as string | undefined;
+    const commentId =
+      (req.params.commentId ||
+        req.body?.parentCommentId ||
+        req.body?.parentId ||
+        req.body?.commentId) as string;
     const message =
       req.body?.reply || req.body?.comment || req.body?.message || req.body?.text;
     const parentReplyId = req.body?.parentReplyId || null;
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!commentId || !uuidRegex.test(commentId)) {
+      return sendError(res, 'Invalid comment ID format', 400, 'INVALID_COMMENT_ID');
+    }
+    if (parentReplyId && !uuidRegex.test(parentReplyId)) {
+      return sendError(res, 'Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+    }
+
+    if (!momentId) {
+      const parentComment = await ChatMessage.findByPk(commentId);
+      if (!parentComment) {
+        return sendError(res, 'Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
+      }
+      try {
+        const meta =
+          typeof parentComment.metadata === 'string'
+            ? JSON.parse(parentComment.metadata)
+            : parentComment.metadata;
+        momentId = meta?.momentId;
+      } catch {}
+      if (!momentId) {
+        return sendError(res, 'Associated moment not found for this comment', 404, 'MOMENT_NOT_FOUND');
+      }
+    }
 
     const result = await momentService.replyToMomentComment(
       senderId,

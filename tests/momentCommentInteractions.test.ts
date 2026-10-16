@@ -787,5 +787,402 @@ describe('Moment Comment Like & Comment Reply APIs', () => {
       expect(unlikeRes.body.data.likesCount).toBe(0);
     });
   });
+
+  describe('6. Nested Comment Replies Bug Fixes & Hierarchy Verification', () => {
+    it('should create a top-level comment via POST /api/v1/moments/:momentId/comments when no parent comment is supplied', async () => {
+      const res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Top level comment 1' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.id).toBeDefined();
+      expect(res.body.data.text).toBe('Top level comment 1');
+      expect(res.body.data.parentCommentId).toBeNull();
+      expect(res.body.data.replies).toEqual([]);
+    });
+
+    it('should reply to comment A via POST /api/v1/moments/:momentId/comments with parentCommentId', async () => {
+      // 1. Create comment A
+      const commentARes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Original comment A' });
+      const commentAId = commentARes.body.data.id;
+
+      // 2. Reply to comment A
+      const replyRes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          text: 'This is a reply to comment A',
+          parentCommentId: commentAId,
+        });
+
+      expect(replyRes.status).toBe(201);
+      expect(replyRes.body.success).toBe(true);
+      expect(replyRes.body.data.id).toBeDefined();
+      expect(replyRes.body.data.text).toBe('This is a reply to comment A');
+      expect(replyRes.body.data.parentCommentId).toBe(commentAId);
+    });
+
+    it('should return reply under comment A and NOT as an independent top-level comment in GET /comments', async () => {
+      const freshMoment = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Fresh moment for reply test',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+      await MomentMedia.create({
+        momentId: freshMoment.id,
+        mediaUrl: 'moments/fresh.jpg',
+        mediaType: 'image',
+        displayOrder: 0,
+      });
+
+      // 1. Create comment A
+      const commentARes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Original comment A' });
+      const commentAId = commentARes.body.data.id;
+
+      // 2. Create reply to comment A
+      const replyRes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          text: 'This is a reply to comment A',
+          parentCommentId: commentAId,
+        });
+      const replyId = replyRes.body.data.id;
+
+      // 3. Fetch moment comments
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.success).toBe(true);
+
+      const comments = getRes.body.data.comments;
+      // Top-level comments count should be 1
+      expect(comments).toHaveLength(1);
+      expect(comments[0].id).toBe(commentAId);
+      expect(comments[0].text).toBe('Original comment A');
+      expect(comments[0].parentCommentId).toBeNull();
+      expect(comments[0].repliesCount).toBe(1);
+
+      // Verify the reply is nested inside comment A
+      expect(comments[0].replies).toHaveLength(1);
+      expect(comments[0].replies[0].id).toBe(replyId);
+      expect(comments[0].replies[0].text).toBe('This is a reply to comment A');
+      expect(comments[0].replies[0].parentCommentId).toBe(commentAId);
+
+      // Ensure the reply does NOT appear at root top-level
+      const topLevelIds = comments.map((c: any) => c.id);
+      expect(topLevelIds).not.toContain(replyId);
+    });
+
+    it('should correctly nest replies to multiple comments (A and B) under their respective parents', async () => {
+      const freshMoment = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Fresh moment for multi comments',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+      await MomentMedia.create({
+        momentId: freshMoment.id,
+        mediaUrl: 'moments/fresh.jpg',
+        mediaType: 'image',
+        displayOrder: 0,
+      });
+
+      // 1. Create comment A and comment B
+      const resA = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment A' });
+      const commentAId = resA.body.data.id;
+
+      const resB = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment B' });
+      const commentBId = resB.body.data.id;
+
+      // 2. Reply to comment A
+      const replyARes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          text: 'Reply to A',
+          parentCommentId: commentAId,
+        });
+      const replyAId = replyARes.body.data.id;
+
+      // 3. Reply to comment B
+      const replyBRes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          text: 'Reply to B',
+          parentCommentId: commentBId,
+        });
+      const replyBId = replyBRes.body.data.id;
+
+      // 4. Fetch moment comments
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      expect(getRes.status).toBe(200);
+      const comments = getRes.body.data.comments;
+      expect(comments).toHaveLength(2);
+
+      const foundA = comments.find((c: any) => c.id === commentAId);
+      const foundB = comments.find((c: any) => c.id === commentBId);
+
+      expect(foundA).toBeDefined();
+      expect(foundB).toBeDefined();
+
+      expect(foundA.replies).toHaveLength(1);
+      expect(foundA.replies[0].id).toBe(replyAId);
+      expect(foundA.replies[0].parentCommentId).toBe(commentAId);
+
+      expect(foundB.replies).toHaveLength(1);
+      expect(foundB.replies[0].id).toBe(replyBId);
+      expect(foundB.replies[0].parentCommentId).toBe(commentBId);
+
+      // Neither reply should be at the top level
+      const rootIds = comments.map((c: any) => c.id);
+      expect(rootIds).not.toContain(replyAId);
+      expect(rootIds).not.toContain(replyBId);
+    });
+
+    it('should reject invalid parent comment ID formats with 400', async () => {
+      const res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({
+          text: 'Reply with invalid parent ID',
+          parentCommentId: 'not-a-valid-uuid',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject non-existent parent comment IDs with 404', async () => {
+      const fakeUuid = '00000000-0000-4000-8000-000000000000';
+      const res = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({
+          text: 'Reply to non-existent comment',
+          parentCommentId: fakeUuid,
+        });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/Comment not found or unavailable/i);
+    });
+
+    it('should reject parent comment from another moment with 404 cross-moment mismatch', async () => {
+      // Create a second moment
+      const moment2 = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Second moment',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+
+      // Post comment on moment 2
+      const c2Res = await request(app)
+        .post(`/api/v1/moments/${moment2.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment on moment 2' });
+      const comment2Id = c2Res.body.data.id;
+
+      // Attempt to reply on moment 1 using parent comment from moment 2
+      const mismatchRes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          text: 'Cross-moment reply attempt',
+          parentCommentId: comment2Id,
+        });
+
+      expect(mismatchRes.status).toBe(404);
+      expect(mismatchRes.body.success).toBe(false);
+      expect(mismatchRes.body.message).toMatch(/Comment does not belong to the specified moment/i);
+    });
+
+    it('should support alternative parent keys (parentId, replyToCommentId) and content keys', async () => {
+      // 1. Create parent comment
+      const parentRes = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ comment: 'Parent with comment key' });
+      const parentId = parentRes.body.data.id;
+
+      // 2. Reply using parentId and message
+      const r1 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          message: 'Reply with parentId key',
+          parentId,
+        });
+      expect(r1.status).toBe(201);
+      expect(r1.body.data.parentCommentId).toBe(parentId);
+
+      // 3. Reply using replyToCommentId and reply
+      const r2 = await request(app)
+        .post(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          reply: 'Reply with replyToCommentId key',
+          replyToCommentId: parentId,
+        });
+      expect(r2.status).toBe(201);
+      expect(r2.body.data.parentCommentId).toBe(parentId);
+
+      // 4. Verify in GET comments
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${momentId}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      const found = getRes.body.data.comments.find((c: any) => c.id === parentId);
+      expect(found).toBeDefined();
+      expect(found.replies).toHaveLength(2);
+      expect(found.repliesCount).toBe(2);
+    });
+
+    it('should support nested reply to reply (sub-reply) hierarchy', async () => {
+      const freshMoment = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Fresh moment for sub-reply hierarchy',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+      await MomentMedia.create({
+        momentId: freshMoment.id,
+        mediaUrl: 'moments/fresh.jpg',
+        mediaType: 'image',
+        displayOrder: 0,
+      });
+
+      // 1. Top-level comment
+      const rootRes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Root comment' });
+      const rootId = rootRes.body.data.id;
+
+      // 2. Reply to root
+      const reply1Res = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({
+          text: 'Reply 1',
+          parentCommentId: rootId,
+        });
+      const reply1Id = reply1Res.body.data.id;
+
+      // 3. Sub-reply replying to Reply 1
+      const subReplyRes = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          text: 'Sub-reply replying to reply 1',
+          parentCommentId: rootId,
+          parentReplyId: reply1Id,
+        });
+      expect(subReplyRes.status).toBe(201);
+      const subReplyId = subReplyRes.body.data.id;
+
+      // 4. Verify in GET comments
+      const getRes = await request(app)
+        .get(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      const root = getRes.body.data.comments.find((c: any) => c.id === rootId);
+      expect(root).toBeDefined();
+      // Direct replies to root should contain Reply 1
+      expect(root.replies).toHaveLength(1);
+      expect(root.replies[0].id).toBe(reply1Id);
+
+      // Sub-reply should be nested inside Reply 1's replies array
+      expect(root.replies[0].replies).toHaveLength(1);
+      expect(root.replies[0].replies[0].id).toBe(subReplyId);
+      expect(root.replies[0].replies[0].text).toBe('Sub-reply replying to reply 1');
+
+      // Top-level comments count should only be 1
+      expect(getRes.body.data.totalComments).toBe(1);
+    });
+
+    it('should accurately handle pagination and reply counts without losing nested association', async () => {
+      const freshMoment = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Fresh moment for pagination',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+      await MomentMedia.create({
+        momentId: freshMoment.id,
+        mediaUrl: 'moments/fresh.jpg',
+        mediaType: 'image',
+        displayOrder: 0,
+      });
+
+      // Create 3 top-level comments
+      const c1 = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment 1' });
+      const c2 = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment 2' });
+      const c3 = await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${commenterToken}`)
+        .send({ text: 'Comment 3' });
+
+      // Add 2 replies to Comment 2
+      await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${replierToken}`)
+        .send({ text: 'Reply 1 to C2', parentCommentId: c2.body.data.id });
+      await request(app)
+        .post(`/api/v1/moments/${freshMoment.id}/comments`)
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({ text: 'Reply 2 to C2', parentCommentId: c2.body.data.id });
+
+      // Fetch page 1 with limit 2
+      const page1Res = await request(app)
+        .get(`/api/v1/moments/${freshMoment.id}/comments?page=1&limit=2`)
+        .set('Authorization', `Bearer ${commenterToken}`);
+
+      expect(page1Res.status).toBe(200);
+      expect(page1Res.body.data.totalComments).toBe(3);
+      expect(page1Res.body.data.totalPages).toBe(2);
+      expect(page1Res.body.data.comments).toHaveLength(2);
+
+      // Check Comment 2 has its replies attached
+      const foundC2 = page1Res.body.data.comments.find((c: any) => c.id === c2.body.data.id);
+      if (foundC2) {
+        expect(foundC2.replies).toHaveLength(2);
+        expect(foundC2.repliesCount).toBe(2);
+      }
+    });
+  });
 });
 

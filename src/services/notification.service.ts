@@ -752,6 +752,43 @@ export class NotificationService {
       failureCount: response.failureCount,
     };
   }
+
+  /**
+   * Dispatches In-App and Push Notification for a verified coin purchase
+   */
+  public async sendCoinPurchaseNotification(
+    recipientId: string,
+    input: {
+      purchaseId: string;
+      packageName: string;
+      coinsCredited: number;
+      currentBalance: number;
+      idempotencyKey?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const title = 'Coins Added! 🪙';
+    const body = `Your purchase of ${input.packageName} was successful. ${input.coinsCredited} coins have been added to your wallet.`;
+
+    return this.dispatchNotification(recipientId, {
+      type: 'coin_purchase',
+      title,
+      body,
+      entityId: input.purchaseId,
+      idempotencyKey: input.idempotencyKey || `coin_purchase_${input.purchaseId}`,
+      navigation: {
+        type: 'wallet',
+        targetId: input.purchaseId,
+      },
+      data: {
+        purchaseId: input.purchaseId,
+        packageName: input.packageName,
+        coinsCredited: String(input.coinsCredited),
+        currentBalance: String(input.currentBalance),
+        type: 'coin_purchase',
+        navType: 'wallet',
+      },
+    });
+  }
 }
 
 export const notificationService = new NotificationService();

@@ -104,14 +104,21 @@ export const reactMomentSchema = z.object({
 export const replyMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid moment ID format'),
+    commentId: z.string().uuid('Invalid comment ID format').optional(),
   }),
   body: z
     .object({
       message: z.string().trim().min(1).max(1000).optional(),
       comment: z.string().trim().min(1).max(1000).optional(),
       text: z.string().trim().min(1).max(1000).optional(),
+      reply: z.string().trim().min(1).max(1000).optional(),
+      parentCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      replyToCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      commentId: z.string().uuid('Invalid comment ID format').optional().nullable(),
+      parentReplyId: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
     })
-    .refine((data) => Boolean(data.message || data.comment || data.text), {
+    .refine((data) => Boolean(data.message || data.comment || data.text || data.reply), {
       message: 'Comment or reply message cannot be empty',
     }),
 });
@@ -298,7 +305,7 @@ export const getMomentCommentLikesSchema = z.object({
 
 export const replyMomentCommentSchema = z.object({
   params: z.object({
-    momentId: z.string().uuid('Invalid moment ID format'),
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
     commentId: z.string().uuid('Invalid comment ID format'),
   }),
   body: z
@@ -307,6 +314,8 @@ export const replyMomentCommentSchema = z.object({
       comment: z.string().trim().min(1).max(1000).optional(),
       message: z.string().trim().min(1).max(1000).optional(),
       text: z.string().trim().min(1).max(1000).optional(),
+      parentCommentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
+      parentId: z.string().uuid('Invalid parent comment ID format').optional().nullable(),
       parentReplyId: z.string().uuid('Invalid parent reply ID format').optional().nullable(),
     })
     .refine((data) => Boolean(data.reply || data.comment || data.message || data.text), {

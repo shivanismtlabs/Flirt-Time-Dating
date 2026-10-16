@@ -597,6 +597,17 @@ export class SubscriptionPurchaseService {
           { where: { id: sub.userId } }
         );
       }
+
+      // Check if refund or revocation applies to a coin purchase
+      if (notificationType === 'REVOKE' || notificationType === 'REFUND') {
+        try {
+          const { coinPurchaseService } = await import('./coinPurchase.service');
+          await coinPurchaseService.handlePurchaseRefundOrRevocation(
+            { storeTransactionId: origTxId },
+            `Apple notification: ${notificationType}`
+          );
+        } catch (_refundErr) {}
+      }
     }
 
     await eventLog.update({ processed: true, processingResult: 'SUCCESS' });
@@ -690,6 +701,23 @@ export class SubscriptionPurchaseService {
           { where: { id: sub.userId } }
         );
       }
+    }
+
+    // Check if Google notification is for voided/canceled coin purchases
+    const voidedToken =
+      decodedData.voidedPurchaseNotification?.purchaseToken ||
+      (decodedData.oneTimeProductNotification?.notificationType === 2
+        ? decodedData.oneTimeProductNotification?.purchaseToken
+        : null);
+
+    if (voidedToken) {
+      try {
+        const { coinPurchaseService } = await import('./coinPurchase.service');
+        await coinPurchaseService.handlePurchaseRefundOrRevocation(
+          { purchaseToken: voidedToken },
+          'Google Play voided / canceled purchase notification'
+        );
+      } catch (_gRefundErr) {}
     }
 
     await eventLog.update({ processed: true, processingResult: 'SUCCESS' });

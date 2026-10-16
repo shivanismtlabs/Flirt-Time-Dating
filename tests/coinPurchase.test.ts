@@ -1,9 +1,21 @@
 import request from 'supertest';
 import app from '../src/app';
 import { Op } from 'sequelize';
-import { sequelize, User, initDb, CoinPackage, CoinPurchase, CoinTransaction } from '../src/models';
+import {
+  sequelize,
+  User,
+  initDb,
+  CoinPackage,
+  CoinPurchase,
+  CoinTransaction,
+  Notification,
+  NotificationOutbox,
+} from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { iapService } from '../src/services/iap.service';
+import { notificationService } from '../src/services/notification.service';
+import { notificationOutboxService } from '../src/services/notificationOutbox.service';
+import { coinPurchaseService } from '../src/services/coinPurchase.service';
 
 describe('Production-Ready Coin Purchase and In-App Billing APIs', () => {
   let testUser: User;
@@ -19,6 +31,8 @@ describe('Production-Ready Coin Purchase and In-App Billing APIs', () => {
 
   beforeEach(async () => {
     // Clear test tables
+    await NotificationOutbox.destroy({ where: {} });
+    await Notification.destroy({ where: {} });
     await CoinTransaction.destroy({ where: {} });
     await CoinPurchase.destroy({ where: {} });
     await CoinPackage.destroy({ where: {} });
@@ -553,6 +567,254 @@ describe('Production-Ready Coin Purchase and In-App Billing APIs', () => {
 
       const dbRecord = await CoinPurchase.findByPk(unackPurchase.id);
       expect(dbRecord?.acknowledged).toBe(true);
+    });
+  });
+
+  describe('6. Production-Ready Coin Purchase Notifications, Outbox & Resiliency', () => {
+    it('should create a durable outbox entry and dispatch push & in-app notification upon verified purchase', async () => {
+      const mockTxId = `notif_tx_${Date.now()}`;
+      jest.spyOn(iapService, 'verifyAppleTransaction').mockResolvedValueOnce({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        productId: 'starter_pack',
+        environment: 'production',
+        purchaseDate: new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: { transactionId: mockTxId },
+      });
+
+      const res = await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      const dbPurchase = await CoinPurchase.findOne({ where: { storeTransactionId: mockTxId } });
+      expect(dbPurchase).not.toBeNull();
+
+      // Verify NotificationOutbox record exists and was marked 'sent'
+      const outboxEntry = await NotificationOutbox.findOne({
+        where: { entityId: dbPurchase!.id, type: 'coin_purchase' },
+      });
+      expect(outboxEntry).not.toBeNull();
+      expect(outboxEntry?.recipientId).toBe(testUser.id);
+      expect(outboxEntry?.status).toBe('sent');
+      expect(outboxEntry?.attempts).toBe(1);
+      expect(outboxEntry?.idempotencyKey).toBe(`coin_purchase_${dbPurchase!.id}`);
+
+      // Verify In-App Notification record created in DB
+      const inAppNotif = await Notification.findOne({
+        where: { recipientId: testUser.id, type: 'coin_purchase', entityId: dbPurchase!.id },
+      });
+      expect(inAppNotif).not.toBeNull();
+      expect(inAppNotif?.title).toBe('Coins Added! 🪙');
+      expect(inAppNotif?.body).toContain('120 coins have been added to your wallet');
+    });
+
+    it('should NOT trigger duplicate outbox items or duplicate notifications on duplicate verification callbacks', async () => {
+      const mockTxId = `dup_notif_tx_${Date.now()}`;
+      jest.spyOn(iapService, 'verifyAppleTransaction').mockResolvedValue({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        productId: 'starter_pack',
+        environment: 'production',
+        purchaseDate: new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: { transactionId: mockTxId },
+      });
+
+      // 1st request
+      await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+        });
+
+      // 2nd duplicate callback
+      const res2 = await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+        });
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.alreadyProcessed).toBe(true);
+
+      const dbPurchase = await CoinPurchase.findOne({ where: { storeTransactionId: mockTxId } });
+      expect(dbPurchase).not.toBeNull();
+
+      // Exactly ONE outbox record
+      const outboxCount = await NotificationOutbox.count({
+        where: { idempotencyKey: `coin_purchase_${dbPurchase!.id}` },
+      });
+      expect(outboxCount).toBe(1);
+
+      // Exactly ONE in-app notification
+      const notifCount = await Notification.count({
+        where: { recipientId: testUser.id, entityId: dbPurchase!.id, type: 'coin_purchase' },
+      });
+      expect(notifCount).toBe(1);
+    });
+
+    it('should ensure notification failure does NOT rollback the committed purchase or user wallet credit', async () => {
+      const mockTxId = `fail_notif_tx_${Date.now()}`;
+      jest.spyOn(iapService, 'verifyAppleTransaction').mockResolvedValueOnce({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        productId: 'starter_pack',
+        environment: 'production',
+        purchaseDate: new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: { transactionId: mockTxId },
+      });
+
+      // Simulate Firebase / notification dispatch failure
+      jest.spyOn(notificationService, 'sendCoinPurchaseNotification').mockRejectedValueOnce(
+        new Error('Firebase Cloud Messaging 503 Service Unavailable')
+      );
+
+      const res = await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+        });
+
+      // Purchase must still succeed!
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.currentBalance).toBe(620); // 500 + 120
+
+      // Purchase & ledger records remain fully committed
+      const dbPurchase = await CoinPurchase.findOne({ where: { storeTransactionId: mockTxId } });
+      expect(dbPurchase).not.toBeNull();
+      expect(dbPurchase?.status).toBe('completed');
+
+      const user = await User.findByPk(testUser.id);
+      expect(user?.coins).toBe(620);
+
+      // Outbox item captured the failure, remains pending for retry
+      const outbox = await NotificationOutbox.findOne({
+        where: { idempotencyKey: `coin_purchase_${dbPurchase!.id}` },
+      });
+      expect(outbox).not.toBeNull();
+      expect(outbox?.status).toBe('pending');
+      expect(outbox?.attempts).toBe(1);
+      expect(outbox?.lastError).toContain('Firebase Cloud Messaging 503');
+      expect(outbox?.nextRetryAt).not.toBeNull();
+    });
+
+    it('should allow notification outbox worker to retry and successfully deliver pending notifications', async () => {
+      // Create a pending outbox entry scheduled in the past
+      const pastDate = new Date(Date.now() - 60000);
+      const pendingOutbox = await NotificationOutbox.create({
+        recipientId: testUser.id,
+        type: 'coin_purchase',
+        title: 'Coins Added! 🪙',
+        body: 'Your purchase was successful. 120 coins added.',
+        entityId: 'manual_pending_purchase_1',
+        idempotencyKey: 'manual_pending_purchase_1_key',
+        data: {
+          purchaseId: 'manual_pending_purchase_1',
+          packageName: 'Starter Pack',
+          coinsCredited: 120,
+          currentBalance: 620,
+        },
+        status: 'pending',
+        attempts: 1,
+        maxAttempts: 5,
+        lastError: 'Temporary network failure',
+        nextRetryAt: pastDate,
+      });
+
+      // Process pending outbox
+      const summary = await notificationOutboxService.processPendingOutbox(10);
+      expect(summary.processed).toBeGreaterThanOrEqual(1);
+      expect(summary.succeeded).toBeGreaterThanOrEqual(1);
+
+      // Verify outbox entry is now 'sent'
+      const updatedOutbox = await NotificationOutbox.findByPk(pendingOutbox.id);
+      expect(updatedOutbox?.status).toBe('sent');
+      expect(updatedOutbox?.attempts).toBe(2);
+      expect(updatedOutbox?.lastError).toBeNull();
+    });
+
+    it('should handle coin purchase refund and revocation idempotently by deducting coins and recording ledger', async () => {
+      // 1. Create a completed purchase
+      const refundTxId = `refund_tx_${Date.now()}`;
+      const purchase = await CoinPurchase.create({
+        userId: testUser.id,
+        packageId: sampleStarterPack.id,
+        platform: 'ios',
+        productId: 'starter_pack',
+        storeTransactionId: refundTxId,
+        coins: 110,
+        bonusCoins: 10,
+        totalCoins: 120,
+        price: '49.00',
+        currency: 'INR',
+        status: 'completed',
+        environment: 'production',
+        acknowledged: true,
+        verifiedAt: new Date(),
+      });
+
+      // User starts with 500 coins + 120 = 620
+      await testUser.update({ coins: 620 });
+
+      // 2. Process refund/revocation
+      const result = await coinPurchaseService.handlePurchaseRefundOrRevocation(
+        { storeTransactionId: refundTxId },
+        'Customer requested chargeback'
+      );
+
+      expect(result.handled).toBe(true);
+      expect(result.coinsDeducted).toBe(120);
+
+      // Verify purchase updated to 'refunded'
+      const updatedPurchase = await CoinPurchase.findByPk(purchase.id);
+      expect(updatedPurchase?.status).toBe('refunded');
+
+      // Verify user balance deducted
+      const updatedUser = await User.findByPk(testUser.id);
+      expect(updatedUser?.coins).toBe(500); // 620 - 120
+
+      // Verify ledger transaction created
+      const refundLedger = await CoinTransaction.findOne({
+        where: { referenceId: purchase.id, type: 'refund' },
+      });
+      expect(refundLedger).not.toBeNull();
+      expect(refundLedger?.amount).toBe(-120);
+      expect(refundLedger?.balanceBefore).toBe(620);
+      expect(refundLedger?.balanceAfter).toBe(500);
+
+      // 3. Second call with same transaction ID must be idempotent
+      const secondCall = await coinPurchaseService.handlePurchaseRefundOrRevocation(
+        { storeTransactionId: refundTxId },
+        'Duplicate notification'
+      );
+      expect(secondCall.handled).toBe(false);
+
+      // User balance must remain 500 (not deducted again to 380)
+      const finalUser = await User.findByPk(testUser.id);
+      expect(finalUser?.coins).toBe(500);
     });
   });
 });

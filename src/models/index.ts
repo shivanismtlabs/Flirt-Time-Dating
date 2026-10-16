@@ -38,6 +38,7 @@ import { CoinTransaction } from './coinTransaction.model';
 import { UserSubscription } from './userSubscription.model';
 import { SubscriptionEventLog } from './subscriptionEventLog.model';
 import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
+import { NotificationOutbox } from './notificationOutbox.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -603,6 +604,18 @@ UserSubscription.belongsTo(SubscriptionPlan, {
   as: 'plan',
 });
 
+// User <-> NotificationOutbox associations
+User.hasMany(NotificationOutbox, {
+  foreignKey: 'recipientId',
+  as: 'notificationOutbox',
+  onDelete: 'CASCADE',
+});
+
+NotificationOutbox.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
 export {
   sequelize,
   User,
@@ -642,6 +655,7 @@ export {
   SubscriptionEventLog,
   UserDiscoveryPreference,
   MomentCommentLike,
+  NotificationOutbox,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -1229,8 +1243,9 @@ export const ensureCoinPurchaseTables = async (): Promise<void> => {
   try {
     await CoinPurchase.sync();
     await CoinTransaction.sync();
+    await NotificationOutbox.sync();
   } catch (err: any) {
-    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction tables:', err.message);
+    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction / NotificationOutbox tables:', err.message);
   }
 };
 

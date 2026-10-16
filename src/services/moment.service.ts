@@ -1648,8 +1648,40 @@ export class MomentService {
   public async replyToMoment(
     senderId: string,
     momentId: string,
-    message: string
+    message: string,
+    options?: {
+      parentCommentId?: string | null;
+      parentId?: string | null;
+      replyToCommentId?: string | null;
+      commentId?: string | null;
+      parentReplyId?: string | null;
+    }
   ) {
+    const parentId =
+      options?.parentCommentId ||
+      options?.parentId ||
+      options?.replyToCommentId ||
+      options?.commentId;
+
+    if (parentId) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(parentId)) {
+        throw new MomentServiceError(
+          'Invalid parent comment ID format',
+          400,
+          'INVALID_COMMENT_ID'
+        );
+      }
+      return this.replyToMomentComment(
+        senderId,
+        momentId,
+        parentId,
+        message,
+        { parentReplyId: options?.parentReplyId || null }
+      );
+    }
+
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       throw new MomentServiceError(
@@ -1757,6 +1789,9 @@ export class MomentService {
     await conversation.save();
 
     return {
+      id: chatMessage.id,
+      text: trimmedMessage,
+      parentCommentId: null,
       replyId: chatMessage.id,
       commentId: chatMessage.id,
       conversationId: conversation.id,
@@ -1765,6 +1800,7 @@ export class MomentService {
       message: trimmedMessage,
       comment: trimmedMessage,
       createdAt: chatMessage.createdAt,
+      replies: [],
     };
   }
 
@@ -1786,6 +1822,24 @@ export class MomentService {
     const limit = Math.max(1, Math.min(100, options?.limit || 20));
     const offset = (page - 1) * limit;
 
+    const parseMeta = (item: any) => {
+      if (!item?.metadata) return null;
+      try {
+        return typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+      } catch {
+        return null;
+      }
+    };
+
+    const isReply = (meta: any) => {
+      return Boolean(
+        meta?.parentCommentId ||
+        meta?.parentId ||
+        meta?.parentReplyId ||
+        meta?.replyToCommentId
+      );
+    };
+
     const { count, rows } = await ChatMessage.findAndCountAll({
       where: {
         messageType: 'moment_reply',
@@ -1797,6 +1851,9 @@ export class MomentService {
           { metadata: { [Op.notLike]: '%"type":"gift"%' } },
           { metadata: { [Op.notLike]: '%"type": "gift"%' } },
           { metadata: { [Op.notLike]: '%"parentCommentId"%' } },
+          { metadata: { [Op.notLike]: '%"parentId"%' } },
+          { metadata: { [Op.notLike]: '%"parentReplyId"%' } },
+          { metadata: { [Op.notLike]: '%"replyToCommentId"%' } },
           { content: { [Op.notLike]: '🎁%' } },
         ],
       },
@@ -1812,7 +1869,8 @@ export class MomentService {
       offset,
     });
 
-    const commentIds = rows.map((c: any) => c.id);
+    const topLevelRows = rows.filter((r: any) => !isReply(parseMeta(r)));
+    const commentIds = topLevelRows.map((c: any) => c.id);
     const likesCountMap = new Map<string, number>();
     const userLikedSet = new Set<string>();
 
@@ -1831,6 +1889,8 @@ export class MomentService {
               [Op.or]: [
                 { metadata: { [Op.like]: '%"parentCommentId"%' } },
                 { metadata: { [Op.like]: '%"parentReplyId"%' } },
+                { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+                { metadata: { [Op.like]: '%"parentId"%' } },
               ],
             },
           ],
@@ -1844,6 +1904,7 @@ export class MomentService {
         ],
         order: [['createdAt', 'ASC']],
       });
+      allMomentReplies = allMomentReplies.filter((r: any) => isReply(parseMeta(r)));
     } catch {}
 
     const replyMap = new Map<string, any>();
@@ -1875,13 +1936,8 @@ export class MomentService {
       const visited = new Set<string>();
       while (curr && !visited.has(curr.id)) {
         visited.add(curr.id);
-        let meta: any = null;
-        if (curr.metadata) {
-          try {
-            meta = typeof curr.metadata === 'string' ? JSON.parse(curr.metadata) : curr.metadata;
-          } catch {}
-        }
-        const pCommentId = meta?.parentCommentId;
+        const meta = parseMeta(curr);
+        const pCommentId = meta?.parentCommentId || meta?.parentId || meta?.replyToCommentId;
         if (!pCommentId) {
           return curr.id;
         }
@@ -1906,18 +1962,12 @@ export class MomentService {
       }
     }
 
-    const comments = rows.map((c: any) => {
+    const comments = topLevelRows.map((c: any) => {
       const rawReplies = commentRepliesMap.get(c.id) || [];
-      const itemMap = new Map<string, any>();
       const formattedList: any[] = [];
 
       for (const r of rawReplies) {
-        let meta: any = {};
-        if (r.metadata) {
-          try {
-            meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
-          } catch {}
-        }
+        const meta = parseMeta(r) || {};
 
         const parentRepId =
           meta?.parentReplyId ||
@@ -1941,6 +1991,7 @@ export class MomentService {
           replyToUserId: replyToUId,
           replyToUsername: replyToUName,
           momentId,
+          text: r.content,
           reply: r.content,
           comment: r.content,
           message: r.content,
@@ -1950,6 +2001,7 @@ export class MomentService {
           canDelete: r.senderId === viewerId || c.senderId === viewerId || moment.userId === viewerId,
           likesCount: likesCountMap.get(r.id) || 0,
           isLiked: userLikedSet.has(r.id),
+          repliesCount: 0,
           user: {
             id: r.sender?.id,
             username: r.sender?.username || null,
@@ -1989,6 +2041,11 @@ export class MomentService {
         }
       }
 
+      // Update repliesCount on each tree item
+      for (const item of treeList) {
+        item.repliesCount = item.replies.length;
+      }
+
       // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
       const directReplies = treeList.filter(
         (item) => !item.parentReplyId || item.parentReplyId === c.id || !treeItemMap.has(item.parentReplyId)
@@ -1999,8 +2056,10 @@ export class MomentService {
         commentId: c.id,
         replyId: c.id,
         momentId,
+        text: c.content,
         comment: c.content,
         message: c.content,
+        parentCommentId: null,
         createdAt: c.createdAt,
         timeAgo: formatTimeAgoShort(c.createdAt),
         isMyComment: c.senderId === viewerId,
@@ -2233,6 +2292,15 @@ export class MomentService {
       throw new MomentServiceError('Reply message exceeds 1000 characters limit', 400, 'MESSAGE_TOO_LONG');
     }
 
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!commentId || !uuidRegex.test(commentId)) {
+      throw new MomentServiceError('Invalid parent comment ID format', 400, 'INVALID_COMMENT_ID');
+    }
+    if (options?.parentReplyId && !uuidRegex.test(options.parentReplyId)) {
+      throw new MomentServiceError('Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+    }
+
     // 1. Validate moment existence and active status
     const moment = await Moment.findByPk(momentId, {
       include: [{ model: MomentMedia, as: 'media' }],
@@ -2252,7 +2320,7 @@ export class MomentService {
         },
       ],
     });
-    if (!parentComment) {
+    if (!parentComment || parentComment.messageType !== 'moment_reply') {
       throw new MomentServiceError('Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
     }
 
@@ -2330,7 +2398,7 @@ export class MomentService {
           },
         ],
       });
-      if (!parentReply) {
+      if (!parentReply || parentReply.messageType !== 'moment_reply') {
         throw new MomentServiceError(
           'Parent reply not found or unavailable',
           404,
@@ -2522,6 +2590,8 @@ export class MomentService {
     }
 
     return {
+      id: chatMessage.id,
+      text: trimmedMessage,
       replyId: chatMessage.id,
       commentId: chatMessage.id,
       parentCommentId: rootCommentId,
@@ -2726,6 +2796,7 @@ export class MomentService {
         replyToUserId: replyToUId,
         replyToUsername: replyToUName,
         momentId,
+        text: c.content,
         reply: c.content,
         comment: c.content,
         message: c.content,
@@ -2738,6 +2809,7 @@ export class MomentService {
           moment.userId === viewerId,
         likesCount: likesCountMap.get(c.id) || 0,
         isLiked: userLikedSet.has(c.id),
+        repliesCount: 0,
         user: {
           id: c.sender?.id,
           username: c.sender?.username || null,
@@ -2782,6 +2854,11 @@ export class MomentService {
       }
     }
 
+    // Update repliesCount on each tree item
+    for (const item of treeList) {
+      item.repliesCount = item.replies.length;
+    }
+
     // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
     const directReplies = treeList.filter(
       (item) => !item.parentReplyId || item.parentReplyId === commentId || !treeItemMap.has(item.parentReplyId)
@@ -2803,7 +2880,10 @@ export class MomentService {
       totalPages,
       parentComment: {
         id: parentComment.id,
+        commentId: parentComment.id,
+        text: parentComment.content,
         comment: parentComment.content,
+        message: parentComment.content,
         createdAt: parentComment.createdAt,
         user: {
           id: parentComment.sender?.id,
@@ -2928,6 +3008,8 @@ export class MomentService {
           [Op.or]: [
             { metadata: { [Op.like]: '%"parentCommentId"%' } },
             { metadata: { [Op.like]: '%"parentReplyId"%' } },
+            { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentId"%' } },
           ],
         },
         transaction: t,
@@ -2947,7 +3029,9 @@ export class MomentService {
             }
             if (
               (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
-              (m?.parentReplyId && toDelete.has(m.parentReplyId))
+              (m?.parentReplyId && toDelete.has(m.parentReplyId)) ||
+              (m?.replyToCommentId && toDelete.has(m.replyToCommentId)) ||
+              (m?.parentId && toDelete.has(m.parentId))
             ) {
               toDelete.add(r.id);
               expanded = true;
@@ -3060,6 +3144,8 @@ export class MomentService {
           [Op.or]: [
             { metadata: { [Op.like]: '%"parentCommentId"%' } },
             { metadata: { [Op.like]: '%"parentReplyId"%' } },
+            { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentId"%' } },
           ],
         },
       });
@@ -3078,7 +3164,9 @@ export class MomentService {
             }
             if (
               (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
-              (m?.parentReplyId && toDelete.has(m.parentReplyId))
+              (m?.parentReplyId && toDelete.has(m.parentReplyId)) ||
+              (m?.replyToCommentId && toDelete.has(m.replyToCommentId)) ||
+              (m?.parentId && toDelete.has(m.parentId))
             ) {
               toDelete.add(r.id);
               expanded = true;

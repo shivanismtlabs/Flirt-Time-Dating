@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { deleteAccountHandler } from '../controllers/user.controller';
 import { register, login, getProfile, logout } from '../controllers/auth.controller';
 import { appleAuth } from '../controllers/authApple.controller';
 import { firebaseAuth } from '../controllers/authFirebase.controller';
@@ -20,6 +21,7 @@ import {
   resendPhoneOtpSchema,
   verifyEmailOtpSchema,
   resendEmailOtpSchema,
+  deleteAccountSchema,
   logoutSchema,
 } from '../schemas/auth.schema';
 import { authenticate } from '../middlewares/auth.middleware';
@@ -33,6 +35,9 @@ router.post('/apple', validate(appleAuthSchema), appleAuth);
 router.post('/firebase', validate(firebaseAuthSchema), firebaseAuth);
 router.post('/firebase-phone', validate(firebaseAuthSchema), firebaseAuth);
 router.get('/me', authenticate, getProfile);
+router.delete('/account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
+router.post('/delete-account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
+router.delete('/delete-account', authenticate, validate(deleteAccountSchema), deleteAccountHandler);
 router.post('/logout', authenticate, validate(logoutSchema), logout);
 
 

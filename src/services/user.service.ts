@@ -760,11 +760,8 @@ export const getOtherUserProfile = async (
           candidateLookingFor: targetUser.lookingFor,
         });
 
-  const vibeScore = calculateVibeScore(
-    sharedInterests.length,
-    targetUser.isFaceVerified,
-    targetUser.isProfileComplete
-  );
+  // Assign profileMatchPercentage to vibeScore for mobile app compatibility
+  const vibeScore = profileMatchPercentage;
 
   let vibeExplanation: { text: string; sharedInterests: string[] } | null = null;
   if (sharedInterests.length > 0) {

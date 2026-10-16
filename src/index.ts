@@ -4,6 +4,7 @@ import { env } from './config/env';
 import { connectDatabase } from './config/database';
 import { initDb } from './models';
 import { emailProvider } from './services/email.service';
+import { notificationOutboxService } from './services/notificationOutbox.service';
 
 // Prefer IPv4 for outbound network calls to avoid IPv6 timeouts on AWS EC2 & cloud instances
 if (dns.setDefaultResultOrder) {
@@ -36,7 +37,13 @@ const startServer = async () => {
     }
   }
 
-  // 4. Listen on specified PORT
+  // 4. Start background Notification Outbox Worker (retries pending notifications)
+  if (process.env.NODE_ENV !== 'test') {
+    notificationOutboxService.startOutboxWorker(30000);
+    console.log('📬 Notification Outbox background worker started (30s interval).');
+  }
+
+  // 5. Listen on specified PORT
   const server = app.listen(env.PORT, () => {
     console.log(`==================================================`);
     console.log(`🌐 Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
@@ -48,6 +55,7 @@ const startServer = async () => {
   // Graceful shutdown handling
   const shutdown = () => {
     console.log('⚡ Received shutdown signal. Closing server...');
+    notificationOutboxService.stopOutboxWorker();
     server.close(() => {
       console.log('👋 HTTP server closed.');
       process.exit(0);

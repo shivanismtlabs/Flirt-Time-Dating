@@ -840,5 +840,104 @@ describe('Production-Ready Coin Purchase and In-App Billing APIs', () => {
       const finalUser = await User.findByPk(testUser.id);
       expect(finalUser?.coins).toBe(500);
     });
+
+    it('should rollback transaction, not credit coins, not persist purchase, and not schedule notification if coin credit database transaction fails', async () => {
+      const mockTxId = `fail_credit_tx_${Date.now()}`;
+      jest.spyOn(iapService, 'verifyAppleTransaction').mockResolvedValueOnce({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        productId: 'starter_pack',
+        environment: 'production',
+        purchaseDate: new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: { transactionId: mockTxId },
+      });
+
+      // Mock CoinTransaction.create to throw an error inside the database transaction
+      jest.spyOn(CoinTransaction, 'create').mockRejectedValueOnce(
+        new Error('Database disk error during ledger transaction creation')
+      );
+
+      const res = await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+        });
+
+      expect(res.status).toBe(500);
+      expect(res.body.success).toBe(false);
+
+      // Verify user coins were NOT credited (remains 500)
+      const user = await User.findByPk(testUser.id);
+      expect(user?.coins).toBe(500);
+
+      // Verify no CoinPurchase was committed
+      const purchase = await CoinPurchase.findOne({ where: { storeTransactionId: mockTxId } });
+      expect(purchase).toBeNull();
+
+      // Verify no NotificationOutbox was created
+      const outbox = await NotificationOutbox.findOne({ where: { recipientId: testUser.id } });
+      expect(outbox).toBeNull();
+
+      // Verify no in-app Notification was created
+      const notif = await Notification.findOne({ where: { recipientId: testUser.id } });
+      expect(notif).toBeNull();
+    });
+
+    it('should handle foreground purchase (isForeground: true) by persisting in-app notification and using foreground data-only dispatch', async () => {
+      const mockTxId = `foreground_tx_${Date.now()}`;
+      jest.spyOn(iapService, 'verifyAppleTransaction').mockResolvedValueOnce({
+        platform: 'ios',
+        storeTransactionId: mockTxId,
+        productId: 'starter_pack',
+        environment: 'production',
+        purchaseDate: new Date(),
+        isAcknowledged: true,
+        status: 'completed',
+        rawResponse: { transactionId: mockTxId },
+      });
+
+      const dispatchSpy = jest.spyOn(notificationService, 'dispatchNotification');
+
+      const res = await request(app)
+        .post('/api/v1/coins/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          packageId: sampleStarterPack.id,
+          transactionId: mockTxId,
+          isForeground: true,
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.currentBalance).toBe(620);
+
+      // Verify outbox entry captured isForeground: true
+      const outbox = await NotificationOutbox.findOne({
+        where: { idempotencyKey: `coin_purchase_${res.body.data.purchaseId}` },
+      });
+      expect(outbox?.data?.isForeground).toBe(true);
+
+      // Verify dispatchNotification was invoked with isForeground: true
+      expect(dispatchSpy).toHaveBeenCalledWith(
+        testUser.id,
+        expect.objectContaining({
+          isForeground: true,
+          type: 'coin_purchase',
+        })
+      );
+
+      // Verify In-App Notification was created in DB
+      const inAppNotif = await Notification.findOne({
+        where: { recipientId: testUser.id, entityId: res.body.data.purchaseId },
+      });
+      expect(inAppNotif).not.toBeNull();
+      expect(inAppNotif?.title).toBe('Coins Added! 🪙');
+    });
   });
 });

@@ -49,6 +49,7 @@ export interface UserSearchCardDTO {
   profilePhoto: string | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   isOnline: boolean;
   city: string;
   state?: string | null;
@@ -397,6 +398,7 @@ export class UserSearchService {
         profilePhoto: resolvedPhotoUrl,
         profilePhotoUrl: resolvedPhotoUrl,
         isVerified: !!user.isFaceVerified,
+        isSubscribed: !!user.isSubscribed,
         isOnline,
         city: user.city || 'Mumbai',
         state: userLoc.state || null,

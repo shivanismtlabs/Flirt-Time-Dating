@@ -158,6 +158,10 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   public toJSON(): Omit<UserAttributes, 'password'> {
     const values = { ...this.get() };
     delete values.password;
+    values.isSubscribed = Boolean(values.isSubscribed);
+    values.subscriptionExpiresAt = values.subscriptionExpiresAt || null;
+    values.activeSubscriptionPlanId = values.activeSubscriptionPlanId || null;
+    values.coins = typeof values.coins === 'number' ? values.coins : 500;
     return values;
   }
 }

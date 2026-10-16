@@ -497,6 +497,11 @@ export const updateUserProfile = async (
       : null,
     moreAboutMe,
     isProfileComplete: user.isProfileComplete,
+    isVerified: !!user.isFaceVerified,
+    isSubscribed: !!user.isSubscribed,
+    subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+    coins: typeof user.coins === 'number' ? user.coins : 500,
     role: user.role,
     isActive: user.isActive,
     createdAt: user.createdAt,
@@ -520,6 +525,8 @@ export interface OtherUserProfileResponse {
   age: number | null;
   isVerified: boolean;
   isSubscribed?: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
   photos: OtherUserProfilePhotoDTO[];
@@ -887,6 +894,8 @@ export const getOtherUserProfile = async (
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
     isSubscribed: !!targetUser.isSubscribed,
+    subscriptionExpiresAt: targetUser.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: targetUser.activeSubscriptionPlanId || null,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
     photos: formattedPhotos,

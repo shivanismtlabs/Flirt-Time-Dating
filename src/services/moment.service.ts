@@ -632,6 +632,7 @@ export class MomentService {
       profilePicture: targetUser.profilePicture ? formatMediaUrl(targetUser.profilePicture) : null,
       isVerified: !!targetUser.isFaceVerified,
       isFaceVerified: !!targetUser.isFaceVerified,
+      isSubscribed: !!targetUser.isSubscribed,
       city: targetUser.city || null,
       location: targetUser.city || null,
       momentCount: targetMomentCount,
@@ -1133,6 +1134,7 @@ export class MomentService {
               profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
               isVerified: !!creator.isFaceVerified,
               isFaceVerified: !!creator.isFaceVerified,
+              isSubscribed: !!creator.isSubscribed,
               city: creator.city || null,
               location: creator.city || null,
               momentCount: creatorMomentCount,
@@ -1372,6 +1374,7 @@ export class MomentService {
         profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
         isVerified: !!creator.isFaceVerified,
         isFaceVerified: !!creator.isFaceVerified,
+        isSubscribed: !!creator.isSubscribed,
         city: creator.city || null,
         location: creator.city || null,
         momentCount: creatorMomentCount,
@@ -1954,6 +1957,7 @@ export class MomentService {
             profilePhoto: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
             avatar: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
             isVerified: !!r.sender?.isFaceVerified,
+            isSubscribed: !!r.sender?.isSubscribed,
             city: r.sender?.city || null,
           },
         };
@@ -2011,6 +2015,7 @@ export class MomentService {
           profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
           avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
           isVerified: !!c.sender?.isFaceVerified,
+          isSubscribed: !!c.sender?.isSubscribed,
           city: c.sender?.city || null,
         },
         replies: directReplies,
@@ -2188,6 +2193,7 @@ export class MomentService {
       profilePhoto: likeRecord.user?.profilePicture ? formatThumbnailUrl(likeRecord.user.profilePicture) : null,
       avatar: likeRecord.user?.profilePicture ? formatThumbnailUrl(likeRecord.user.profilePicture) : null,
       isVerified: !!likeRecord.user?.isFaceVerified,
+      isSubscribed: !!likeRecord.user?.isSubscribed,
       city: likeRecord.user?.city || null,
       reaction: likeRecord.reaction,
       likedAt: likeRecord.createdAt,
@@ -2542,6 +2548,7 @@ export class MomentService {
           ? formatThumbnailUrl(replierUser.profilePicture)
           : null,
         isVerified: !!replierUser?.isFaceVerified,
+        isSubscribed: !!replierUser?.isSubscribed,
         city: replierUser?.city || null,
       },
       replies: [],
@@ -2742,6 +2749,7 @@ export class MomentService {
             ? formatThumbnailUrl(c.sender.profilePicture)
             : null,
           isVerified: !!c.sender?.isFaceVerified,
+          isSubscribed: !!c.sender?.isSubscribed,
           city: c.sender?.city || null,
         },
       };
@@ -2808,6 +2816,7 @@ export class MomentService {
             ? formatThumbnailUrl(parentComment.sender.profilePicture)
             : null,
           isVerified: !!parentComment.sender?.isFaceVerified,
+          isSubscribed: !!parentComment.sender?.isSubscribed,
           city: parentComment.sender?.city || null,
         },
       },
@@ -3193,6 +3202,7 @@ export class MomentService {
         profilePhoto: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
         avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
         isVerified: !!r.user?.isFaceVerified,
+        isSubscribed: !!r.user?.isSubscribed,
         city: r.user?.city || null,
       },
     }));
@@ -3343,6 +3353,7 @@ export class MomentService {
             profilePhoto: moment.user?.profilePicture ? formatThumbnailUrl(moment.user.profilePicture) : null,
             city: moment.user?.city || null,
             isVerified: !!moment.user?.isFaceVerified,
+            isSubscribed: !!moment.user?.isSubscribed,
           },
           totalGiftsReceived,
         };
@@ -3693,6 +3704,7 @@ export class MomentService {
         profilePhoto: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
         avatar: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
         isVerified: !!g.sender?.isFaceVerified,
+        isSubscribed: !!g.sender?.isSubscribed,
         city: g.sender?.city || null,
       },
     }));

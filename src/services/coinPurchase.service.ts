@@ -71,6 +71,9 @@ export interface PurchaseHistoryResult {
 export interface WalletBalanceResult {
   userId: string;
   coins: number;
+  isSubscribed: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   currency: string;
   recentTransactions: Array<{
     id: string;
@@ -582,6 +585,9 @@ export class CoinPurchaseService {
     return {
       userId: user.id,
       coins: typeof user.coins === 'number' ? user.coins : 500,
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
       currency: 'INR',
       recentTransactions: recentLedger.map((t) => ({
         id: t.id,

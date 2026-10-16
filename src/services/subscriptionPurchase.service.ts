@@ -126,7 +126,7 @@ export class SubscriptionPurchaseService {
           subscription: existingFast,
           plan: existingFast.plan || plan,
           isEntitled: existingFast.isEntitled,
-          currentBalance: typeof currentUser?.coins === 'number' ? currentUser.coins : 500,
+          currentBalance: typeof currentUser?.coins === 'number' ? currentUser.coins : 0,
           bonusCoinsCredited: 0,
         };
       }
@@ -225,7 +225,7 @@ export class SubscriptionPurchaseService {
           return {
             alreadyProcessed: true,
             subscription: duplicateInTx,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
             bonusCoinsCredited: 0,
           };
         }
@@ -241,7 +241,7 @@ export class SubscriptionPurchaseService {
         }
 
         const bonusCoinsToCredit = Number(plan.bonus_coins || 0);
-        let balanceBefore = typeof user.coins === 'number' ? user.coins : 500;
+        let balanceBefore = typeof user.coins === 'number' ? user.coins : 0;
         let balanceAfter = balanceBefore;
         let awardedBonus = 0;
 
@@ -339,7 +339,7 @@ export class SubscriptionPurchaseService {
           txResult = {
             alreadyProcessed: true,
             subscription: existingAfterRace,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
             bonusCoinsCredited: 0,
           };
         } else {

@@ -501,7 +501,7 @@ export const updateUserProfile = async (
     isSubscribed: !!user.isSubscribed,
     subscriptionExpiresAt: user.subscriptionExpiresAt || null,
     activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
-    coins: typeof user.coins === 'number' ? user.coins : 500,
+    coins: typeof user.coins === 'number' ? user.coins : 0,
     role: user.role,
     isActive: user.isActive,
     createdAt: user.createdAt,

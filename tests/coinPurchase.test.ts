@@ -536,6 +536,30 @@ describe('Production-Ready Coin Purchase and In-App Billing APIs', () => {
       expect(aliasRes.body.data.coins).toBe(500);
     });
 
+    it('should return initial coin balance of 0 for newly created user without coin purchases (GET /api/v1/wallet/balance)', async () => {
+      const newUser = await User.create({
+        username: 'brand_new_user',
+        email: 'newuser@flirttime.app',
+        isActive: true,
+        role: 'user',
+      });
+      const newToken = generateToken({
+        id: newUser.id,
+        email: newUser.email!,
+        role: newUser.role,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/wallet/balance')
+        .set('Authorization', `Bearer ${newToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.coins).toBe(0);
+      expect(res.body.data.userId).toBe(newUser.id);
+      expect(res.body.data.recentTransactions).toEqual([]);
+    });
+
     it('should allow retrying store acknowledgement (POST /api/v1/coins/purchase/:purchaseId/acknowledge)', async () => {
       const unackPurchase = await CoinPurchase.create({
         userId: testUser.id,

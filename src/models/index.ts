@@ -824,7 +824,9 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
-                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;
+              ELSE
+                ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
@@ -1172,11 +1174,12 @@ export const ensureMomentGiftTables = async (): Promise<void> => {
   try {
     if (sequelize.getDialect() === 'postgres') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 0;');
+        await sequelize.query('ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;');
       } catch (_e) {}
     } else if (sequelize.getDialect() === 'sqlite') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;');
       } catch (_e) {}
     }
     await MomentGift.sync();

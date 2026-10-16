@@ -285,7 +285,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       isSubscribed: !!user.isSubscribed,
       subscriptionExpiresAt: user.subscriptionExpiresAt || null,
       activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
-      coins: typeof user.coins === 'number' ? user.coins : 500,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       // More about me direct fields
       drinking: user.drinking || null,
       education: user.education || null,
@@ -311,7 +311,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       isSubscribed: !!user.isSubscribed,
       subscriptionExpiresAt: user.subscriptionExpiresAt || null,
       activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
-      coins: typeof user.coins === 'number' ? user.coins : 500,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       profilePhoto: primaryProfilePhoto,
       profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,

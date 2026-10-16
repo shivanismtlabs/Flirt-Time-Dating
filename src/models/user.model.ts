@@ -161,7 +161,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
     values.isSubscribed = Boolean(values.isSubscribed);
     values.subscriptionExpiresAt = values.subscriptionExpiresAt || null;
     values.activeSubscriptionPlanId = values.activeSubscriptionPlanId || null;
-    values.coins = typeof values.coins === 'number' ? values.coins : 500;
+    values.coins = typeof values.coins === 'number' ? values.coins : 0;
     return values;
   }
 }
@@ -344,7 +344,7 @@ User.init(
     },
     coins: {
       type: DataTypes.INTEGER,
-      defaultValue: 500,
+      defaultValue: 0,
       allowNull: false,
     },
     isSubscribed: {

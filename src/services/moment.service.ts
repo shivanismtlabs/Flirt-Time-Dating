@@ -3409,7 +3409,7 @@ export class MomentService {
       attributes: ['id', 'fullName', 'nickName', 'coins', 'profilePicture'],
     });
 
-    const userBalance = typeof viewer?.coins === 'number' ? viewer.coins : 500;
+    const userBalance = typeof viewer?.coins === 'number' ? viewer.coins : 0;
 
     let momentInfo: any = null;
     let totalGiftsReceived = 0;
@@ -3574,7 +3574,7 @@ export class MomentService {
       throw new MomentServiceError('Your account is inactive or not found', 401, 'UNAUTHORIZED');
     }
 
-    const senderCurrentCoins = typeof sender.coins === 'number' ? sender.coins : 500;
+    const senderCurrentCoins = typeof sender.coins === 'number' ? sender.coins : 0;
     if (senderCurrentCoins < totalCost) {
       throw new MomentServiceError(
         `Insufficient coin balance. You need ${totalCost} coins to send ${qty > 1 ? qty + 'x ' : ''}${gift.name}, but your balance is ${senderCurrentCoins} coins.`,
@@ -3602,7 +3602,7 @@ export class MomentService {
       // Credit coins to recipient creator
       const recipientUser = await User.findByPk(moment.userId, { transaction });
       if (recipientUser) {
-        recipientUser.coins = (typeof recipientUser.coins === 'number' ? recipientUser.coins : 500) + totalCost;
+        recipientUser.coins = (typeof recipientUser.coins === 'number' ? recipientUser.coins : 0) + totalCost;
         await recipientUser.save({ transaction });
       }
 

@@ -183,7 +183,7 @@ export class CoinPurchaseService {
             coinsCredited: existingFast.totalCoins,
             baseCoins: existingFast.coins,
             bonusCoins: existingFast.bonusCoins,
-            currentBalance: typeof user?.coins === 'number' ? user.coins : 500,
+            currentBalance: typeof user?.coins === 'number' ? user.coins : 0,
             status: existingFast.status,
             storeTransactionId: existingFast.storeTransactionId,
             environment: existingFast.environment,
@@ -282,8 +282,8 @@ export class CoinPurchaseService {
           return {
             alreadyProcessed: true,
             purchase: duplicateInTx,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
-            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
+            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
           };
         }
 
@@ -296,7 +296,7 @@ export class CoinPurchaseService {
           throw new CoinPurchaseServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
         }
 
-        const balanceBefore = typeof user.coins === 'number' ? user.coins : 500;
+        const balanceBefore = typeof user.coins === 'number' ? user.coins : 0;
         const balanceAfter = balanceBefore + totalCoins;
 
         // Create purchase record
@@ -402,8 +402,8 @@ export class CoinPurchaseService {
           txResult = {
             alreadyProcessed: true,
             purchase: existingAfterRace,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
-            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
+            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
           };
         } else {
           // If still not found after transient lock, retry the transaction once
@@ -423,8 +423,8 @@ export class CoinPurchaseService {
               return {
                 alreadyProcessed: true,
                 purchase: dupRetry,
-                currentBalance: typeof uNow?.coins === 'number' ? uNow.coins : 500,
-                previousBalance: typeof uNow?.coins === 'number' ? uNow.coins : 500,
+                currentBalance: typeof uNow?.coins === 'number' ? uNow.coins : 0,
+                previousBalance: typeof uNow?.coins === 'number' ? uNow.coins : 0,
               };
             }
 
@@ -433,7 +433,7 @@ export class CoinPurchaseService {
               throw new CoinPurchaseServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
             }
 
-            const balBefore = typeof retryUser.coins === 'number' ? retryUser.coins : 500;
+            const balBefore = typeof retryUser.coins === 'number' ? retryUser.coins : 0;
             const balAfter = balBefore + totalCoins;
 
             const newPurch = await CoinPurchase.create(
@@ -640,7 +640,7 @@ export class CoinPurchaseService {
 
     return {
       userId: user.id,
-      coins: typeof user.coins === 'number' ? user.coins : 500,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       isSubscribed: !!user.isSubscribed,
       subscriptionExpiresAt: user.subscriptionExpiresAt || null,
       activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,

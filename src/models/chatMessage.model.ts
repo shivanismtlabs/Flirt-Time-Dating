@@ -1,13 +1,22 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export type ChatMessageType =
+  | 'text'
+  | 'audio'
+  | 'image'
+  | 'location'
+  | 'contact'
+  | 'moment_reply'
+  | 'moment_gift';
+
 export interface ChatMessageAttributes {
   id: string;
   conversationId: string;
   senderId: string;
   recipientId: string;
   content: string;
-  messageType: 'text' | 'moment_reply' | 'moment_gift';
+  messageType: ChatMessageType;
   metadata?: string | null;
   isRead: boolean;
   createdAt?: Date;
@@ -28,7 +37,7 @@ export class ChatMessage
   declare public senderId: string;
   declare public recipientId: string;
   declare public content: string;
-  declare public messageType: 'text' | 'moment_reply' | 'moment_gift';
+  declare public messageType: ChatMessageType;
   declare public metadata: string | null;
   declare public isRead: boolean;
 

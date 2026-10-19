@@ -13,7 +13,8 @@ import {
   UserBlock,
   Interest,
 } from '../models';
-import { formatMediaUrl } from './s3.service';
+import { ChatMessageType } from '../models/chatMessage.model';
+import { s3Service, formatMediaUrl } from './s3.service';
 import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
 import { isUserConnected, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
@@ -77,7 +78,7 @@ export interface ChatMessageDTO {
   senderId: string;
   recipientId: string;
   content: string;
-  messageType: 'text' | 'audio' | 'image' | 'moment_reply' | 'moment_gift';
+  messageType: ChatMessageType;
   metadata: any;
   isRead: boolean;
   sentAt: Date | string;
@@ -580,6 +581,103 @@ export class ChatService {
       throw new ChatServiceError('You cannot send messages to this user', 403);
     }
 
+    // Prepare metadata payload and parsed object
+    const metadataObj: Record<string, any> = {};
+    if (data.clientMessageId) {
+      metadataObj.clientMessageId = data.clientMessageId;
+    }
+    if (data.metadata) {
+      if (typeof data.metadata === 'object') {
+        Object.assign(metadataObj, data.metadata);
+      } else if (typeof data.metadata === 'string') {
+        try {
+          const parsed = JSON.parse(data.metadata);
+          if (parsed && typeof parsed === 'object') {
+            Object.assign(metadataObj, parsed);
+          }
+        } catch {
+          // If not JSON, leave as is
+        }
+      }
+    }
+
+    const msgType: ChatMessageType = (data.messageType as ChatMessageType) || 'text';
+    let messageContent = (data.content || '').trim();
+
+    // Photo / Camera handling
+    if (msgType === 'image') {
+      if (!messageContent) {
+        throw new ChatServiceError('Image URL or storage key is required in content', 400);
+      }
+
+      // Attachment Ownership Verification:
+      // Ensure users cannot attach media files uploaded by another user
+      const userFolderMatch = messageContent.match(
+        /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
+      );
+      if (userFolderMatch && userFolderMatch[1]) {
+        const ownerId = userFolderMatch[1];
+        if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
+          throw new ChatServiceError(
+            'You cannot attach media belonging to another user',
+            403,
+            'ATTACHMENT_OWNERSHIP_INVALID'
+          );
+        }
+      }
+
+      // Automatically generate/resolve thumbnail URL if missing
+      if (!metadataObj.thumbnailUrl) {
+        const cleanKey = s3Service.extractKey(messageContent);
+        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+      }
+    }
+
+    // Location sharing handling
+    if (msgType === 'location') {
+      const lat = Number(metadataObj.latitude);
+      const lng = Number(metadataObj.longitude);
+      if (
+        !Number.isFinite(lat) ||
+        lat < -90 ||
+        lat > 90 ||
+        !Number.isFinite(lng) ||
+        lng < -180 ||
+        lng > 180
+      ) {
+        throw new ChatServiceError(
+          'Invalid location coordinates: latitude must be between -90 and 90, and longitude between -180 and 180',
+          400,
+          'INVALID_LOCATION_COORDINATES'
+        );
+      }
+      if (!messageContent) {
+        messageContent = metadataObj.name
+          ? `📍 ${metadataObj.name}`
+          : `📍 Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      }
+    }
+
+    // Contact sharing handling
+    if (msgType === 'contact') {
+      const contactName =
+        typeof metadataObj.name === 'string' ? metadataObj.name.trim() : '';
+      const phone =
+        typeof metadataObj.phoneNumber === 'string'
+          ? metadataObj.phoneNumber.trim()
+          : '';
+      if (!contactName || !phone) {
+        throw new ChatServiceError(
+          'Contact details (name and phoneNumber) are required in metadata',
+          400,
+          'INVALID_CONTACT_DETAILS'
+        );
+      }
+      if (!messageContent) {
+        messageContent = `👤 ${contactName}`;
+      }
+    }
+
     // Idempotency check: if clientMessageId provided, prevent duplicate insert
     if (data.clientMessageId) {
       const existingMessage = await ChatMessage.findOne({
@@ -615,20 +713,7 @@ export class ChatService {
       }
     }
 
-    // Prepare metadata payload
-    let metadataPayload: string | null = null;
-    const metadataObj: Record<string, any> = {};
-    if (data.clientMessageId) {
-      metadataObj.clientMessageId = data.clientMessageId;
-    }
-    if (data.metadata && typeof data.metadata === 'object') {
-      Object.assign(metadataObj, data.metadata);
-    }
-    if (Object.keys(metadataObj).length > 0) {
-      metadataPayload = JSON.stringify(metadataObj);
-    } else if (typeof data.metadata === 'string') {
-      metadataPayload = data.metadata;
-    }
+    const metadataPayload = Object.keys(metadataObj).length > 0 ? JSON.stringify(metadataObj) : null;
 
     // Execute database write inside an atomic transaction
     const t = await sequelize.transaction();
@@ -640,8 +725,8 @@ export class ChatService {
           conversationId,
           senderId,
           recipientId,
-          content: data.content,
-          messageType: (data.messageType as any) || 'text',
+          content: messageContent,
+          messageType: msgType,
           metadata: metadataPayload,
           isRead: false,
         },
@@ -649,7 +734,20 @@ export class ChatService {
       );
 
       // Update conversation lastMessage preview
-      conversation.lastMessage = data.content;
+      let lastMessagePreview: string;
+      if (msgType === 'image') {
+        lastMessagePreview = '📷 Photo';
+      } else if (msgType === 'location') {
+        lastMessagePreview = metadataObj.name ? `📍 ${metadataObj.name}` : '📍 Location';
+      } else if (msgType === 'contact') {
+        lastMessagePreview = metadataObj.name ? `👤 ${metadataObj.name}` : '👤 Contact';
+      } else if (msgType === 'audio') {
+        lastMessagePreview = '🎤 Voice message';
+      } else {
+        lastMessagePreview = messageContent;
+      }
+
+      conversation.lastMessage = lastMessagePreview;
       conversation.lastMessageAt = savedMessage.createdAt;
       await conversation.save({ transaction: t });
 

@@ -75,8 +75,8 @@ export interface ClientToServerEvents {
   'chat:send_message': (
     data: {
       conversationId: string;
-      content: string;
-      messageType?: 'text' | 'audio' | 'image' | 'moment_reply' | 'moment_gift';
+      content?: string;
+      messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       clientMessageId?: string;
       metadata?: any;
     },

@@ -6359,7 +6359,179 @@
           "response": []
         },
         {
-          "name": "7. Mark Messages as Read",
+          "name": "7. Send Photo Message (Gallery Attachment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"chat/3fa85f64-5717-4562-b3fc-2c963f66afa6/1700000000_photo.jpg\",\n  \"messageType\": \"image\",\n  \"clientMessageId\": \"33333333-4444-5555-6666-777777777777\",\n  \"metadata\": {\n    \"width\": 1080,\n    \"height\": 1920,\n    \"fileSize\": 1048576,\n    \"mimeType\": \"image/jpeg\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a photo attachment uploaded via S3 presigned URL (POST /api/v1/media/presigned-url with folder: 'chat'). Verifies attachment ownership, automatically generates thumbnail URL, updates conversation preview to '📷 Photo', and emits real-time event to recipient."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Send Camera Capture Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"chat/3fa85f64-5717-4562-b3fc-2c963f66afa6/1700000001_camera.jpg\",\n  \"messageType\": \"image\",\n  \"clientMessageId\": \"44444444-5555-6666-7777-888888888888\",\n  \"metadata\": {\n    \"source\": \"camera\",\n    \"width\": 1080,\n    \"height\": 1920,\n    \"fileSize\": 2097152,\n    \"mimeType\": \"image/jpeg\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a camera-captured photo. Reuses the identical photo upload and message persistence pipeline without creating separate endpoints, tagging metadata with source: 'camera'."
+          },
+          "response": []
+        },
+        {
+          "name": "9. Send Location Message (Coordinates Sharing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageType\": \"location\",\n  \"clientMessageId\": \"55555555-6666-7777-8888-999999999999\",\n  \"metadata\": {\n    \"latitude\": 37.7749,\n    \"longitude\": -122.4194,\n    \"name\": \"Union Square, SF\",\n    \"address\": \"333 Post St, San Francisco, CA 94108\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Shares a selected location with validated latitude (-90..90) and longitude (-180..180). Canonical coordinates stored in metadata, content formatted to '📍 Union Square, SF', conversation preview updated to '📍 Union Square, SF'."
+          },
+          "response": []
+        },
+        {
+          "name": "10. Send Contact Message (Contact Card Sharing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageType\": \"contact\",\n  \"clientMessageId\": \"66666666-7777-8888-9999-000000000000\",\n  \"metadata\": {\n    \"name\": \"Sarah Connor\",\n    \"phoneNumber\": \"+1-555-0199\",\n    \"email\": \"sarah.connor@example.com\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Shares a single selected contact card (name, phoneNumber, optional email). Strictly rejects bulk address-book dumps and unexpected properties, formats message content to '👤 Sarah Connor', and updates conversation preview to '👤 Sarah Connor'."
+          },
+          "response": []
+        },
+        {
+          "name": "11. Mark Messages as Read",
           "request": {
             "method": "POST",
             "header": [
@@ -6393,7 +6565,7 @@
           "response": []
         },
         {
-          "name": "8. Pin Conversation",
+          "name": "12. Pin Conversation",
           "request": {
             "method": "POST",
             "header": [
@@ -6436,7 +6608,7 @@
           "response": []
         },
         {
-          "name": "9. Unpin Conversation",
+          "name": "13. Unpin Conversation",
           "request": {
             "method": "POST",
             "header": [
@@ -6479,7 +6651,7 @@
           "response": []
         },
         {
-          "name": "10. Chat Action Menu: View Profile",
+          "name": "14. Chat Action Menu: View Profile",
           "request": {
             "method": "GET",
             "header": [
@@ -6513,7 +6685,7 @@
           "response": []
         },
         {
-          "name": "11. Chat Action Menu: Report User",
+          "name": "15. Chat Action Menu: Report User",
           "request": {
             "method": "POST",
             "header": [
@@ -6655,7 +6827,7 @@
           ]
         },
         {
-          "name": "12. Chat Action Menu: Block User",
+          "name": "16. Chat Action Menu: Block User",
           "request": {
             "method": "POST",
             "header": [
@@ -6698,7 +6870,7 @@
           "response": []
         },
         {
-          "name": "13. Chat Action Menu: Unblock User",
+          "name": "17. Chat Action Menu: Unblock User",
           "request": {
             "method": "DELETE",
             "header": [

@@ -20,11 +20,22 @@ export const registerChatSocketHandlers = (
   // 1. Event: chat:send_message
   socket.on('chat:send_message', async (payload: any, callback?: Function) => {
     try {
-      if (!payload || typeof payload !== 'object' || !payload.conversationId || !payload.content) {
+      if (!payload || typeof payload !== 'object' || !payload.conversationId) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
-            error: 'conversationId and content are required',
+            error: 'conversationId is required',
+          });
+        }
+        return;
+      }
+
+      const msgType = payload.messageType || 'text';
+      if ((msgType === 'text' || msgType === 'image') && !payload.content) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'content is required for text and image messages',
           });
         }
         return;

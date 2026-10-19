@@ -17,6 +17,7 @@ import { MomentReaction } from './momentReaction.model';
 import { MomentCommentLike } from './momentCommentLike.model';
 import { Conversation } from './conversation.model';
 import { ChatMessage } from './chatMessage.model';
+import { ConversationPin } from './conversationPin.model';
 import { ConnectionRequest } from './connectionRequest.model';
 import { UserDevice } from './userDevice.model';
 import { Notification } from './notification.model';
@@ -367,6 +368,29 @@ ChatMessage.belongsTo(Conversation, {
   as: 'conversation',
 });
 
+// ConversationPin associations
+User.hasMany(ConversationPin, {
+  foreignKey: 'userId',
+  as: 'pinnedConversations',
+  onDelete: 'CASCADE',
+});
+
+ConversationPin.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+Conversation.hasMany(ConversationPin, {
+  foreignKey: 'conversationId',
+  as: 'pins',
+  onDelete: 'CASCADE',
+});
+
+ConversationPin.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
 User.hasMany(ChatMessage, {
   foreignKey: 'senderId',
   as: 'sentMessages',
@@ -650,6 +674,7 @@ export {
   MomentReaction,
   Conversation,
   ChatMessage,
+  ConversationPin,
   ConnectionRequest,
   UserDevice,
   Notification,
@@ -1122,6 +1147,7 @@ export const initDb = async (force = false): Promise<void> => {
     await UserDiscoveryPreference.sync();
     await MomentCommentLike.sync();
     await NotificationSetting.sync();
+    await ConversationPin.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();

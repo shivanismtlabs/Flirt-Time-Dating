@@ -84,6 +84,17 @@ export const env = {
   DEEP_LINK_BASE_URL: process.env.DEEP_LINK_BASE_URL || (process.env.APP_DOMAIN ? `https://${process.env.APP_DOMAIN}` : 'https://flirttimeapi.walit.in'),
   IOS_APP_STORE_ID: process.env.IOS_APP_STORE_ID || 'id6741234567',
   ANDROID_PACKAGE_NAME: process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
+
+  // Real-Time Socket.IO Infrastructure Configuration
+  SOCKET_PATH: process.env.SOCKET_PATH || '/socket.io',
+  SOCKET_CORS_ORIGIN: process.env.SOCKET_CORS_ORIGIN || process.env.CORS_ORIGIN || '*',
+  SOCKET_PING_TIMEOUT_MS: parseInt(process.env.SOCKET_PING_TIMEOUT_MS || '20000', 10),
+  SOCKET_PING_INTERVAL_MS: parseInt(process.env.SOCKET_PING_INTERVAL_MS || '25000', 10),
+  SOCKET_CONNECT_TIMEOUT_MS: parseInt(process.env.SOCKET_CONNECT_TIMEOUT_MS || '10000', 10),
+  SOCKET_MAX_HTTP_BUFFER_SIZE: parseInt(process.env.SOCKET_MAX_HTTP_BUFFER_SIZE || '1048576', 10), // 1MB
+  SOCKET_MAX_CONNECTIONS_PER_USER: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_USER || '5', 10),
+  SOCKET_MAX_CONNECTIONS_PER_IP: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_IP || '50', 10),
+  SOCKET_PER_MESSAGE_DEFLATE: process.env.SOCKET_PER_MESSAGE_DEFLATE === 'true',
 };
 
 

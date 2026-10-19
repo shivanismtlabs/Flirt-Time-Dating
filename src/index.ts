@@ -1,10 +1,12 @@
 import dns from 'dns';
+import http from 'http';
 import app from './app';
 import { env } from './config/env';
 import { connectDatabase } from './config/database';
 import { initDb } from './models';
 import { emailProvider } from './services/email.service';
 import { notificationOutboxService } from './services/notificationOutbox.service';
+import { initSocketServer, closeSocketServer } from './realtime';
 
 // Prefer IPv4 for outbound network calls to avoid IPv6 timeouts on AWS EC2 & cloud instances
 if (dns.setDefaultResultOrder) {
@@ -43,20 +45,26 @@ const startServer = async () => {
     console.log('📬 Notification Outbox background worker started (30s interval).');
   }
 
-  // 5. Listen on specified PORT
-  const server = app.listen(env.PORT, () => {
+  // 5. Create HTTP Server and attach Socket.IO real-time engine
+  const httpServer = http.createServer(app);
+  initSocketServer(httpServer);
+
+  // 6. Listen on specified PORT
+  httpServer.listen(env.PORT, () => {
     console.log(`==================================================`);
     console.log(`🌐 Server running in ${env.NODE_ENV} mode on port ${env.PORT}`);
     console.log(`🔗 Health check: http://localhost:${env.PORT}/health`);
     console.log(`🔗 API Base: http://localhost:${env.PORT}/api`);
+    console.log(`🔗 Socket.IO Endpoint: ws://localhost:${env.PORT}${env.SOCKET_PATH}`);
     console.log(`==================================================`);
   });
 
   // Graceful shutdown handling
-  const shutdown = () => {
+  const shutdown = async () => {
     console.log('⚡ Received shutdown signal. Closing server...');
     notificationOutboxService.stopOutboxWorker();
-    server.close(() => {
+    await closeSocketServer();
+    httpServer.close(() => {
       console.log('👋 HTTP server closed.');
       process.exit(0);
     });

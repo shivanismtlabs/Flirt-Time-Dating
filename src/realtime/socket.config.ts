@@ -51,7 +51,10 @@ export const buildSocketServerOptions = (
 
   // Configure CORS origin verification
   const corsConfig: ServerOptions['cors'] = {
-    origin: (origin, callback) => {
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void
+    ) => {
       // If allowedOrigins is wildcard '*', accept all
       if (allowedOrigins === '*' || allowedOrigins === true) {
         return callback(null, true);

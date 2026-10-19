@@ -57,7 +57,7 @@ export const initSocketServer = (
   io.use(socketAuthMiddleware);
 
   // 2. Mount Connection Lifecycle Listener & Chat Event Handlers
-  io.on('connection', (socket) => {
+  io.on('connection', (socket: AppSocket) => {
     handleSocketConnection(socket, io);
     registerChatSocketHandlers(socket, io);
   });

@@ -272,6 +272,11 @@ export const reportUserSchema = z.object({
       .max(1000, 'Description must not exceed 1000 characters')
       .optional()
       .nullable(),
+    conversationId: z
+      .string()
+      .uuid('Invalid conversation ID format')
+      .optional()
+      .nullable(),
   }),
 });
 

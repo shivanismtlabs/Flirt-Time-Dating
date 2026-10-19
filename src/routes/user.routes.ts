@@ -30,6 +30,7 @@ import {
 import { deleteAccountSchema } from '../schemas/auth.schema';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
+import { reportLimiter } from '../middlewares/rateLimiter.middleware';
 import {
   getUserByIdSchema,
   updateUserSchema,
@@ -149,7 +150,7 @@ router.delete('/:userId/block', validate(unblockUserSchema), unblockUserHandler)
 
 router.get('/reports', validate(getUserReportsSchema), getUserReportsHandler);
 router.get('/report-reasons', getReportReasonsHandler);
-router.post('/:userId/report', validate(reportUserSchema), reportUserHandler);
+router.post('/:userId/report', reportLimiter, validate(reportUserSchema), reportUserHandler);
 
 // Account Session & Lifecycle Endpoints
 router.delete('/account', validate(deleteAccountSchema), deleteAccountHandler);

@@ -1,5 +1,5 @@
 import { Op } from 'sequelize';
-import { sequelize, User, UserBlock, UserReport, Moment, MomentMedia } from '../models';
+import { sequelize, User, UserBlock, UserReport, Moment, MomentMedia, Conversation } from '../models';
 import { ReportReason, ReportStatus } from '../models/userReport.model';
 import { formatMediaUrl } from './s3.service';
 
@@ -46,6 +46,7 @@ export interface ReportItem {
   username?: string | null;
   targetPhoto: string | null;
   momentId?: string | null;
+  conversationId?: string | null;
   momentThumbnail?: string | null;
   reason: string;
   description: string | null;
@@ -164,14 +165,16 @@ export class ModerationService {
 
   /**
    * Reports a user for abuse or policy violations.
-   * Prevents self-reporting, validates target and reason, prevents duplicate spam reports,
-   * and persists with pending review status.
+   * Supports both general profile reports and chat-specific reports (with optional conversationId).
+   * Validates target user existence, prevents self-reporting, enforces chat membership checks when associated with a conversation,
+   * prevents duplicate spam reports, and persists with pending review status.
    */
   public async reportUser(
     reporterId: string,
     targetUserId: string,
     reason: ReportReason,
-    description?: string | null
+    description?: string | null,
+    conversationId?: string | null
   ): Promise<ReportUserResult> {
     // 1. Prevent self-reporting
     if (reporterId === targetUserId) {
@@ -192,17 +195,60 @@ export class ModerationService {
       );
     }
 
-    // 3. Persist report safely inside a transaction, deduplicating open reports
+    // 3. When associated with a conversation, validate conversation existence and participant membership
+    let isChatReport = false;
+    if (conversationId) {
+      const conversation = await Conversation.findByPk(conversationId);
+      if (!conversation) {
+        throw new ModerationServiceError(
+          'Conversation not found or unavailable',
+          404,
+          'CONVERSATION_NOT_FOUND'
+        );
+      }
+
+      // Verify reporter is a participant in this conversation
+      const isReporterParticipant =
+        conversation.user1Id === reporterId || conversation.user2Id === reporterId;
+      if (!isReporterParticipant) {
+        throw new ModerationServiceError(
+          'You are not a participant in this conversation',
+          403,
+          'NOT_CONVERSATION_PARTICIPANT'
+        );
+      }
+
+      // Verify reported target user is also a participant in this conversation
+      const isTargetParticipant =
+        conversation.user1Id === targetUserId || conversation.user2Id === targetUserId;
+      if (!isTargetParticipant) {
+        throw new ModerationServiceError(
+          'Reported user is not a participant in this conversation',
+          400,
+          'TARGET_NOT_CONVERSATION_PARTICIPANT'
+        );
+      }
+
+      isChatReport = true;
+    }
+
+    // 4. Persist report safely inside a transaction, deduplicating open reports
+    const isSqlite = sequelize.getDialect() === 'sqlite';
     const t = await sequelize.transaction();
     try {
+      const whereCondition: any = {
+        reporterId,
+        targetUserId,
+        status: 'pending',
+      };
+      if (conversationId) {
+        whereCondition.conversationId = conversationId;
+      }
+
       const existingReport = await UserReport.findOne({
-        where: {
-          reporterId,
-          targetUserId,
-          status: 'pending',
-        },
+        where: whereCondition,
         transaction: t,
-        lock: t.LOCK.UPDATE,
+        lock: !isSqlite && t.LOCK ? t.LOCK.UPDATE : undefined,
       });
 
       if (existingReport) {
@@ -218,6 +264,8 @@ export class ModerationService {
         {
           reporterId,
           targetUserId,
+          targetType: isChatReport ? 'chat' : 'user',
+          conversationId: conversationId || null,
           reason,
           description: description ? description.trim() : null,
           status: 'pending',
@@ -610,6 +658,7 @@ export class ModerationService {
           ? formatMediaUrl(r.targetUser.profilePicture)
           : null,
         momentId: r.momentId || null,
+        conversationId: r.conversationId || null,
         momentThumbnail: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
         reason: r.reason,
         description: r.description || null,
@@ -718,6 +767,7 @@ export class ModerationService {
           ? formatMediaUrl(r.targetUser.profilePicture)
           : null,
         momentId: r.momentId || null,
+        conversationId: r.conversationId || null,
         momentThumbnail: firstMediaUrl ? formatMediaUrl(firstMediaUrl) : null,
         reason: r.reason,
         description: r.description || null,

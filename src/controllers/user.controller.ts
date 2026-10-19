@@ -477,13 +477,14 @@ export const reportUserHandler = async (req: AuthenticatedRequest, res: Response
     }
 
     const targetUserId = req.params.userId as string;
-    const { reason, description } = req.body;
+    const { reason, description, conversationId } = req.body;
 
     const result = await moderationService.reportUser(
       reporterId,
       targetUserId,
       reason,
-      description
+      description,
+      conversationId
     );
 
     return sendSuccess(res, 'Report submitted successfully', result);

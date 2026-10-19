@@ -252,6 +252,18 @@ UserReport.belongsTo(Moment, {
   as: 'moment',
 });
 
+// Conversation <-> UserReport associations
+Conversation.hasMany(UserReport, {
+  foreignKey: 'conversationId',
+  as: 'reports',
+  onDelete: 'SET NULL',
+});
+
+UserReport.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
 // User <-> Moment
 User.hasMany(Moment, {
   foreignKey: 'userId',
@@ -938,6 +950,9 @@ export const initDb = async (force = false): Promise<void> => {
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'momentId') THEN
                 ALTER TABLE "user_reports" ADD COLUMN "momentId" UUID;
               END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'conversationId') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "conversationId" UUID;
+              END IF;
             END IF;
 
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
@@ -1045,6 +1060,7 @@ export const initDb = async (force = false): Promise<void> => {
         try {
           await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "targetType" VARCHAR(20) DEFAULT \'user\';');
           await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "conversationId" UUID;');
         } catch (_urColErr) {
           // Safe to ignore if user_reports does not exist yet
         }

@@ -6530,7 +6530,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"reason\": \"harassment\",\n  \"description\": \"Inappropriate messages sent in 1-to-1 chat\"\n}"
+              "raw": "{\n  \"reason\": \"spam\",\n  \"conversationId\": \"00000000-0000-0000-0000-000000000000\",\n  \"description\": \"Spam sent in 1-to-1 chat\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/:userId/report",
@@ -6551,9 +6551,108 @@
                 }
               ]
             },
-            "description": "Triggered by the Chat Screen Action Menu ('Report'). Reuses the canonical user reporting endpoint with validation against allowed enum reasons (fake_profile, harassment, inappropriate_content, spam, scam, underage, other)."
+            "description": "Triggered by the Chat Screen Action Menu ('Report Chat?'). Submits report using canonical user reporting endpoint with validation against the 4 UI modal reasons (spam, inappropriate_content, fake_profile, harassment) and optional conversationId with participant membership validation."
           },
-          "response": []
+          "response": [
+            {
+              "name": "200 OK - Report Submitted Successfully (Clean)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"spam\",\n  \"conversationId\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"description\": \"Spam sent in 1-to-1 chat\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    ":userId",
+                    "report"
+                  ],
+                  "variable": [
+                    {
+                      "key": "userId",
+                      "value": "e6a2b890-482a-4318-8f81-58c0c05a1e22"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Report submitted successfully\",\n  \"data\": {\n    \"reportId\": \"8f7e273e-3cb4-490b-9289-e1628d73b22b\",\n    \"status\": \"pending\"\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Invalid Report Reason",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"invalid_reason\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    ":userId",
+                    "report"
+                  ],
+                  "variable": [
+                    {
+                      "key": "userId",
+                      "value": "e6a2b890-482a-4318-8f81-58c0c05a1e22"
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Validation failed\",\n  \"data\": [\n    {\n      \"field\": \"body.reason\",\n      \"message\": \"Invalid report reason. Allowed values: fake_profile, harassment, inappropriate_content, spam, scam, underage, other\"\n    }\n  ]\n}"
+            }
+          ]
         },
         {
           "name": "12. Chat Action Menu: Block User",

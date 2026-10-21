@@ -22,6 +22,7 @@ import {
   resetDiscoveryFilters,
   searchDiscoveryProfiles,
 } from '../controllers/discoveryFilter.controller';
+import { getUserLimitsHandler } from '../controllers/user.controller';
 import {
   updateDiscoveryFiltersSchema,
   discoverySearchSchema,
@@ -63,6 +64,9 @@ router.get('/search', authenticate, searchDiscoveryProfiles);
 
 // POST /api/v1/discovery/seed-dummy-data (Seeds 50 dummy discovery users)
 router.post('/seed-dummy-data', seedDummyUsersHandler);
+
+// GET /api/v1/discovery/limits (Convenience alias for /api/v1/users/limits)
+router.get('/limits', authenticate, getUserLimitsHandler);
 
 // GET /api/v1/discovery/people (and /api/discovery/people)
 router.get('/people', authenticate, getDiscoveryPeople);

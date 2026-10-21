@@ -23,6 +23,7 @@ import {
   requestProfilePhoneOtpHandler,
   verifyProfilePhoneOtpHandler,
   resendProfilePhoneOtpHandler,
+  getUserLimitsHandler,
 } from '../controllers/user.controller';
 import { authenticate, authorize } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
@@ -105,6 +106,9 @@ router.post('/profile/phone/resend-otp', validate(resendProfilePhoneOtpSchema), 
 router.get('/more-about-me', getMoreAboutMeHandler);
 router.patch('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
 router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
+
+// User Limits & Free Tier Quotas (/api/v1/users/limits)
+router.get('/limits', getUserLimitsHandler);
 
 // Target / Other User Profile Detail Screen
 router.get('/:userId/profile', validate(getOtherUserProfileSchema), (req, res) => getOtherUserProfileHandler(req, res));

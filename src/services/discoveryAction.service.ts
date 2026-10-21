@@ -1,6 +1,12 @@
 import { Op } from 'sequelize';
-import { sequelize, User, SwipeAction, Match, UserBlock } from '../models';
+import { sequelize, User, SwipeAction, Match, UserBlock, CoinTransaction } from '../models';
 import { notificationService } from './notification.service';
+import {
+  getStartOfTodayIST,
+  getNextMidnightIST,
+  FREE_TIER_DAILY_LIKE_LIMIT,
+  SUPER_LIKE_COIN_COST,
+} from './freeTierLimit.service';
 
 export interface RecordActionResult {
   targetUserId: string;
@@ -115,6 +121,97 @@ export class DiscoveryActionService {
           409,
           'ACTION_CONFLICT'
         );
+      }
+
+      // Fetch current user details with lock for quota and coin evaluations
+      const currentUserRecord = await User.findByPk(currentUserId, {
+        transaction: t,
+        lock: t.LOCK.UPDATE,
+      });
+
+      if (!currentUserRecord || !currentUserRecord.isActive) {
+        await t.rollback();
+        isCommitted = true;
+        throw new DiscoveryActionError(
+          'Authenticated user account is unavailable',
+          401,
+          'UNAUTHORIZED'
+        );
+      }
+
+      const isSubscribed = Boolean(currentUserRecord.isSubscribed);
+      let coinsSpent = 0;
+      let remainingLikesAfterAction: number | null = null;
+
+      // Rule 1: Free Tier Daily Like Limit (10/day, resets 00:00 IST)
+      if (action === 'like' && !isSubscribed) {
+        const startOfTodayIST = getStartOfTodayIST();
+        const likesCountToday = await SwipeAction.count({
+          where: {
+            userId: currentUserId,
+            action: 'like',
+            createdAt: { [Op.gte]: startOfTodayIST },
+          },
+          transaction: t,
+        });
+
+        if (likesCountToday >= FREE_TIER_DAILY_LIKE_LIMIT) {
+          await t.rollback();
+          isCommitted = true;
+          throw new DiscoveryActionError(
+            `Daily like limit reached (${FREE_TIER_DAILY_LIKE_LIMIT}/${FREE_TIER_DAILY_LIKE_LIMIT}). Resets at midnight IST.`,
+            403,
+            'DAILY_LIKE_LIMIT_REACHED'
+          );
+        }
+
+        remainingLikesAfterAction = Math.max(0, FREE_TIER_DAILY_LIKE_LIMIT - (likesCountToday + 1));
+      }
+
+      // Rule 3: Free Tier Super Like (1 free one-time, extra = 20 coins)
+      if (action === 'super_like' && !isSubscribed) {
+        const lifetimeSuperLikes = await SwipeAction.count({
+          where: {
+            userId: currentUserId,
+            action: 'super_like',
+          },
+          transaction: t,
+        });
+
+        if (lifetimeSuperLikes >= 1) {
+          // Free Super Like already consumed! Requires 20 coins
+          const currentCoins =
+            typeof currentUserRecord.coins === 'number' ? currentUserRecord.coins : 0;
+
+          if (currentCoins < SUPER_LIKE_COIN_COST) {
+            await t.rollback();
+            isCommitted = true;
+            throw new DiscoveryActionError(
+              `Insufficient coins. Extra Super Like requires ${SUPER_LIKE_COIN_COST} coins.`,
+              403,
+              'INSUFFICIENT_COINS'
+            );
+          }
+
+          currentUserRecord.coins = currentCoins - SUPER_LIKE_COIN_COST;
+          await currentUserRecord.save({ transaction: t });
+
+          await CoinTransaction.create(
+            {
+              userId: currentUserId,
+              type: 'super_like',
+              amount: SUPER_LIKE_COIN_COST,
+              balanceBefore: currentCoins,
+              balanceAfter: currentUserRecord.coins,
+              referenceId: targetUserId,
+              referenceType: 'super_like',
+              description: `Super Like sent to ${targetUser.firstName || targetUser.fullName || targetUser.username || 'User'}`,
+            },
+            { transaction: t }
+          );
+
+          coinsSpent = SUPER_LIKE_COIN_COST;
+        }
       }
 
       // Record the new swipe action

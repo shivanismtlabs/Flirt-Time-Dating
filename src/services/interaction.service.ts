@@ -21,6 +21,7 @@ export interface InteractionUserCard {
   isVerified: boolean;
   distanceKm: number | null;
   locationLabel: string;
+  isBlurred?: boolean;
 }
 
 export interface InteractionItemDTO {
@@ -43,6 +44,8 @@ export interface InteractionItemDTO {
 
 export interface InteractionsListResponse {
   type: InteractionType;
+  isLocked?: boolean;
+  totalCount?: number;
   items: InteractionItemDTO[];
   pagination: {
     limit: number;
@@ -293,12 +296,33 @@ export class InteractionService {
     const hasMore = rows.length > limit;
     const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
 
+    const isLocked = !Boolean(currentUser.isSubscribed);
+    const totalCount = await SwipeAction.count({
+      where: {
+        targetUserId: currentUser.id,
+        action: { [Op.in]: ['like', 'super_like'] },
+        userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+      },
+    });
+
     const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => {
       const userCard = this.formatUserCard((swipe as any).user, currentUser);
+      const maskedCard: InteractionUserCard = isLocked
+        ? {
+            ...userCard,
+            name: userCard.name ? `${userCard.name.charAt(0)}***` : 'Someone',
+            username: userCard.username ? `${userCard.username.charAt(0)}***` : '',
+            isBlurred: true,
+          }
+        : {
+            ...userCard,
+            isBlurred: false,
+          };
+
       return {
         interactionId: swipe.id,
-        username: userCard.username,
-        user: userCard,
+        username: maskedCard.username,
+        user: maskedCard,
         interaction: {
           type: 'likes',
           createdAt: swipe.createdAt.toISOString(),
@@ -314,6 +338,8 @@ export class InteractionService {
 
     return {
       type: 'likes',
+      isLocked,
+      totalCount,
       items,
       pagination: {
         limit,
@@ -609,17 +635,37 @@ export class InteractionService {
       });
     }
 
+    const isLocked = !Boolean(currentUser.isSubscribed);
+    const totalCount = await ConnectionRequest.count({
+      where: {
+        targetUserId: currentUser.id,
+        requesterId: { [Op.notIn]: Array.from(excludedUserIds) },
+      },
+    });
+
     const items: InteractionItemDTO[] = itemsToReturn.map((req) => {
       const userCard = this.formatUserCard((req as any).requester, currentUser);
+      const maskedCard: InteractionUserCard = isLocked
+        ? {
+            ...userCard,
+            name: userCard.name ? `${userCard.name.charAt(0)}***` : 'Someone',
+            username: userCard.username ? `${userCard.username.charAt(0)}***` : '',
+            isBlurred: true,
+          }
+        : {
+            ...userCard,
+            isBlurred: false,
+          };
+
       return {
         interactionId: req.id,
-        username: userCard.username,
-        user: userCard,
+        username: maskedCard.username,
+        user: maskedCard,
         interaction: {
           type: 'compliments',
           createdAt: req.createdAt.toISOString(),
-          reason: req.reason || null,
-          message: req.message || null,
+          reason: isLocked && req.reason ? 'Hidden - Upgrade to view compliment' : req.reason || null,
+          message: isLocked && req.message ? 'Hidden - Upgrade to view compliment' : req.message || null,
           momentId: req.momentId || null,
           status: req.status,
           isRead: readNotifications.has(req.id),
@@ -634,6 +680,8 @@ export class InteractionService {
 
     return {
       type: 'compliments',
+      isLocked,
+      totalCount,
       items,
       pagination: {
         limit,

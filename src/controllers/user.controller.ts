@@ -21,6 +21,7 @@ import { calculateAge } from '../services/discovery.service';
 import { otpService } from '../services/otp.service';
 import { normalizeEmail } from '../utils/normalization';
 import { combineAndNormalizePhone, normalizePhone } from '../utils/phone';
+import { freeTierLimitService } from '../services/freeTierLimit.service';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -1097,5 +1098,24 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
     return sendError(res, 'Either verificationId or phone must be provided', 400);
   } catch (error: any) {
     return sendError(res, error.message || 'Error resending phone OTP', 500);
+  }
+};
+
+/**
+ * Get User Limits & Free Tier Quotas
+ * GET /api/v1/users/limits (and /api/v1/discovery/limits)
+ */
+export const getUserLimitsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const limits = await freeTierLimitService.getUserLimits(currentUserId);
+    return sendSuccess(res, 'User limits fetched successfully', limits, 200);
+  } catch (error: any) {
+    console.error('[Get User Limits Controller Error]:', error);
+    return sendError(res, error.message || 'Error fetching user limits', 500, 'INTERNAL_SERVER_ERROR');
   }
 };

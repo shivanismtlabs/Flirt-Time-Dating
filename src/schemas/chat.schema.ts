@@ -120,26 +120,45 @@ export const contactMetadataSchema = z
 
 export const imageMetadataSchema = z
   .object({
-    thumbnailUrl: z.string().url().max(1000).optional(),
-    imageUrl: z.string().url().max(1000).optional(),
-    mediaUrl: z.string().url().max(1000).optional(),
-    url: z.string().url().max(1000).optional(),
+    thumbnailUrl: z.string().max(2000).optional(),
+    imageUrl: z.string().max(2000).optional(),
+    mediaUrl: z.string().max(2000).optional(),
+    url: z.string().max(2000).optional(),
     caption: z.string().max(1000).optional(),
-    width: z.number().int().positive().optional(),
-    height: z.number().int().positive().optional(),
-    fileSize: z
-      .number()
-      .int()
-      .positive()
-      .max(50 * 1024 * 1024, { message: 'Image size exceeds maximum limit (50MB)' })
-      .optional(),
-    mimeType: z
-      .string()
-      .regex(/^image\/(jpeg|jpg|png|webp|gif|avif|heic|heif)$/, { message: 'Unsupported image MIME type' })
-      .optional(),
-    source: z.enum(['photo', 'camera']).optional(),
+    width: z.union([z.number(), z.string()]).optional(),
+    height: z.union([z.number(), z.string()]).optional(),
+    fileSize: z.union([z.number(), z.string()]).optional(),
+    size: z.union([z.number(), z.string()]).optional(),
+    mimeType: z.string().max(100).optional(),
+    type: z.string().max(100).optional(),
+    source: z.string().max(100).optional(),
+    name: z.string().max(500).optional(),
+    fileName: z.string().max(500).optional(),
+    uri: z.string().max(2000).optional(),
+    path: z.string().max(2000).optional(),
+    localPath: z.string().max(2000).optional(),
+    images: z.array(z.any()).optional(),
   })
-  .strict();
+  .passthrough();
+
+export const audioMetadataSchema = z
+  .object({
+    duration: z.union([z.number(), z.string()]).optional(),
+    durationMs: z.union([z.number(), z.string()]).optional(),
+    mimeType: z.string().max(100).optional(),
+    type: z.string().max(100).optional(),
+    fileSize: z.union([z.number(), z.string()]).optional(),
+    size: z.union([z.number(), z.string()]).optional(),
+    audioUrl: z.string().max(2000).optional(),
+    mediaUrl: z.string().max(2000).optional(),
+    url: z.string().max(2000).optional(),
+    name: z.string().max(500).optional(),
+    fileName: z.string().max(500).optional(),
+    uri: z.string().max(2000).optional(),
+    path: z.string().max(2000).optional(),
+    localPath: z.string().max(2000).optional(),
+  })
+  .passthrough();
 
 export const sendMessageSchema = z.object({
   params: z.object({
@@ -156,6 +175,14 @@ export const sendMessageSchema = z.object({
       image: z.string().trim().max(5000000).optional(),
       mediaUrl: z.string().trim().max(5000).optional(),
       imageKey: z.string().trim().max(5000).optional(),
+      audioUrl: z.string().trim().max(5000).optional(),
+      audio: z.string().trim().max(5000000).optional(),
+      voiceUrl: z.string().trim().max(5000).optional(),
+      url: z.string().trim().max(5000).optional(),
+      fileUrl: z.string().trim().max(5000).optional(),
+      images: z.union([z.array(z.any()), z.string()]).optional(),
+      imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+      duration: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
       type: z
         .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
@@ -173,11 +200,39 @@ export const sendMessageSchema = z.object({
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
-      const resolvedContent = data.content || data.imageUrl || data.image || data.mediaUrl || data.imageKey;
+      let multiImageFirst: string | undefined;
+      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
+        const first = (data as any).images[0];
+        multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
+      } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
+        multiImageFirst = (data as any).imageUrls[0];
+      }
+
+      const resolvedContent =
+        data.content ||
+        data.imageUrl ||
+        data.image ||
+        data.mediaUrl ||
+        data.imageKey ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl ||
+        (data as any).url ||
+        (data as any).fileUrl ||
+        multiImageFirst;
+
       if (resolvedContent && !data.content) {
         data.content = resolvedContent;
       }
-      const type = data.type || data.messageType || (data.imageUrl || data.image || data.imageKey ? 'image' : 'text');
+
+      const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
+      const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || multiImageFirst);
+
+      const type =
+        data.type ||
+        data.messageType ||
+        (isAudioSignal ? 'audio' : isImageSignal ? 'image' : 'text');
+
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -226,6 +281,31 @@ export const sendMessageSchema = z.object({
             path: ['content'],
             message: 'Audio URL or storage key is required in content for audio message',
           });
+        }
+        if (data.metadata) {
+          let metaObj = data.metadata;
+          if (typeof metaObj === 'string') {
+            try {
+              metaObj = JSON.parse(metaObj);
+            } catch {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: 'Invalid JSON string in metadata',
+              });
+              return;
+            }
+          }
+          if (metaObj && typeof metaObj === 'object') {
+            const parsed = audioMetadataSchema.safeParse(metaObj);
+            if (!parsed.success) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: parsed.error.errors[0]?.message || 'Invalid audio metadata',
+              });
+            }
+          }
         }
       } else if (type === 'location') {
         let metaObj = data.metadata;
@@ -310,6 +390,14 @@ export const sendMultiMessageSchema = z.object({
       image: z.string().trim().max(5000000).optional(),
       mediaUrl: z.string().trim().max(5000).optional(),
       imageKey: z.string().trim().max(5000).optional(),
+      audioUrl: z.string().trim().max(5000).optional(),
+      audio: z.string().trim().max(5000000).optional(),
+      voiceUrl: z.string().trim().max(5000).optional(),
+      url: z.string().trim().max(5000).optional(),
+      fileUrl: z.string().trim().max(5000).optional(),
+      images: z.union([z.array(z.any()), z.string()]).optional(),
+      imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+      duration: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
       type: z
         .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
@@ -349,11 +437,39 @@ export const sendMultiMessageSchema = z.object({
         });
       }
 
-      const resolvedContent = data.content || data.imageUrl || data.image || data.mediaUrl || data.imageKey;
+      let multiImageFirst: string | undefined;
+      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
+        const first = (data as any).images[0];
+        multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
+      } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
+        multiImageFirst = (data as any).imageUrls[0];
+      }
+
+      const resolvedContent =
+        data.content ||
+        data.imageUrl ||
+        data.image ||
+        data.mediaUrl ||
+        data.imageKey ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl ||
+        (data as any).url ||
+        (data as any).fileUrl ||
+        multiImageFirst;
+
       if (resolvedContent && !data.content) {
         data.content = resolvedContent;
       }
-      const type = data.type || data.messageType || (data.imageUrl || data.image || data.imageKey ? 'image' : 'text');
+
+      const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
+      const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || multiImageFirst);
+
+      const type =
+        data.type ||
+        data.messageType ||
+        (isAudioSignal ? 'audio' : isImageSignal ? 'image' : 'text');
+
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -402,6 +518,31 @@ export const sendMultiMessageSchema = z.object({
             path: ['content'],
             message: 'Audio URL or storage key is required in content for audio message',
           });
+        }
+        if (data.metadata) {
+          let metaObj = data.metadata;
+          if (typeof metaObj === 'string') {
+            try {
+              metaObj = JSON.parse(metaObj);
+            } catch {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: 'Invalid JSON string in metadata',
+              });
+              return;
+            }
+          }
+          if (metaObj && typeof metaObj === 'object') {
+            const parsed = audioMetadataSchema.safeParse(metaObj);
+            if (!parsed.success) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: parsed.error.errors[0]?.message || 'Invalid audio metadata',
+              });
+            }
+          }
         }
       } else if (type === 'location') {
         let metaObj = data.metadata;

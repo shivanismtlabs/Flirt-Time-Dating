@@ -454,12 +454,20 @@ const allowedUniversalMediaMimeTypes = [
   'audio/aac',
   'audio/ogg',
   'audio/webm',
+  'audio/caf',
+  'audio/x-caf',
+  'audio/3gpp',
+  'audio/3gp',
+  'audio/amr',
+  'audio/flac',
+  'audio/opus',
   'video/mp4',
   'video/quicktime',
   'video/webm',
   'video/x-m4v',
   'video/mpeg',
   'application/pdf',
+  'application/octet-stream',
 ];
 
 export const uploadUniversalMedia = multer({
@@ -471,7 +479,7 @@ export const uploadUniversalMedia = multer({
   fileFilter: (_req, file, cb) => {
     const mime = file.mimetype.toLowerCase();
     const isAllowed = allowedUniversalMediaMimeTypes.includes(mime);
-    const hasAllowedExt = /\.(jpe?g|png|webp|gif|avif|heic|heif|mp3|m4a|wav|aac|ogg|webm|mp4|mov|pdf)$/i.test(
+    const hasAllowedExt = /\.(jpe?g|png|webp|gif|avif|heic|heif|mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus|mp4|mov|pdf)$/i.test(
       file.originalname
     );
 
@@ -492,21 +500,7 @@ export const handleUploadUniversalMedia = (
   res: Response,
   next: NextFunction
 ) => {
-  const upload = uploadUniversalMedia.fields([
-    { name: 'file', maxCount: 10 },
-    { name: 'files', maxCount: 10 },
-    { name: 'media', maxCount: 10 },
-    { name: 'medias', maxCount: 10 },
-    { name: 'image', maxCount: 10 },
-    { name: 'images', maxCount: 10 },
-    { name: 'photo', maxCount: 10 },
-    { name: 'photos', maxCount: 10 },
-    { name: 'audio', maxCount: 5 },
-    { name: 'video', maxCount: 5 },
-    { name: 'attachment', maxCount: 10 },
-    { name: 'attachments', maxCount: 10 },
-    { name: 'document', maxCount: 5 },
-  ]);
+  const upload = uploadUniversalMedia.any();
 
   upload(req, res, (err: any) => {
     if (err) {
@@ -532,8 +526,20 @@ export const handleUploadUniversalMedia = (
       return sendError(res, err.message || 'Media upload error', 400, 'UPLOAD_ERROR');
     }
 
-    // Populate req.file for single-file handlers if any file exists
-    if (req.files) {
+    // Populate req.file and structured map on req.files for compatibility
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      req.file = req.files[0];
+      const filesObj: Record<string, Express.Multer.File[]> = {};
+      for (const f of req.files) {
+        const field = f.fieldname || 'file';
+        if (!filesObj[field]) {
+          filesObj[field] = [];
+        }
+        filesObj[field].push(f);
+      }
+      // Attach named field lookup onto req.files array for dual access
+      Object.assign(req.files, filesObj);
+    } else if (req.files && typeof req.files === 'object' && !Array.isArray(req.files)) {
       const filesObj = req.files as Record<string, Express.Multer.File[]>;
       for (const key of Object.keys(filesObj)) {
         if (filesObj[key]?.length > 0) {
@@ -562,17 +568,36 @@ export const handleUploadChatMedia = (
       return next(err);
     }
 
+    const attachedFiles: Express.Multer.File[] = [];
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      attachedFiles.push(...req.files);
+    } else if (req.file) {
+      attachedFiles.push(req.file);
+    }
+
     // Auto-detect message type if direct file is attached
-    if (req.file) {
-      const mime = (req.file.mimetype || '').toLowerCase();
+    if (attachedFiles.length > 0) {
+      req.file = attachedFiles[0];
+      const mime = (attachedFiles[0].mimetype || '').toLowerCase();
+      const origName = attachedFiles[0].originalname || '';
+      const isAudio =
+        mime.startsWith('audio/') ||
+        /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr)$/i.test(origName);
+
       if (!req.body.messageType && !req.body.type) {
-        if (mime.startsWith('audio/')) {
-          req.body.messageType = 'audio';
-        } else {
-          req.body.messageType = 'image';
-        }
+        req.body.messageType = isAudio ? 'audio' : 'image';
       }
-      if (!req.body.content && !req.body.imageUrl && !req.body.image && !req.body.mediaUrl) {
+      if (
+        !req.body.content &&
+        !req.body.imageUrl &&
+        !req.body.image &&
+        !req.body.mediaUrl &&
+        !req.body.audioUrl &&
+        !req.body.audio &&
+        !req.body.voiceUrl &&
+        !req.body.images &&
+        !req.body.imageUrls
+      ) {
         req.body.content = '__FILE_ATTACHMENT__';
       }
     }
@@ -582,6 +607,22 @@ export const handleUploadChatMedia = (
       try {
         req.body.metadata = JSON.parse(req.body.metadata);
       } catch {}
+    }
+
+    if (typeof req.body.images === 'string') {
+      try {
+        req.body.images = JSON.parse(req.body.images);
+      } catch {}
+    }
+
+    if (typeof req.body.imageUrls === 'string') {
+      try {
+        req.body.imageUrls = JSON.parse(req.body.imageUrls);
+      } catch {}
+    }
+
+    if (req.body.duration && !isNaN(Number(req.body.duration))) {
+      req.body.duration = Number(req.body.duration);
     }
 
     if (typeof req.body.recipientIds === 'string') {

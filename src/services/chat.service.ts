@@ -131,12 +131,19 @@ export interface ChatMessageDTO {
   isRead: boolean;
   readAt?: Date | string | null;
   sentAt?: Date | string;
-  createdAt?: string;
+  createdAt?: string | Date;
   isMine: boolean;
   isPinned?: boolean;
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
   sender?: ChatMessageSenderDTO;
+  imageUrl?: string;
+  thumbnailUrl?: string;
+  mediaUrl?: string;
+  audioUrl?: string;
+  url?: string;
+  duration?: number | string;
+  images?: any[];
 }
 
 export interface ConversationSummaryDTO {
@@ -871,6 +878,40 @@ export class ChatService {
         if (!parsedMetadata.mediaUrl) {
           parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
         }
+        if (!parsedMetadata.url) {
+          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+        }
+        if (Array.isArray(parsedMetadata.images)) {
+          parsedMetadata.images = parsedMetadata.images.map((img: any) => {
+            if (typeof img === 'string') {
+              const k = s3Service.extractKey(img);
+              return { url: s3Service.getPublicUrl(k), thumbnailUrl: s3Service.getThumbnailUrl(k), key: k };
+            }
+            if (img && typeof img === 'object') {
+              const k = img.key || s3Service.extractKey(img.url || img.imageUrl || '');
+              return {
+                ...img,
+                url: img.url || (k ? s3Service.getPublicUrl(k) : ''),
+                thumbnailUrl: img.thumbnailUrl || (k ? s3Service.getThumbnailUrl(k) : ''),
+              };
+            }
+            return img;
+          });
+        }
+      } else if (msg.messageType === 'audio' && msg.content) {
+        if (!parsedMetadata || typeof parsedMetadata !== 'object') {
+          parsedMetadata = {};
+        }
+        const cleanKey = s3Service.extractKey(msg.content);
+        if (!parsedMetadata.audioUrl) {
+          parsedMetadata.audioUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.mediaUrl) {
+          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.url) {
+          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+        }
       }
 
       const status: 'sent' | 'delivered' | 'read' = msg.isRead
@@ -881,7 +922,7 @@ export class ChatService {
 
       const pinInfo = pinsMap.get(msg.id);
 
-      return {
+      const msgItem: ChatMessageDTO = {
         id: msg.id,
         conversationId: msg.conversationId,
         senderId: msg.senderId,
@@ -905,6 +946,21 @@ export class ChatService {
           profileImageUrl: null,
         },
       };
+
+      if (msg.messageType === 'image' && parsedMetadata) {
+        msgItem.imageUrl = parsedMetadata.imageUrl;
+        msgItem.thumbnailUrl = parsedMetadata.thumbnailUrl;
+        msgItem.mediaUrl = parsedMetadata.mediaUrl;
+        msgItem.url = parsedMetadata.imageUrl;
+        if (parsedMetadata.images) msgItem.images = parsedMetadata.images;
+      } else if (msg.messageType === 'audio' && parsedMetadata) {
+        msgItem.audioUrl = parsedMetadata.audioUrl;
+        msgItem.mediaUrl = parsedMetadata.mediaUrl;
+        msgItem.url = parsedMetadata.audioUrl;
+        if (parsedMetadata.duration !== undefined) msgItem.duration = parsedMetadata.duration;
+      }
+
+      return msgItem;
     });
 
     const totalPages = Math.ceil(count / limit) || 1;
@@ -984,47 +1040,195 @@ export class ChatService {
       }
     }
 
-    const msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
-    let messageContent = (data.content || (data as any).imageUrl || (data as any).image || (data as any).mediaUrl || (data as any).imageKey || '').trim();
+    let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
+    if (!data.messageType && !data.type) {
+      if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
+        msgType = 'audio';
+      } else if ((data as any).imageUrl || (data as any).image || (data as any).images || (data as any).imageUrls) {
+        msgType = 'image';
+      }
+    }
 
-    // 1. If direct file was attached via multipart/form-data: upload directly to S3 under folder "chat"
-    let attachedFile: Express.Multer.File | undefined = (data as any).file;
-    if (!attachedFile && (data as any).files) {
-      if (Array.isArray((data as any).files) && (data as any).files.length > 0) {
-        attachedFile = (data as any).files[0];
-      } else if (typeof (data as any).files === 'object') {
-        const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
-        for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment']) {
-          if (fileObj[k]?.length > 0) {
-            attachedFile = fileObj[k][0];
-            break;
+    let rawContent = (
+      data.content ||
+      (data as any).imageUrl ||
+      (data as any).image ||
+      (data as any).mediaUrl ||
+      (data as any).imageKey ||
+      (data as any).audioUrl ||
+      (data as any).audio ||
+      (data as any).voiceUrl ||
+      (data as any).url ||
+      (data as any).fileUrl ||
+      ''
+    );
+    if (typeof rawContent !== 'string' && Array.isArray((data as any).images) && (data as any).images.length > 0) {
+      const firstImg = (data as any).images[0];
+      rawContent = typeof firstImg === 'string' ? firstImg : firstImg?.url || firstImg?.imageUrl || '';
+    }
+    let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
+
+    // 1. Gather all direct file attachments (support single or multiple files)
+    let attachedFiles: Express.Multer.File[] = [];
+    if (Array.isArray((data as any).files)) {
+      attachedFiles = (data as any).files;
+    } else if ((data as any).files && typeof (data as any).files === 'object') {
+      const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
+      for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment', 'audio', 'voice', 'recording']) {
+        if (Array.isArray(fileObj[k]) && fileObj[k].length > 0) {
+          attachedFiles.push(...fileObj[k]);
+        }
+      }
+      if (attachedFiles.length === 0) {
+        for (const list of Object.values(fileObj)) {
+          if (Array.isArray(list)) {
+            attachedFiles.push(...list);
           }
         }
       }
     }
+    if (attachedFiles.length === 0 && (data as any).file) {
+      attachedFiles = [(data as any).file];
+    }
 
-    if (attachedFile && attachedFile.buffer) {
-      const mimeType = attachedFile.mimetype || 'image/jpeg';
-      const s3Key = await s3Service.uploadMedia(attachedFile.buffer, senderId, mimeType, 'chat');
+    if (attachedFiles.length > 0 && attachedFiles[0]?.buffer) {
+      const firstMime = attachedFiles[0].mimetype?.toLowerCase() || '';
+      const firstOrigName = attachedFiles[0].originalname?.toLowerCase() || '';
+      const isAudioFile =
+        firstMime.startsWith('audio/') ||
+        msgType === 'audio' ||
+        ['.caf', '.m4a', '.aac', '.mp3', '.wav', '.ogg', '.3gp', '.amr', '.opus', '.flac'].some((ext) =>
+          firstOrigName.endsWith(ext)
+        );
 
-      // Asynchronously upload resized thumbnail
-      if (mimeType.startsWith('image/')) {
-        s3Service.generateAndUploadThumbnail(s3Key, attachedFile.buffer).catch((err: any) => {
-          console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${s3Key}:`, err.message);
-        });
-      }
+      if (isAudioFile) {
+        msgType = 'audio';
+        const audioFile = attachedFiles[0];
+        const mimeType = audioFile.mimetype || 'audio/mpeg';
+        const s3Key = await s3Service.uploadMedia(audioFile.buffer, senderId, mimeType, 'chat');
+        const audioPublicUrl = s3Service.getPublicUrl(s3Key);
 
-      messageContent = s3Key;
-      metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
-      metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
-      metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
-      metadataObj.mimeType = mimeType;
-      metadataObj.fileSize = attachedFile.size;
-      if ((data as any).caption) {
-        metadataObj.caption = (data as any).caption;
+        messageContent = s3Key;
+        metadataObj.audioUrl = audioPublicUrl;
+        metadataObj.mediaUrl = audioPublicUrl;
+        metadataObj.url = audioPublicUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = audioFile.size;
+        const dur =
+          (data as any).duration !== undefined
+            ? Number((data as any).duration)
+            : metadataObj.duration !== undefined
+              ? Number(metadataObj.duration)
+              : undefined;
+        if (dur !== undefined && !Number.isNaN(dur)) {
+          metadataObj.duration = dur;
+        }
+      } else if (attachedFiles.length > 1) {
+        // Multi-image upload: upload all images to S3
+        msgType = 'image';
+        const uploadedImages: Array<{
+          url: string;
+          imageUrl: string;
+          thumbnailUrl: string;
+          mediaUrl: string;
+          key: string;
+          mimeType: string;
+          fileSize: number;
+        }> = [];
+
+        for (const file of attachedFiles) {
+          const mimeType = file.mimetype || 'image/jpeg';
+          const s3Key = await s3Service.uploadMedia(file.buffer, senderId, mimeType, 'chat');
+          if (mimeType.startsWith('image/')) {
+            s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+          }
+          const pubUrl = s3Service.getPublicUrl(s3Key);
+          const thUrl = s3Service.getThumbnailUrl(s3Key);
+          uploadedImages.push({
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: s3Key,
+            mimeType,
+            fileSize: file.size,
+          });
+        }
+
+        messageContent = uploadedImages[0].key;
+        metadataObj.thumbnailUrl = uploadedImages[0].thumbnailUrl;
+        metadataObj.imageUrl = uploadedImages[0].imageUrl;
+        metadataObj.mediaUrl = uploadedImages[0].mediaUrl;
+        metadataObj.url = uploadedImages[0].imageUrl;
+        metadataObj.mimeType = uploadedImages[0].mimeType;
+        metadataObj.fileSize = uploadedImages[0].fileSize;
+        metadataObj.images = uploadedImages;
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+      } else {
+        // Single image upload
+        msgType = 'image';
+        const imageFile = attachedFiles[0];
+        const mimeType = imageFile.mimetype || 'image/jpeg';
+        const s3Key = await s3Service.uploadMedia(imageFile.buffer, senderId, mimeType, 'chat');
+
+        if (mimeType.startsWith('image/')) {
+          s3Service.generateAndUploadThumbnail(s3Key, imageFile.buffer).catch((err: any) => {
+            console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${s3Key}:`, err.message);
+          });
+        }
+
+        const pubUrl = s3Service.getPublicUrl(s3Key);
+        const thUrl = s3Service.getThumbnailUrl(s3Key);
+
+        messageContent = s3Key;
+        metadataObj.thumbnailUrl = thUrl;
+        metadataObj.imageUrl = pubUrl;
+        metadataObj.mediaUrl = pubUrl;
+        metadataObj.url = pubUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = imageFile.size;
+        metadataObj.images = [
+          {
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: s3Key,
+            mimeType,
+            fileSize: imageFile.size,
+          },
+        ];
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
       }
     } else if (msgType === 'image') {
-      // 2. Base64 encoded image upload
+      // Handle multi-image passed via body
+      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
+        const imageList = (data as any).images.map((item: any) => {
+          const raw = typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.key || '';
+          const cleanKey = s3Service.extractKey(raw);
+          const pubUrl = s3Service.getPublicUrl(cleanKey);
+          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          return {
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: cleanKey,
+            mimeType: item?.mimeType || 'image/jpeg',
+            fileSize: item?.fileSize || 0,
+          };
+        });
+        metadataObj.images = imageList;
+        if (!messageContent && imageList.length > 0) {
+          messageContent = imageList[0].key;
+        }
+      }
+
+      // Base64 encoded image upload
       const isBase64DataUri = messageContent.startsWith('data:image/');
       const isPureBase64 =
         !messageContent.includes(' ') &&
@@ -1052,12 +1256,29 @@ export class ChatService {
           console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${s3Key}:`, err.message);
         });
 
+        const pubUrl = s3Service.getPublicUrl(s3Key);
+        const thUrl = s3Service.getThumbnailUrl(s3Key);
+
         messageContent = s3Key;
-        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
-        metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
-        metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.thumbnailUrl = thUrl;
+        metadataObj.imageUrl = pubUrl;
+        metadataObj.mediaUrl = pubUrl;
+        metadataObj.url = pubUrl;
         metadataObj.mimeType = mimeType;
         metadataObj.fileSize = buffer.length;
+        if (!metadataObj.images) {
+          metadataObj.images = [
+            {
+              url: pubUrl,
+              imageUrl: pubUrl,
+              thumbnailUrl: thUrl,
+              mediaUrl: pubUrl,
+              key: s3Key,
+              mimeType,
+              fileSize: buffer.length,
+            },
+          ];
+        }
         if ((data as any).caption) {
           metadataObj.caption = (data as any).caption;
         }
@@ -1066,7 +1287,7 @@ export class ChatService {
           throw new ChatServiceError('Image URL or storage key is required in content', 400);
         }
 
-        // 3. Attachment Ownership Verification for pre-uploaded S3 keys
+        // Attachment Ownership Verification for pre-uploaded S3 keys
         const userFolderMatch = messageContent.match(
           /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
         );
@@ -1081,20 +1302,90 @@ export class ChatService {
           }
         }
 
-        // Automatically resolve thumbnail and public S3 URLs if missing
         const cleanKey = s3Service.extractKey(messageContent);
+        const pubUrl = s3Service.getPublicUrl(cleanKey);
+        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+
         if (!metadataObj.thumbnailUrl) {
-          metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+          metadataObj.thumbnailUrl = thUrl;
         }
         if (!metadataObj.imageUrl) {
-          metadataObj.imageUrl = s3Service.getPublicUrl(cleanKey);
+          metadataObj.imageUrl = pubUrl;
         }
         if (!metadataObj.mediaUrl) {
-          metadataObj.mediaUrl = s3Service.getPublicUrl(cleanKey);
+          metadataObj.mediaUrl = pubUrl;
+        }
+        if (!metadataObj.url) {
+          metadataObj.url = pubUrl;
+        }
+        if (!metadataObj.images || metadataObj.images.length === 0) {
+          metadataObj.images = [
+            {
+              url: pubUrl,
+              imageUrl: pubUrl,
+              thumbnailUrl: thUrl,
+              mediaUrl: pubUrl,
+              key: cleanKey,
+            },
+          ];
         }
         if ((data as any).caption && !metadataObj.caption) {
           metadataObj.caption = (data as any).caption;
         }
+      }
+    } else if (msgType === 'audio') {
+      // Base64 audio upload or audio URL resolution
+      const isBase64Audio =
+        messageContent.startsWith('data:audio/') ||
+        (!messageContent.includes(' ') &&
+          !messageContent.startsWith('http') &&
+          !messageContent.startsWith('chat/') &&
+          !messageContent.startsWith('uploads/') &&
+          messageContent.length > 500);
+
+      if (isBase64Audio) {
+        let mimeType = 'audio/mpeg';
+        let base64Data = messageContent;
+
+        if (messageContent.startsWith('data:audio/')) {
+          const match = messageContent.match(/^data:(audio\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+          if (match) {
+            mimeType = match[1];
+            base64Data = match[2];
+          }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        const s3Key = await s3Service.uploadMedia(buffer, senderId, mimeType, 'chat');
+        const audioPublicUrl = s3Service.getPublicUrl(s3Key);
+
+        messageContent = s3Key;
+        metadataObj.audioUrl = audioPublicUrl;
+        metadataObj.mediaUrl = audioPublicUrl;
+        metadataObj.url = audioPublicUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = buffer.length;
+      } else {
+        if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+          throw new ChatServiceError('Audio URL or storage key is required in content', 400);
+        }
+
+        const cleanKey = s3Service.extractKey(messageContent);
+        const audioPublicUrl = s3Service.getPublicUrl(cleanKey);
+
+        metadataObj.audioUrl = metadataObj.audioUrl || audioPublicUrl;
+        metadataObj.mediaUrl = metadataObj.mediaUrl || audioPublicUrl;
+        metadataObj.url = metadataObj.url || audioPublicUrl;
+      }
+
+      const dur =
+        (data as any).duration !== undefined
+          ? Number((data as any).duration)
+          : metadataObj.duration !== undefined
+            ? Number(metadataObj.duration)
+            : undefined;
+      if (dur !== undefined && !Number.isNaN(dur)) {
+        metadataObj.duration = dur;
       }
     }
 
@@ -1181,6 +1472,18 @@ export class ChatService {
           },
         });
 
+        const imageUrl =
+          meta?.imageUrl ||
+          (existingMessage.messageType === 'image' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
+        const thumbnailUrl =
+          meta?.thumbnailUrl ||
+          (existingMessage.messageType === 'image' ? s3Service.getThumbnailUrl(existingMessage.content) : undefined);
+        const audioUrl =
+          meta?.audioUrl ||
+          (existingMessage.messageType === 'audio' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
+        const mediaUrl = meta?.mediaUrl || audioUrl || imageUrl;
+        const url = audioUrl || imageUrl || mediaUrl;
+
         return {
           id: existingMessage.id,
           conversationId: existingMessage.conversationId,
@@ -1195,6 +1498,7 @@ export class ChatService {
           isRead: existingMessage.isRead,
           readAt: existingMessage.readAt || null,
           sentAt: existingMessage.createdAt,
+          createdAt: existingMessage.createdAt,
           isMine: true,
           isPinned: !!pin,
           pinnedAt: pin?.createdAt || null,
@@ -1206,6 +1510,13 @@ export class ChatService {
               profileImageUrl: formatMediaUrl(senderUser.profilePicture),
             }
             : undefined,
+          imageUrl,
+          thumbnailUrl,
+          mediaUrl,
+          audioUrl,
+          url,
+          duration: meta?.duration,
+          images: meta?.images,
         };
       }
     }
@@ -1280,6 +1591,18 @@ export class ChatService {
       attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
     });
 
+    const imageUrl =
+      parsedMeta?.imageUrl ||
+      (msgType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+    const thumbnailUrl =
+      parsedMeta?.thumbnailUrl ||
+      (msgType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+    const audioUrl =
+      parsedMeta?.audioUrl ||
+      (msgType === 'audio' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+    const mediaUrl = parsedMeta?.mediaUrl || audioUrl || imageUrl;
+    const url = audioUrl || imageUrl || mediaUrl;
+
     const messageDto: ChatMessageDTO = {
       id: savedMessage.id,
       conversationId: savedMessage.conversationId,
@@ -1294,6 +1617,7 @@ export class ChatService {
       isRead: false,
       readAt: null,
       sentAt: savedMessage.createdAt,
+      createdAt: savedMessage.createdAt,
       isMine: true,
       isPinned: false,
       pinnedAt: null,
@@ -1305,6 +1629,13 @@ export class ChatService {
           profileImageUrl: formatMediaUrl(senderUser.profilePicture),
         }
         : undefined,
+      imageUrl,
+      thumbnailUrl,
+      mediaUrl,
+      audioUrl,
+      url,
+      duration: parsedMeta?.duration,
+      images: parsedMeta?.images,
     };
 
     // Real-Time Delivery via Socket.IO
@@ -1313,14 +1644,19 @@ export class ChatService {
       const recipientRoom = getUserRoomName(recipientId);
       const senderRoom = getUserRoomName(senderId);
 
-      // Deliver to recipient's multi-device room
-      io.to(recipientRoom).emit('chat:message_received' as any, {
+      const recipientPayload = {
         ...messageDto,
         isMine: false,
-      });
+      };
 
-      // Synchronize sender's other connected devices (e.g. tablet, web)
+      // Deliver to recipient's multi-device room across all standard event names
+      io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+      io.to(recipientRoom).emit('message:received' as any, recipientPayload);
+      io.to(recipientRoom).emit('new_message' as any, recipientPayload);
+
+      // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
       io.to(senderRoom).emit('chat:message_sent' as any, messageDto);
+      io.to(senderRoom).emit('message:sent' as any, messageDto);
     } catch {
       // Socket server may not be bound in isolated test contexts; continue gracefully
     }
@@ -1399,48 +1735,207 @@ export class ChatService {
       }
     }
 
-    const msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
-    let messageContent = (data.content || (data as any).imageUrl || (data as any).image || (data as any).mediaUrl || (data as any).imageKey || '').trim();
+    let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
+    if (!data.messageType && !data.type) {
+      if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
+        msgType = 'audio';
+      } else if ((data as any).imageUrl || (data as any).image || (data as any).images || (data as any).imageUrls) {
+        msgType = 'image';
+      }
+    }
+
+    let rawContent = (
+      data.content ||
+      (data as any).imageUrl ||
+      (data as any).image ||
+      (data as any).mediaUrl ||
+      (data as any).imageKey ||
+      (data as any).audioUrl ||
+      (data as any).audio ||
+      (data as any).voiceUrl ||
+      (data as any).url ||
+      (data as any).fileUrl ||
+      ''
+    );
+    if (typeof rawContent !== 'string' && Array.isArray((data as any).images) && (data as any).images.length > 0) {
+      const firstImg = (data as any).images[0];
+      rawContent = typeof firstImg === 'string' ? firstImg : firstImg?.url || firstImg?.imageUrl || '';
+    }
+    let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
 
     // 1. Direct file attachment on broadcast: upload to S3 ONCE before distributing
-    let attachedFile: Express.Multer.File | undefined = (data as any).file;
-    if (!attachedFile && (data as any).files) {
-      if (Array.isArray((data as any).files) && (data as any).files.length > 0) {
-        attachedFile = (data as any).files[0];
-      } else if (typeof (data as any).files === 'object') {
-        const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
-        for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment']) {
-          if (fileObj[k]?.length > 0) {
-            attachedFile = fileObj[k][0];
-            break;
+    let attachedFiles: Express.Multer.File[] = [];
+    if (Array.isArray((data as any).files)) {
+      attachedFiles = (data as any).files;
+    } else if ((data as any).files && typeof (data as any).files === 'object') {
+      const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
+      for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment', 'audio', 'voice', 'recording']) {
+        if (Array.isArray(fileObj[k]) && fileObj[k].length > 0) {
+          attachedFiles.push(...fileObj[k]);
+        }
+      }
+      if (attachedFiles.length === 0) {
+        for (const list of Object.values(fileObj)) {
+          if (Array.isArray(list)) {
+            attachedFiles.push(...list);
           }
         }
       }
     }
+    if (attachedFiles.length === 0 && (data as any).file) {
+      attachedFiles = [(data as any).file];
+    }
 
-    if (attachedFile && attachedFile.buffer) {
-      const mimeType = attachedFile.mimetype || 'image/jpeg';
-      const s3Key = await s3Service.uploadMedia(attachedFile.buffer, senderId, mimeType, 'chat');
+    if (attachedFiles.length > 0 && attachedFiles[0]?.buffer) {
+      const firstMime = attachedFiles[0].mimetype?.toLowerCase() || '';
+      const firstOrigName = attachedFiles[0].originalname?.toLowerCase() || '';
+      const isAudioFile =
+        firstMime.startsWith('audio/') ||
+        msgType === 'audio' ||
+        ['.caf', '.m4a', '.aac', '.mp3', '.wav', '.ogg', '.3gp', '.amr', '.opus', '.flac'].some((ext) =>
+          firstOrigName.endsWith(ext)
+        );
 
-      if (mimeType.startsWith('image/')) {
-        s3Service.generateAndUploadThumbnail(s3Key, attachedFile.buffer).catch(() => {});
+      if (isAudioFile) {
+        msgType = 'audio';
+        const audioFile = attachedFiles[0];
+        const mimeType = audioFile.mimetype || 'audio/mpeg';
+        const s3Key = await s3Service.uploadMedia(audioFile.buffer, senderId, mimeType, 'chat');
+        const audioPublicUrl = s3Service.getPublicUrl(s3Key);
+
+        messageContent = s3Key;
+        data.content = s3Key;
+        (data as any).file = undefined;
+        (data as any).files = undefined;
+
+        metadataObj.audioUrl = audioPublicUrl;
+        metadataObj.mediaUrl = audioPublicUrl;
+        metadataObj.url = audioPublicUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = audioFile.size;
+        const dur =
+          (data as any).duration !== undefined
+            ? Number((data as any).duration)
+            : metadataObj.duration !== undefined
+              ? Number(metadataObj.duration)
+              : undefined;
+        if (dur !== undefined && !Number.isNaN(dur)) {
+          metadataObj.duration = dur;
+        }
+        data.metadata = metadataObj;
+      } else if (attachedFiles.length > 1) {
+        // Multi-image upload
+        msgType = 'image';
+        const uploadedImages: Array<{
+          url: string;
+          imageUrl: string;
+          thumbnailUrl: string;
+          mediaUrl: string;
+          key: string;
+          mimeType: string;
+          fileSize: number;
+        }> = [];
+
+        for (const file of attachedFiles) {
+          const mimeType = file.mimetype || 'image/jpeg';
+          const s3Key = await s3Service.uploadMedia(file.buffer, senderId, mimeType, 'chat');
+          if (mimeType.startsWith('image/')) {
+            s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+          }
+          const pubUrl = s3Service.getPublicUrl(s3Key);
+          const thUrl = s3Service.getThumbnailUrl(s3Key);
+          uploadedImages.push({
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: s3Key,
+            mimeType,
+            fileSize: file.size,
+          });
+        }
+
+        messageContent = uploadedImages[0].key;
+        data.content = uploadedImages[0].key;
+        (data as any).file = undefined;
+        (data as any).files = undefined;
+
+        metadataObj.thumbnailUrl = uploadedImages[0].thumbnailUrl;
+        metadataObj.imageUrl = uploadedImages[0].imageUrl;
+        metadataObj.mediaUrl = uploadedImages[0].mediaUrl;
+        metadataObj.url = uploadedImages[0].imageUrl;
+        metadataObj.mimeType = uploadedImages[0].mimeType;
+        metadataObj.fileSize = uploadedImages[0].fileSize;
+        metadataObj.images = uploadedImages;
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+        data.metadata = metadataObj;
+      } else {
+        // Single image upload
+        msgType = 'image';
+        const imageFile = attachedFiles[0];
+        const mimeType = imageFile.mimetype || 'image/jpeg';
+        const s3Key = await s3Service.uploadMedia(imageFile.buffer, senderId, mimeType, 'chat');
+
+        if (mimeType.startsWith('image/')) {
+          s3Service.generateAndUploadThumbnail(s3Key, imageFile.buffer).catch(() => {});
+        }
+
+        const pubUrl = s3Service.getPublicUrl(s3Key);
+        const thUrl = s3Service.getThumbnailUrl(s3Key);
+
+        messageContent = s3Key;
+        data.content = s3Key;
+        (data as any).file = undefined;
+        (data as any).files = undefined;
+
+        metadataObj.thumbnailUrl = thUrl;
+        metadataObj.imageUrl = pubUrl;
+        metadataObj.mediaUrl = pubUrl;
+        metadataObj.url = pubUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = imageFile.size;
+        metadataObj.images = [
+          {
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: s3Key,
+            mimeType,
+            fileSize: imageFile.size,
+          },
+        ];
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+        data.metadata = metadataObj;
       }
-
-      messageContent = s3Key;
-      data.content = s3Key;
-      (data as any).file = undefined;
-      (data as any).files = undefined;
-
-      metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
-      metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
-      metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
-      metadataObj.mimeType = mimeType;
-      metadataObj.fileSize = attachedFile.size;
-      if ((data as any).caption) {
-        metadataObj.caption = (data as any).caption;
-      }
-      data.metadata = metadataObj;
     } else if (msgType === 'image') {
+      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
+        const imageList = (data as any).images.map((item: any) => {
+          const raw = typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.key || '';
+          const cleanKey = s3Service.extractKey(raw);
+          const pubUrl = s3Service.getPublicUrl(cleanKey);
+          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          return {
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: cleanKey,
+            mimeType: item?.mimeType || 'image/jpeg',
+            fileSize: item?.fileSize || 0,
+          };
+        });
+        metadataObj.images = imageList;
+        if (!messageContent && imageList.length > 0) {
+          messageContent = imageList[0].key;
+          data.content = messageContent;
+        }
+      }
+
       const isBase64DataUri = messageContent.startsWith('data:image/');
       const isPureBase64 =
         !messageContent.includes(' ') &&
@@ -1466,13 +1961,30 @@ export class ChatService {
 
         s3Service.generateAndUploadThumbnail(s3Key, buffer).catch(() => {});
 
+        const pubUrl = s3Service.getPublicUrl(s3Key);
+        const thUrl = s3Service.getThumbnailUrl(s3Key);
+
         messageContent = s3Key;
         data.content = s3Key;
-        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
-        metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
-        metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.thumbnailUrl = thUrl;
+        metadataObj.imageUrl = pubUrl;
+        metadataObj.mediaUrl = pubUrl;
+        metadataObj.url = pubUrl;
         metadataObj.mimeType = mimeType;
         metadataObj.fileSize = buffer.length;
+        if (!metadataObj.images) {
+          metadataObj.images = [
+            {
+              url: pubUrl,
+              imageUrl: pubUrl,
+              thumbnailUrl: thUrl,
+              mediaUrl: pubUrl,
+              key: s3Key,
+              mimeType,
+              fileSize: buffer.length,
+            },
+          ];
+        }
         if ((data as any).caption) {
           metadataObj.caption = (data as any).caption;
         }
@@ -1498,14 +2010,31 @@ export class ChatService {
         }
 
         const cleanKey = s3Service.extractKey(messageContent);
+        const pubUrl = s3Service.getPublicUrl(cleanKey);
+        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+
         if (!metadataObj.thumbnailUrl) {
-          metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+          metadataObj.thumbnailUrl = thUrl;
         }
         if (!metadataObj.imageUrl) {
-          metadataObj.imageUrl = s3Service.getPublicUrl(cleanKey);
+          metadataObj.imageUrl = pubUrl;
         }
         if (!metadataObj.mediaUrl) {
-          metadataObj.mediaUrl = s3Service.getPublicUrl(cleanKey);
+          metadataObj.mediaUrl = pubUrl;
+        }
+        if (!metadataObj.url) {
+          metadataObj.url = pubUrl;
+        }
+        if (!metadataObj.images || metadataObj.images.length === 0) {
+          metadataObj.images = [
+            {
+              url: pubUrl,
+              imageUrl: pubUrl,
+              thumbnailUrl: thUrl,
+              mediaUrl: pubUrl,
+              key: cleanKey,
+            },
+          ];
         }
         if ((data as any).caption && !metadataObj.caption) {
           metadataObj.caption = (data as any).caption;
@@ -1513,9 +2042,60 @@ export class ChatService {
         data.metadata = metadataObj;
       }
     } else if (msgType === 'audio') {
-      if (!messageContent) {
-        throw new ChatServiceError('Audio URL or storage key is required in content', 400);
+      const isBase64Audio =
+        messageContent.startsWith('data:audio/') ||
+        (!messageContent.includes(' ') &&
+          !messageContent.startsWith('http') &&
+          !messageContent.startsWith('chat/') &&
+          !messageContent.startsWith('uploads/') &&
+          messageContent.length > 500);
+
+      if (isBase64Audio) {
+        let mimeType = 'audio/mpeg';
+        let base64Data = messageContent;
+
+        if (messageContent.startsWith('data:audio/')) {
+          const match = messageContent.match(/^data:(audio\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+          if (match) {
+            mimeType = match[1];
+            base64Data = match[2];
+          }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        const s3Key = await s3Service.uploadMedia(buffer, senderId, mimeType, 'chat');
+        const audioPublicUrl = s3Service.getPublicUrl(s3Key);
+
+        messageContent = s3Key;
+        data.content = s3Key;
+        metadataObj.audioUrl = audioPublicUrl;
+        metadataObj.mediaUrl = audioPublicUrl;
+        metadataObj.url = audioPublicUrl;
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = buffer.length;
+      } else {
+        if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+          throw new ChatServiceError('Audio URL or storage key is required in content', 400);
+        }
+
+        const cleanKey = s3Service.extractKey(messageContent);
+        const audioPublicUrl = s3Service.getPublicUrl(cleanKey);
+
+        metadataObj.audioUrl = metadataObj.audioUrl || audioPublicUrl;
+        metadataObj.mediaUrl = metadataObj.mediaUrl || audioPublicUrl;
+        metadataObj.url = metadataObj.url || audioPublicUrl;
       }
+
+      const dur =
+        (data as any).duration !== undefined
+          ? Number((data as any).duration)
+          : metadataObj.duration !== undefined
+            ? Number(metadataObj.duration)
+            : undefined;
+      if (dur !== undefined && !Number.isNaN(dur)) {
+        metadataObj.duration = dur;
+      }
+      data.metadata = metadataObj;
     } else if (msgType === 'location') {
       const lat = Number(metadataObj.latitude);
       const lng = Number(metadataObj.longitude);
@@ -1712,6 +2292,18 @@ export class ChatService {
               },
             });
 
+            const imageUrl =
+              meta?.imageUrl ||
+              (existingMessage.messageType === 'image' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
+            const thumbnailUrl =
+              meta?.thumbnailUrl ||
+              (existingMessage.messageType === 'image' ? s3Service.getThumbnailUrl(existingMessage.content) : undefined);
+            const audioUrl =
+              meta?.audioUrl ||
+              (existingMessage.messageType === 'audio' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
+            const mediaUrl = meta?.mediaUrl || audioUrl || imageUrl;
+            const url = audioUrl || imageUrl || mediaUrl;
+
             const msgDto: ChatMessageDTO = {
               id: existingMessage.id,
               conversationId: existingMessage.conversationId,
@@ -1726,6 +2318,7 @@ export class ChatService {
               isRead: existingMessage.isRead,
               readAt: existingMessage.readAt || null,
               sentAt: existingMessage.createdAt,
+              createdAt: existingMessage.createdAt,
               isMine: true,
               isPinned: !!pin,
               pinnedAt: pin?.createdAt || null,
@@ -1737,6 +2330,13 @@ export class ChatService {
                   profileImageUrl: formatMediaUrl(senderUser.profilePicture),
                 }
                 : undefined,
+              imageUrl,
+              thumbnailUrl,
+              mediaUrl,
+              audioUrl,
+              url,
+              duration: meta?.duration,
+              images: meta?.images,
             };
 
             results.push({
@@ -1814,6 +2414,18 @@ export class ChatService {
           }
         }
 
+        const imageUrl =
+          parsedMeta?.imageUrl ||
+          (msgType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+        const thumbnailUrl =
+          parsedMeta?.thumbnailUrl ||
+          (msgType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+        const audioUrl =
+          parsedMeta?.audioUrl ||
+          (msgType === 'audio' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+        const mediaUrl = parsedMeta?.mediaUrl || audioUrl || imageUrl;
+        const url = audioUrl || imageUrl || mediaUrl;
+
         const messageDto: ChatMessageDTO = {
           id: savedMessage.id,
           conversationId: savedMessage.conversationId,
@@ -1828,6 +2440,7 @@ export class ChatService {
           isRead: false,
           readAt: null,
           sentAt: savedMessage.createdAt,
+          createdAt: savedMessage.createdAt,
           isMine: true,
           isPinned: false,
           pinnedAt: null,
@@ -1839,6 +2452,13 @@ export class ChatService {
               profileImageUrl: formatMediaUrl(senderUser.profilePicture),
             }
             : undefined,
+          imageUrl,
+          thumbnailUrl,
+          mediaUrl,
+          audioUrl,
+          url,
+          duration: parsedMeta?.duration,
+          images: parsedMeta?.images,
         };
 
         // Real-Time Delivery via Socket.IO
@@ -1847,14 +2467,19 @@ export class ChatService {
           const recipientRoom = getUserRoomName(recipientId);
           const senderRoom = getUserRoomName(senderId);
 
-          // Deliver to recipient's multi-device room
-          io.to(recipientRoom).emit('chat:message_received' as any, {
+          const recipientPayload = {
             ...messageDto,
             isMine: false,
-          });
+          };
 
-          // Synchronize sender's other connected devices
+          // Deliver to recipient's multi-device room across all standard event names
+          io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+          io.to(recipientRoom).emit('message:received' as any, recipientPayload);
+          io.to(recipientRoom).emit('new_message' as any, recipientPayload);
+
+          // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
           io.to(senderRoom).emit('chat:message_sent' as any, messageDto);
+          io.to(senderRoom).emit('message:sent' as any, messageDto);
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
@@ -2996,63 +3621,19 @@ export class ChatService {
       defaults: {
         user1Id: u1,
         user2Id: u2,
-        lastMessage: content,
+        lastMessage: input.content || '',
         lastMessageAt: now,
       },
     });
 
-    const metaStr =
-      metadata && typeof metadata === 'object' ? JSON.stringify(metadata) : (metadata as string | null);
-
-    const message = await ChatMessage.create({
-      conversationId: conversation.id,
-      senderId,
-      recipientId,
-      content,
-      messageType: (messageType as any) || 'text',
-      metadata: metaStr,
-      isRead: false,
-    });
-
-    conversation.lastMessage = content;
-    conversation.lastMessageAt = now;
     if (conversation.isDeletedForEveryone) {
       conversation.isDeletedForEveryone = false;
       conversation.deletedForEveryoneAt = null;
       conversation.deletedForEveryoneBy = null;
+      await conversation.save();
     }
-    await conversation.save();
 
-    try {
-      const senderName = resolveDisplayName(sender);
-      await notificationService.dispatchNotification(recipientId, {
-        type: 'match',
-        title: `Message from ${senderName}`,
-        body: content.length > 60 ? `${content.substring(0, 60)}...` : content,
-        senderId,
-        entityId: conversation.id,
-        navigation: { type: 'chat', targetId: conversation.id },
-        data: {
-          conversationId: conversation.id,
-          senderId,
-          senderName,
-          messageId: message.id,
-        },
-      });
-    } catch (_notifErr) {}
-
-    return {
-      id: message.id,
-      conversationId: message.conversationId,
-      senderId: message.senderId,
-      recipientId: message.recipientId,
-      content: message.content,
-      messageType: message.messageType as any,
-      metadata: metaStr,
-      isRead: message.isRead,
-      isMine: true,
-      createdAt: message.createdAt.toISOString(),
-    };
+    return this.sendMessage(senderId, conversation.id, input);
   }
 
   /**

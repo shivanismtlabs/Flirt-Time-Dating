@@ -30,6 +30,33 @@ export const registerChatSocketHandlers = (
         return;
       }
 
+      let msgType = payload.messageType || payload.type;
+      if (!msgType) {
+        if (payload.audioUrl || payload.audio || payload.voiceUrl) {
+          msgType = 'audio';
+        } else if (payload.imageUrl || payload.image || payload.images || payload.imageUrls) {
+          msgType = 'image';
+        } else {
+          msgType = 'text';
+        }
+      }
+
+      let content =
+        payload.content ||
+        payload.audioUrl ||
+        payload.audio ||
+        payload.voiceUrl ||
+        payload.imageUrl ||
+        payload.image ||
+        payload.mediaUrl ||
+        payload.imageKey ||
+        payload.url ||
+        payload.fileUrl;
+
+      if (!content && Array.isArray(payload.images) && payload.images.length > 0) {
+        content = typeof payload.images[0] === 'string' ? payload.images[0] : payload.images[0]?.url || '';
+      }
+
       const hasRecipients =
         (Array.isArray(payload.recipientIds) && payload.recipientIds.length > 0) ||
         !!payload.recipientId;
@@ -40,13 +67,17 @@ export const registerChatSocketHandlers = (
           recipientIds: payload.recipientIds,
           recipientId: payload.recipientId,
           conversationId: payload.conversationId,
-          content: payload.content,
-          type: payload.type,
-          messageType: payload.messageType,
+          content,
+          type: msgType,
+          messageType: msgType,
           clientMessageId: payload.clientMessageId,
           clientMessageIds: payload.clientMessageIds,
           metadata: payload.metadata,
-        });
+          images: payload.images,
+          duration: payload.duration,
+          audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
+          imageUrl: payload.imageUrl || payload.image,
+        } as any);
 
         if (typeof callback === 'function') {
           callback({ success: true, data: result });
@@ -64,13 +95,11 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      const msgType = payload.messageType || payload.type || (payload.image || payload.imageUrl || payload.mediaUrl ? 'image' : 'text');
-      const content = payload.content || payload.image || payload.imageUrl || payload.mediaUrl || payload.imageKey;
-      if ((msgType === 'text' || msgType === 'image') && !content) {
+      if ((msgType === 'text' || msgType === 'image' || msgType === 'audio') && !content) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
-            error: 'content is required for text and image messages',
+            error: `content or media URL is required for ${msgType} messages`,
           });
         }
         return;
@@ -84,7 +113,11 @@ export const registerChatSocketHandlers = (
           messageType: msgType,
           clientMessageId: payload.clientMessageId,
           metadata: payload.metadata,
-        }
+          images: payload.images,
+          duration: payload.duration,
+          audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
+          imageUrl: payload.imageUrl || payload.image,
+        } as any
       );
 
       if (typeof callback === 'function') {

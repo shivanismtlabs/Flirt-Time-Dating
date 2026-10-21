@@ -16,6 +16,7 @@ import {
   UserReport,
   UserInterest,
   Interest,
+  MomentCommentLike,
 } from '../models';
 import {
   s3Service,
@@ -26,6 +27,7 @@ import {
 import { calculateInterestMatchPercentage } from '../utils/compatibility';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
+import { notificationService } from './notification.service';
 
 export class MomentServiceError extends Error {
   public statusCode: number;
@@ -631,6 +633,7 @@ export class MomentService {
       profilePicture: targetUser.profilePicture ? formatMediaUrl(targetUser.profilePicture) : null,
       isVerified: !!targetUser.isFaceVerified,
       isFaceVerified: !!targetUser.isFaceVerified,
+      isSubscribed: !!targetUser.isSubscribed,
       city: targetUser.city || null,
       location: targetUser.city || null,
       momentCount: targetMomentCount,
@@ -1132,6 +1135,7 @@ export class MomentService {
               profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
               isVerified: !!creator.isFaceVerified,
               isFaceVerified: !!creator.isFaceVerified,
+              isSubscribed: !!creator.isSubscribed,
               city: creator.city || null,
               location: creator.city || null,
               momentCount: creatorMomentCount,
@@ -1371,6 +1375,7 @@ export class MomentService {
         profilePicture: creator.profilePicture ? formatMediaUrl(creator.profilePicture) : null,
         isVerified: !!creator.isFaceVerified,
         isFaceVerified: !!creator.isFaceVerified,
+        isSubscribed: !!creator.isSubscribed,
         city: creator.city || null,
         location: creator.city || null,
         momentCount: creatorMomentCount,
@@ -1644,8 +1649,49 @@ export class MomentService {
   public async replyToMoment(
     senderId: string,
     momentId: string,
-    message: string
+    message: string,
+    options?: {
+      parentCommentId?: string | null;
+      parent_comment_id?: string | null;
+      parentId?: string | null;
+      parent_id?: string | null;
+      replyToCommentId?: string | null;
+      reply_to_comment_id?: string | null;
+      commentId?: string | null;
+      comment_id?: string | null;
+      parentReplyId?: string | null;
+      parent_reply_id?: string | null;
+    }
   ) {
+    const parentId =
+      options?.parentCommentId ||
+      options?.parent_comment_id ||
+      options?.parentId ||
+      options?.parent_id ||
+      options?.replyToCommentId ||
+      options?.reply_to_comment_id ||
+      options?.commentId ||
+      options?.comment_id;
+
+    if (parentId) {
+      const uuidRegex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      if (!uuidRegex.test(parentId)) {
+        throw new MomentServiceError(
+          'Invalid parent comment ID format',
+          400,
+          'INVALID_COMMENT_ID'
+        );
+      }
+      return this.replyToMomentComment(
+        senderId,
+        momentId,
+        parentId,
+        message,
+        { parentReplyId: options?.parentReplyId || options?.parent_reply_id || null }
+      );
+    }
+
     const trimmedMessage = message.trim();
     if (!trimmedMessage) {
       throw new MomentServiceError(
@@ -1752,15 +1798,36 @@ export class MomentService {
     conversation.lastMessageAt = now;
     await conversation.save();
 
+    if (moment.userId !== senderId) {
+      (async () => {
+        try {
+          const senderUser = await User.findByPk(senderId, {
+            attributes: ['id', 'username', 'fullName', 'nickName'],
+          });
+          const senderDisplayName =
+            senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
+          await notificationService.sendCommentNotification(moment.userId, {
+            senderId,
+            senderName: senderDisplayName,
+            comment: trimmedMessage,
+            momentId: moment.id,
+            commentId: chatMessage.id,
+            isReply: false,
+          });
+        } catch {}
+      })();
+    }
+
     return {
-      replyId: chatMessage.id,
+      id: chatMessage.id,
       commentId: chatMessage.id,
-      conversationId: conversation.id,
       momentId: moment.id,
-      recipientId: moment.userId,
-      message: trimmedMessage,
       comment: trimmedMessage,
+      text: trimmedMessage,
+      parentCommentId: null,
       createdAt: chatMessage.createdAt,
+      repliesCount: 0,
+      replies: [],
     };
   }
 
@@ -1782,6 +1849,30 @@ export class MomentService {
     const limit = Math.max(1, Math.min(100, options?.limit || 20));
     const offset = (page - 1) * limit;
 
+    const parseMeta = (item: any) => {
+      if (!item?.metadata) return null;
+      try {
+        return typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata;
+      } catch {
+        return null;
+      }
+    };
+
+    const isReply = (meta: any) => {
+      return Boolean(
+        meta?.parentCommentId ||
+        meta?.parent_comment_id ||
+        meta?.parentId ||
+        meta?.parent_id ||
+        meta?.parentReplyId ||
+        meta?.parent_reply_id ||
+        meta?.replyToCommentId ||
+        meta?.reply_to_comment_id ||
+        meta?.replyId ||
+        meta?.reply_id
+      );
+    };
+
     const { count, rows } = await ChatMessage.findAndCountAll({
       where: {
         messageType: 'moment_reply',
@@ -1792,6 +1883,14 @@ export class MomentService {
         [Op.and]: [
           { metadata: { [Op.notLike]: '%"type":"gift"%' } },
           { metadata: { [Op.notLike]: '%"type": "gift"%' } },
+          { metadata: { [Op.notLike]: '%"parentCommentId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_comment_id"%' } },
+          { metadata: { [Op.notLike]: '%"parentId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_id"%' } },
+          { metadata: { [Op.notLike]: '%"parentReplyId"%' } },
+          { metadata: { [Op.notLike]: '%"parent_reply_id"%' } },
+          { metadata: { [Op.notLike]: '%"replyToCommentId"%' } },
+          { metadata: { [Op.notLike]: '%"reply_to_comment_id"%' } },
           { content: { [Op.notLike]: '🎁%' } },
         ],
       },
@@ -1807,43 +1906,1268 @@ export class MomentService {
       offset,
     });
 
-    const comments = rows.map((c: any) => ({
-      id: c.id,
-      commentId: c.id,
-      replyId: c.id,
-      momentId,
-      comment: c.content,
-      message: c.content,
-      createdAt: c.createdAt,
-      timeAgo: formatTimeAgoShort(c.createdAt),
-      isMyComment: c.senderId === viewerId,
-      canDelete: c.senderId === viewerId || moment.userId === viewerId,
-      user: {
-        id: c.sender?.id,
-        username: c.sender?.username || null,
-        name: c.sender?.fullName || c.sender?.nickName || 'User',
-        profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
-        avatar: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
-        isVerified: !!c.sender?.isFaceVerified,
-        city: c.sender?.city || null,
-      },
-    }));
+    const topLevelRows = rows.filter((r: any) => !isReply(parseMeta(r)));
+    const commentIds = topLevelRows.map((c: any) => c.id);
+    const likesCountMap = new Map<string, number>();
+    const userLikedSet = new Set<string>();
+
+    // Fetch all replies belonging to this moment
+    let allMomentReplies: any[] = [];
+    try {
+      allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
+            { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
+          ],
+          [Op.and]: [
+            {
+              [Op.or]: [
+                { metadata: { [Op.like]: '%"parentCommentId"%' } },
+                { metadata: { [Op.like]: '%"parent_comment_id"%' } },
+                { metadata: { [Op.like]: '%"parentReplyId"%' } },
+                { metadata: { [Op.like]: '%"parent_reply_id"%' } },
+                { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+                { metadata: { [Op.like]: '%"reply_to_comment_id"%' } },
+                { metadata: { [Op.like]: '%"parentId"%' } },
+                { metadata: { [Op.like]: '%"parent_id"%' } },
+              ],
+            },
+          ],
+        },
+        include: [
+          {
+            model: User,
+            as: 'sender',
+            attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          },
+        ],
+        order: [['createdAt', 'ASC']],
+      });
+      allMomentReplies = allMomentReplies.filter((r: any) => isReply(parseMeta(r)));
+    } catch {}
+
+    const replyMap = new Map<string, any>();
+    for (const r of allMomentReplies) {
+      replyMap.set(r.id, r);
+    }
+
+    const allReplyIds = allMomentReplies.map((r: any) => r.id);
+    const allTargetIds = [...commentIds, ...allReplyIds];
+
+    if (allTargetIds.length > 0) {
+      try {
+        const commentLikes = await MomentCommentLike.findAll({
+          where: { commentId: { [Op.in]: allTargetIds } },
+          attributes: ['commentId', 'userId'],
+        });
+        for (const cl of commentLikes) {
+          likesCountMap.set(cl.commentId, (likesCountMap.get(cl.commentId) || 0) + 1);
+          if (cl.userId === viewerId) {
+            userLikedSet.add(cl.commentId);
+          }
+        }
+      } catch {}
+    }
+
+    // Function to trace root comment ID for any reply
+    const findRootCommentId = (reply: any): string | null => {
+      let curr = reply;
+      const visited = new Set<string>();
+      while (curr && !visited.has(curr.id)) {
+        visited.add(curr.id);
+        const meta = parseMeta(curr);
+        const pCommentId =
+          meta?.parentCommentId ||
+          meta?.parent_comment_id ||
+          meta?.parentId ||
+          meta?.parent_id ||
+          meta?.parentReplyId ||
+          meta?.parent_reply_id ||
+          meta?.replyToCommentId ||
+          meta?.reply_to_comment_id;
+        if (!pCommentId) {
+          return curr.id;
+        }
+        if (replyMap.has(pCommentId)) {
+          curr = replyMap.get(pCommentId);
+        } else {
+          return pCommentId;
+        }
+      }
+      return null;
+    };
+
+    // Group replies by root comment ID
+    const commentRepliesMap = new Map<string, any[]>();
+    for (const r of allMomentReplies) {
+      const rootId = findRootCommentId(r);
+      if (rootId && commentIds.includes(rootId)) {
+        if (!commentRepliesMap.has(rootId)) {
+          commentRepliesMap.set(rootId, []);
+        }
+        commentRepliesMap.get(rootId)!.push(r);
+      }
+    }
+
+    const comments = topLevelRows.map((c: any) => {
+      const rawReplies = commentRepliesMap.get(c.id) || [];
+      const formattedList: any[] = [];
+
+      for (const r of rawReplies) {
+        const meta = parseMeta(r) || {};
+
+        let parentRepId: string | null = null;
+        const explicitParentReply =
+          meta?.parentReplyId ||
+          meta?.parent_reply_id;
+
+        if (explicitParentReply && explicitParentReply !== c.id) {
+          parentRepId = explicitParentReply;
+        } else {
+          const candidateId =
+            meta?.parentCommentId ||
+            meta?.parent_comment_id ||
+            meta?.parentId ||
+            meta?.parent_id ||
+            meta?.replyToCommentId ||
+            meta?.reply_to_comment_id;
+
+          if (candidateId && candidateId !== c.id && replyMap.has(candidateId)) {
+            parentRepId = candidateId;
+          }
+        }
+
+        let replyToUName = meta?.replyToUsername || null;
+        let replyToUId = meta?.replyToUserId || null;
+        if (!replyToUName && parentRepId && replyMap.has(parentRepId)) {
+          const pr = replyMap.get(parentRepId);
+          replyToUName = pr.sender?.username || pr.sender?.fullName || null;
+          replyToUId = pr.senderId || null;
+        }
+
+        const formatted = {
+          id: r.id,
+          replyId: r.id,
+          reply: r.content,
+          parentCommentId: c.id,
+          parentReplyId: parentRepId,
+          replyToCommentId: parentRepId || c.id,
+          replyTo: {
+            userId: replyToUId,
+            username: replyToUName,
+          },
+          repliesCount: 0,
+          replies: [] as any[],
+          user: {
+            id: r.sender?.id,
+            username: r.sender?.username || null,
+            name: r.sender?.fullName || r.sender?.nickName || 'User',
+            profilePhoto: r.sender?.profilePicture ? formatThumbnailUrl(r.sender.profilePicture) : null,
+            isVerified: !!r.sender?.isFaceVerified,
+            isSubscribed: !!r.sender?.isSubscribed,
+            city: r.sender?.city || null,
+          },
+          likesCount: likesCountMap.get(r.id) || 0,
+          isLiked: userLikedSet.has(r.id),
+          isMyComment: r.senderId === viewerId,
+          canDelete: r.senderId === viewerId || c.senderId === viewerId || moment.userId === viewerId,
+          createdAt: r.createdAt,
+          timeAgo: formatTimeAgoShort(r.createdAt),
+        };
+        formattedList.push(formatted);
+      }
+
+      // Nested hierarchical tree of replies (child replies placed inside parent reply's replies array)
+      const treeItemMap = new Map<string, any>();
+      const treeList: any[] = [];
+      for (const item of formattedList) {
+        const treeItem = {
+          ...item,
+          user: { ...item.user },
+          replyTo: { ...item.replyTo },
+          replies: [] as any[],
+        };
+        treeItemMap.set(treeItem.replyId, treeItem);
+        treeList.push(treeItem);
+      }
+
+      for (const item of treeList) {
+        if (item.parentReplyId && treeItemMap.has(item.parentReplyId)) {
+          treeItemMap.get(item.parentReplyId).replies.push(item);
+        }
+      }
+
+      // Update repliesCount on each tree item
+      for (const item of treeList) {
+        item.repliesCount = item.replies.length;
+      }
+
+      // Direct replies are top-level replies only (child sub-replies reside exclusively within parent.replies)
+      const directReplies = treeList.filter(
+        (item) => !item.parentReplyId || item.parentReplyId === c.id || !treeItemMap.has(item.parentReplyId)
+      );
+
+      return {
+        id: c.id,
+        commentId: c.id,
+        comment: c.content,
+        repliesCount: directReplies.length,
+        replies: directReplies,
+        user: {
+          id: c.sender?.id,
+          username: c.sender?.username || null,
+          name: c.sender?.fullName || c.sender?.nickName || 'User',
+          profilePhoto: c.sender?.profilePicture ? formatThumbnailUrl(c.sender.profilePicture) : null,
+          isVerified: !!c.sender?.isFaceVerified,
+          isSubscribed: !!c.sender?.isSubscribed,
+          city: c.sender?.city || null,
+        },
+        likesCount: likesCountMap.get(c.id) || 0,
+        isLiked: userLikedSet.has(c.id),
+        isMyComment: c.senderId === viewerId,
+        canDelete: c.senderId === viewerId || moment.userId === viewerId,
+        createdAt: c.createdAt,
+        timeAgo: formatTimeAgoShort(c.createdAt),
+      };
+    });
 
     return {
       momentId,
       totalComments: count,
-      totalReplies: count,
       page,
       limit,
       totalPages: Math.ceil(count / limit),
       comments,
-      replies: comments,
+    };
+  }
+
+  /**
+   * Toggles or sets like on a Moment Comment
+   * POST /api/v1/moments/:momentId/comments/:commentId/like (or /toggle-like)
+   */
+  public async toggleLikeMomentComment(
+    userId: string,
+    commentId: string,
+    options?: { action?: 'like' | 'unlike' | 'toggle'; reaction?: string; momentId?: string }
+  ) {
+    const comment = await ChatMessage.findByPk(commentId);
+    if (!comment) {
+      throw new MomentServiceError('Comment not found or already deleted', 404, 'COMMENT_NOT_FOUND');
+    }
+
+    // Resolve momentId
+    let resolvedMomentId = options?.momentId;
+    if (!resolvedMomentId && comment.metadata) {
+      try {
+        const parsed = typeof comment.metadata === 'string' ? JSON.parse(comment.metadata) : comment.metadata;
+        resolvedMomentId = parsed.momentId;
+      } catch {}
+    }
+
+    let moment: Moment | null = null;
+    if (resolvedMomentId) {
+      moment = await Moment.findByPk(resolvedMomentId);
+      if (moment && moment.status === 'deleted') {
+        throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+      }
+    }
+
+    // Privacy / block check
+    const blockRecord = await UserBlock.findOne({
+      where: {
+        [Op.or]: [
+          { userId, blockedUserId: comment.senderId },
+          { userId: comment.senderId, blockedUserId: userId },
+          ...(moment
+            ? [
+                { userId, blockedUserId: moment.userId },
+                { userId: moment.userId, blockedUserId: userId },
+              ]
+            : []),
+        ],
+      },
+    });
+
+    if (blockRecord) {
+      throw new MomentServiceError('Cannot perform this action due to privacy restrictions', 403, 'PRIVACY_RESTRICTED');
+    }
+
+    const existingLike = await MomentCommentLike.findOne({
+      where: { commentId, userId },
+    });
+
+    const reaction = options?.reaction || 'like';
+    let action = options?.action || 'toggle';
+    if (action === 'toggle') {
+      action = existingLike ? 'unlike' : 'like';
+    }
+
+    let isLiked = false;
+    if (action === 'unlike') {
+      if (existingLike) {
+        await existingLike.destroy();
+      }
+      isLiked = false;
+    } else {
+      if (existingLike) {
+        if (existingLike.reaction !== reaction) {
+          existingLike.reaction = reaction;
+          await existingLike.save();
+        }
+      } else {
+        await MomentCommentLike.create({
+          commentId,
+          userId,
+          reaction,
+        });
+
+        // In-App Notification to comment author if not self
+        if (comment.senderId !== userId) {
+          try {
+            const sender = await User.findByPk(userId, { attributes: ['fullName', 'nickName', 'username'] });
+            const senderName = sender?.fullName || sender?.nickName || sender?.username || 'Someone';
+            const snippet = comment.content.length > 50 ? `${comment.content.slice(0, 47)}...` : comment.content;
+            await Notification.create({
+              recipientId: comment.senderId,
+              senderId: userId,
+              type: 'moment_comment_like',
+              title: 'New Comment Like ❤️',
+              body: `${senderName} liked your comment: "${snippet}"`,
+              entityId: comment.id,
+              data: {
+                commentId: comment.id,
+                momentId: resolvedMomentId || null,
+                senderId: userId,
+                senderName,
+              },
+              isRead: false,
+            });
+          } catch {}
+        }
+      }
+      isLiked = true;
+    }
+
+    const likesCount = await MomentCommentLike.count({ where: { commentId } });
+
+    return {
+      commentId,
+      momentId: resolvedMomentId || null,
+      isLiked,
+      likesCount,
+      action: isLiked ? 'like' : 'unlike',
+    };
+  }
+
+  /**
+   * Retrieves users who liked a Moment Comment
+   * GET /api/v1/moments/:momentId/comments/:commentId/likes
+   */
+  public async getMomentCommentLikes(
+    _viewerId: string,
+    commentId: string,
+    options?: { page?: number; limit?: number; momentId?: string }
+  ) {
+    const comment = await ChatMessage.findByPk(commentId);
+    if (!comment) {
+      throw new MomentServiceError('Comment not found or already deleted', 404, 'COMMENT_NOT_FOUND');
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.max(1, Math.min(100, options?.limit || 20));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await MomentCommentLike.findAndCountAll({
+      where: { commentId },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const users = rows.map((likeRecord: any) => ({
+      id: likeRecord.user?.id,
+      username: likeRecord.user?.username || null,
+      name: likeRecord.user?.fullName || likeRecord.user?.nickName || 'User',
+      profilePhoto: likeRecord.user?.profilePicture ? formatThumbnailUrl(likeRecord.user.profilePicture) : null,
+      avatar: likeRecord.user?.profilePicture ? formatThumbnailUrl(likeRecord.user.profilePicture) : null,
+      isVerified: !!likeRecord.user?.isFaceVerified,
+      isSubscribed: !!likeRecord.user?.isSubscribed,
+      city: likeRecord.user?.city || null,
+      reaction: likeRecord.reaction,
+      likedAt: likeRecord.createdAt,
+    }));
+
+    return {
+      commentId,
+      momentId: options?.momentId || null,
+      totalLikes: count,
+      page,
+      limit,
+      totalPages: Math.ceil(count / limit),
+      users,
+    };
+  }
+
+  /**
+   * Sends a reply to an existing comment on a Moment
+   * POST /api/v1/moments/:momentId/comments/:commentId/replies
+   */
+  /**
+   * Sends a reply or sub-reply to an existing comment on a Moment
+   * POST /api/v1/moments/:momentId/comments/:commentId/replies
+   */
+  public async replyToMomentComment(
+    senderId: string,
+    momentId: string,
+    commentId: string,
+    message: string,
+    options?: { parentReplyId?: string | null }
+  ) {
+    const trimmedMessage = message.trim();
+    if (!trimmedMessage) {
+      throw new MomentServiceError('Reply message cannot be empty', 400, 'EMPTY_MESSAGE');
+    }
+    if (trimmedMessage.length > 1000) {
+      throw new MomentServiceError('Reply message exceeds 1000 characters limit', 400, 'MESSAGE_TOO_LONG');
+    }
+
+    const uuidRegex =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    if (!commentId || !uuidRegex.test(commentId)) {
+      throw new MomentServiceError('Invalid parent comment ID format', 400, 'INVALID_COMMENT_ID');
+    }
+    if (options?.parentReplyId && !uuidRegex.test(options.parentReplyId)) {
+      throw new MomentServiceError('Invalid parent reply ID format', 400, 'INVALID_REPLY_ID');
+    }
+
+    // 1. Validate moment existence and active status
+    const moment = await Moment.findByPk(momentId, {
+      include: [{ model: MomentMedia, as: 'media' }],
+      order: [[{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC']],
+    });
+    if (!moment || moment.status !== 'active') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    // 2. Validate parent comment existence
+    const parentComment = await ChatMessage.findByPk(commentId, {
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'username', 'fullName', 'nickName'],
+        },
+      ],
+    });
+    if (!parentComment || parentComment.messageType !== 'moment_reply') {
+      throw new MomentServiceError('Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
+    }
+
+    // 3. Verify parent comment belongs to this moment
+    let commentMomentId: string | null = null;
+    let parentCommentMeta: any = null;
+    if (parentComment.metadata) {
+      try {
+        parentCommentMeta =
+          typeof parentComment.metadata === 'string'
+            ? JSON.parse(parentComment.metadata)
+            : parentComment.metadata;
+        commentMomentId = parentCommentMeta.momentId || null;
+      } catch {}
+    }
+    if (commentMomentId && commentMomentId !== momentId) {
+      throw new MomentServiceError(
+        'Comment does not belong to the specified moment',
+        404,
+        'COMMENT_MOMENT_MISMATCH'
+      );
+    }
+
+    // Resolve thread root comment & effective parent reply
+    let rootComment = parentComment;
+    let rootCommentId = commentId;
+    let effectiveParentReplyId = options?.parentReplyId || null;
+
+    const parentCommentMetaId =
+      parentCommentMeta?.parentCommentId ||
+      parentCommentMeta?.parent_comment_id ||
+      parentCommentMeta?.parentId ||
+      parentCommentMeta?.parent_id;
+
+    if (parentCommentMetaId) {
+      // parentComment passed in URL is itself a reply to a comment
+      let curr: any = parentComment;
+      const visited = new Set<string>();
+      while (curr && !visited.has(curr.id)) {
+        visited.add(curr.id);
+        let m: any = null;
+        if (curr.metadata) {
+          try {
+            m = typeof curr.metadata === 'string' ? JSON.parse(curr.metadata) : curr.metadata;
+          } catch {}
+        }
+        const mParentId =
+          m?.parentCommentId ||
+          m?.parent_comment_id ||
+          m?.parentId ||
+          m?.parent_id;
+        if (mParentId) {
+          rootCommentId = mParentId;
+          const ancestor = await ChatMessage.findByPk(rootCommentId, {
+            include: [{ model: User, as: 'sender', attributes: ['id', 'username', 'fullName', 'nickName'] }],
+          });
+          if (ancestor) {
+            rootComment = ancestor;
+            curr = ancestor;
+          } else {
+            break;
+          }
+        } else {
+          rootComment = curr;
+          rootCommentId = curr.id;
+          break;
+        }
+      }
+      if (!effectiveParentReplyId) {
+        effectiveParentReplyId = commentId;
+      }
+    }
+
+    // 4. Handle sub-reply validation if effectiveParentReplyId is set
+    let targetRecipientId = parentComment.senderId;
+    let targetRecipientUsername =
+      parentComment.sender?.username || parentComment.sender?.fullName || null;
+
+    if (effectiveParentReplyId) {
+      const parentReply = await ChatMessage.findByPk(effectiveParentReplyId, {
+        include: [
+          {
+            model: User,
+            as: 'sender',
+            attributes: ['id', 'username', 'fullName', 'nickName'],
+          },
+        ],
+      });
+      if (!parentReply || parentReply.messageType !== 'moment_reply') {
+        throw new MomentServiceError(
+          'Parent reply not found or unavailable',
+          404,
+          'PARENT_REPLY_NOT_FOUND'
+        );
+      }
+
+      let replyMomentId: string | null = null;
+      let replyParentCommentId: string | null = null;
+      if (parentReply.metadata) {
+        try {
+          const parsed =
+            typeof parentReply.metadata === 'string'
+              ? JSON.parse(parentReply.metadata)
+              : parentReply.metadata;
+          replyMomentId = parsed.momentId || null;
+          replyParentCommentId = parsed.parentCommentId || null;
+        } catch {}
+      }
+
+      if (replyMomentId && replyMomentId !== momentId) {
+        throw new MomentServiceError(
+          'Parent reply does not belong to the specified comment or moment',
+          404,
+          'PARENT_REPLY_MISMATCH'
+        );
+      }
+
+      // Check if parentReply belongs to rootCommentId thread
+      const prParentId =
+        replyParentCommentId ||
+        (() => {
+          if (!parentReply.metadata) return null;
+          try {
+            const parsed = typeof parentReply.metadata === 'string' ? JSON.parse(parentReply.metadata) : parentReply.metadata;
+            return parsed?.parent_comment_id || parsed?.parentId || parsed?.parent_id;
+          } catch { return null; }
+        })();
+
+      if (prParentId && prParentId !== rootCommentId && prParentId !== commentId) {
+        let traceCurr: any = parentReply;
+        let belongsToThread = false;
+        const prVisited = new Set<string>();
+        while (traceCurr && !prVisited.has(traceCurr.id)) {
+          prVisited.add(traceCurr.id);
+          let m: any = null;
+          if (traceCurr.metadata) {
+            try {
+              m = typeof traceCurr.metadata === 'string' ? JSON.parse(traceCurr.metadata) : traceCurr.metadata;
+            } catch {}
+          }
+          const mParent = m?.parentCommentId || m?.parent_comment_id || m?.parentId || m?.parent_id;
+          if (mParent === rootCommentId || mParent === commentId) {
+            belongsToThread = true;
+            break;
+          }
+          if (mParent) {
+            const nextPr = await ChatMessage.findByPk(mParent);
+            traceCurr = nextPr;
+          } else {
+            break;
+          }
+        }
+        if (!belongsToThread) {
+          throw new MomentServiceError(
+            'Parent reply does not belong to the specified comment or moment',
+            404,
+            'PARENT_REPLY_MISMATCH'
+          );
+        }
+      }
+
+      targetRecipientId = parentReply.senderId;
+      targetRecipientUsername =
+        parentReply.sender?.username || parentReply.sender?.fullName || null;
+    }
+
+    // 5. Privacy & Block checks: ensure sender is not blocked with moment creator, root comment author, or reply recipient
+    const blockedUserIdsToCheck = Array.from(
+      new Set([moment.userId, rootComment.senderId, targetRecipientId])
+    );
+    const blockRecord = await UserBlock.findOne({
+      where: {
+        [Op.or]: blockedUserIdsToCheck.flatMap((targetUid) => [
+          { userId: senderId, blockedUserId: targetUid },
+          { userId: targetUid, blockedUserId: senderId },
+        ]),
+      },
+    });
+
+    if (blockRecord) {
+      throw new MomentServiceError(
+        'Cannot reply due to privacy restrictions',
+        403,
+        'REPLY_FORBIDDEN'
+      );
+    }
+
+    // 6. Audience check
+    if (moment.audience === 'matches_only' && senderId !== moment.userId) {
+      const [u1, u2] = [senderId, moment.userId].sort();
+      const match = await Match.findOne({
+        where: { user1Id: u1, user2Id: u2, isActive: true },
+      });
+      if (!match) {
+        throw new MomentServiceError(
+          'This moment is only visible to matches',
+          403,
+          'AUDIENCE_RESTRICTED'
+        );
+      }
+    }
+
+    // 7. Atomic persistence using database transaction
+    const firstMedia = (moment.media || [])[0];
+    const metadata = JSON.stringify({
+      momentId: moment.id,
+      parentCommentId: rootCommentId,
+      parent_comment_id: rootCommentId,
+      parentId: rootCommentId,
+      parent_id: rootCommentId,
+      parentReplyId: effectiveParentReplyId,
+      parent_reply_id: effectiveParentReplyId,
+      replyToCommentId: effectiveParentReplyId || rootCommentId,
+      reply_to_comment_id: effectiveParentReplyId || rootCommentId,
+      replyToUserId: targetRecipientId,
+      replyToUsername: targetRecipientUsername,
+      mediaUrl: firstMedia ? firstMedia.mediaUrl : null,
+      caption: moment.caption || null,
+    });
+
+    const [u1, u2] = [senderId, targetRecipientId].sort();
+    const now = new Date();
+
+    const chatMessage = await sequelize.transaction(async (t) => {
+      const [conversation] = await Conversation.findOrCreate({
+        where: { user1Id: u1, user2Id: u2 },
+        defaults: {
+          user1Id: u1,
+          user2Id: u2,
+          lastMessage: trimmedMessage,
+          lastMessageAt: now,
+        },
+        transaction: t,
+      });
+
+      const msg = await ChatMessage.create(
+        {
+          conversationId: conversation.id,
+          senderId,
+          recipientId: targetRecipientId,
+          content: trimmedMessage,
+          messageType: 'moment_reply',
+          metadata,
+          isRead: senderId === targetRecipientId,
+        },
+        { transaction: t }
+      );
+
+      conversation.lastMessage = trimmedMessage;
+      conversation.lastMessageAt = now;
+      await conversation.save({ transaction: t });
+
+      return msg;
+    });
+
+    // 8. Fetch replier profile details
+    const replierUser = await User.findByPk(senderId, {
+      attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+    });
+
+    // 9. Dispatch in-app notification to the recipient if not replying to self
+    if (targetRecipientId !== senderId) {
+      try {
+        const senderDisplayName =
+          replierUser?.fullName ||
+          replierUser?.nickName ||
+          replierUser?.username ||
+          'Someone';
+        const snippet =
+          trimmedMessage.length > 50
+            ? `${trimmedMessage.slice(0, 47)}...`
+            : trimmedMessage;
+        await notificationService.sendCommentNotification(targetRecipientId, {
+          senderId,
+          senderName: senderDisplayName,
+          comment: trimmedMessage,
+          momentId: moment.id,
+          commentId: chatMessage.id,
+          isReply: true,
+        });
+      } catch {}
+    }
+
+    return {
+      id: chatMessage.id,
+      replyId: chatMessage.id,
+      commentId: rootCommentId,
+      reply: trimmedMessage,
+      text: trimmedMessage,
+      parentCommentId: rootCommentId,
+      parentReplyId: effectiveParentReplyId,
+      replyToCommentId: effectiveParentReplyId || rootCommentId,
+      replyTo: {
+        userId: targetRecipientId,
+        username: targetRecipientUsername,
+      },
+      replyToUserId: targetRecipientId,
+      replyToUsername: targetRecipientUsername,
+      momentId: moment.id,
+      createdAt: chatMessage.createdAt instanceof Date ? chatMessage.createdAt.toISOString() : chatMessage.createdAt,
+      timeAgo: formatTimeAgoShort(chatMessage.createdAt),
+      likesCount: 0,
+      isLiked: false,
+      isMyComment: true,
+      canDelete: true,
+      repliesCount: 0,
+      user: {
+        id: replierUser?.id,
+        username: replierUser?.username || null,
+        name: replierUser?.fullName || replierUser?.nickName || 'User',
+        profilePhoto: replierUser?.profilePicture
+          ? formatThumbnailUrl(replierUser.profilePicture)
+          : null,
+        isVerified: !!replierUser?.isFaceVerified,
+        isSubscribed: !!replierUser?.isSubscribed,
+        city: replierUser?.city || null,
+      },
+      replies: [],
+    };
+  }
+
+  /**
+   * Retrieves replies for a specific Comment
+   * GET /api/v1/moments/:momentId/comments/:commentId/replies
+   */
+  public async getMomentCommentReplies(
+    viewerId: string,
+    momentId: string,
+    commentId: string,
+    options?: { page?: number; limit?: number; format?: string; flat?: boolean }
+  ) {
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const parentComment = await ChatMessage.findByPk(commentId, {
+      include: [
+        {
+          model: User,
+          as: 'sender',
+          attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+        },
+      ],
+    });
+
+    if (!parentComment) {
+      throw new MomentServiceError('Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
+    }
+
+    let commentMomentId: string | null = null;
+    if (parentComment.metadata) {
+      try {
+        const parsed =
+          typeof parentComment.metadata === 'string'
+            ? JSON.parse(parentComment.metadata)
+            : parentComment.metadata;
+        commentMomentId = parsed.momentId || null;
+      } catch {}
+    }
+    if (commentMomentId && commentMomentId !== momentId) {
+      throw new MomentServiceError(
+        'Comment does not belong to the specified moment',
+        404,
+        'COMMENT_MOMENT_MISMATCH'
+      );
+    }
+
+    const page = Math.max(1, options?.page || 1);
+    const limit = Math.max(1, Math.min(100, options?.limit || 20));
+    const offset = (page - 1) * limit;
+
+    // Fetch all replies on this moment to accurately resolve full hierarchy / descendants
+    let allMomentReplies: any[] = [];
+    try {
+      allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: `%"momentId":"${momentId}"%` } },
+            { metadata: { [Op.like]: `%"momentId": "${momentId}"%` } },
+          ],
+          [Op.and]: [
+            {
+              [Op.or]: [
+                { metadata: { [Op.like]: '%"parentCommentId"%' } },
+                { metadata: { [Op.like]: '%"parentReplyId"%' } },
+              ],
+            },
+          ],
+        },
+        include: [
+          {
+            model: User,
+            as: 'sender',
+            attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          },
+        ],
+        order: [['createdAt', 'ASC']],
+      });
+    } catch {}
+
+    const replyMap = new Map<string, any>();
+    for (const r of allMomentReplies) {
+      replyMap.set(r.id, r);
+    }
+
+    // Find all descendants of commentId (direct replies, sub-replies, and replies to sub-replies)
+    const descendantIds = new Set<string>([commentId]);
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const r of allMomentReplies) {
+        if (!descendantIds.has(r.id)) {
+          let meta: any = null;
+          if (r.metadata) {
+            try {
+              meta = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+            } catch {}
+          }
+          if (
+            (meta?.parentCommentId && descendantIds.has(meta.parentCommentId)) ||
+            (meta?.parentReplyId && descendantIds.has(meta.parentReplyId))
+          ) {
+            descendantIds.add(r.id);
+            expanded = true;
+          }
+        }
+      }
+    }
+
+    // Filter matching replies (excluding the parent comment itself)
+    const matchingReplies = allMomentReplies.filter(
+      (r: any) => r.id !== commentId && descendantIds.has(r.id)
+    );
+
+    const replyIds = matchingReplies.map((r: any) => r.id);
+    const likesCountMap = new Map<string, number>();
+    const userLikedSet = new Set<string>();
+
+    if (replyIds.length > 0) {
+      try {
+        const replyLikes = await MomentCommentLike.findAll({
+          where: { commentId: { [Op.in]: replyIds } },
+          attributes: ['commentId', 'userId'],
+        });
+        for (const rl of replyLikes) {
+          likesCountMap.set(rl.commentId, (likesCountMap.get(rl.commentId) || 0) + 1);
+          if (rl.userId === viewerId) {
+            userLikedSet.add(rl.commentId);
+          }
+        }
+      } catch {}
+    }
+    const userMap = new Map<string, { id: string; username: string | null; name: string }>();
+    if (parentComment.sender) {
+      userMap.set(parentComment.sender.id, {
+        id: parentComment.sender.id,
+        username: parentComment.sender.username || null,
+        name: parentComment.sender.fullName || parentComment.sender.nickName || 'User',
+      });
+    }
+    for (const r of allMomentReplies) {
+      if (r.sender) {
+        userMap.set(r.sender.id, {
+          id: r.sender.id,
+          username: r.sender.username || null,
+          name: r.sender.fullName || r.sender.nickName || 'User',
+        });
+      }
+    }
+
+    const rawFormattedList: any[] = [];
+
+    for (const c of matchingReplies) {
+      let meta: any = {};
+      if (c.metadata) {
+        try {
+          meta = typeof c.metadata === 'string' ? JSON.parse(c.metadata) : c.metadata;
+        } catch {}
+      }
+
+      // Canonical parentReplyId:
+      // Direct reply to the comment: parentReplyId is null
+      // Reply to another reply: parentReplyId is the target reply's ID
+      let parentReplyId: string | null = null;
+      const explicitParentReply =
+        meta?.parentReplyId ||
+        meta?.parent_reply_id;
+
+      if (explicitParentReply && explicitParentReply !== commentId) {
+        parentReplyId = explicitParentReply;
+      } else {
+        const candidateId =
+          meta?.parentCommentId ||
+          meta?.parent_comment_id ||
+          meta?.parentId ||
+          meta?.parent_id ||
+          meta?.replyToCommentId ||
+          meta?.reply_to_comment_id;
+
+        if (candidateId && candidateId !== commentId && replyMap.has(candidateId)) {
+          parentReplyId = candidateId;
+        }
+      }
+
+      let targetUserId: string | null = meta?.replyToUserId || null;
+      let targetUsername: string | null = meta?.replyToUsername || null;
+
+      if (!targetUserId) {
+        if (parentReplyId && replyMap.has(parentReplyId)) {
+          const pr = replyMap.get(parentReplyId);
+          targetUserId = pr.senderId || null;
+          targetUsername = pr.sender?.username || pr.sender?.fullName || null;
+        } else {
+          targetUserId = parentComment.senderId || null;
+          targetUsername = parentComment.sender?.username || parentComment.sender?.fullName || null;
+        }
+      } else if (userMap.has(targetUserId)) {
+        const u = userMap.get(targetUserId);
+        targetUsername = u?.username || u?.name || targetUsername;
+      }
+
+      const formatted = {
+        id: c.id,
+        replyId: c.id,
+        text: c.content,
+        reply: c.content,
+        parentCommentId: commentId,
+        parentReplyId,
+        replyToCommentId: parentReplyId || commentId,
+        replyTo: {
+          userId: targetUserId || null,
+          username: targetUsername || null,
+        },
+        createdAt: c.createdAt instanceof Date ? c.createdAt.toISOString() : c.createdAt,
+        timeAgo: formatTimeAgoShort(c.createdAt),
+        likesCount: likesCountMap.get(c.id) || 0,
+        isLiked: userLikedSet.has(c.id),
+        isMyComment: c.senderId === viewerId,
+        canDelete:
+          c.senderId === viewerId ||
+          parentComment.senderId === viewerId ||
+          moment.userId === viewerId,
+        repliesCount: 0,
+        user: {
+          id: c.sender?.id,
+          username: c.sender?.username || null,
+          name: c.sender?.fullName || c.sender?.nickName || 'User',
+          avatar: c.sender?.profilePicture
+            ? formatThumbnailUrl(c.sender.profilePicture)
+            : null,
+          isVerified: !!c.sender?.isFaceVerified,
+        },
+        replies: [] as any[],
+      };
+      rawFormattedList.push(formatted);
+    }
+
+    // Nested hierarchical tree of replies (child replies placed recursively inside parent reply's replies array)
+    const treeItemMap = new Map<string, any>();
+    const treeList: any[] = [];
+    for (const item of rawFormattedList) {
+      const treeItem = {
+        ...item,
+        user: { ...item.user },
+        replyTo: { ...item.replyTo },
+        replies: [] as any[],
+      };
+      treeItemMap.set(treeItem.id, treeItem);
+      treeList.push(treeItem);
+    }
+
+    // Link nested sub-replies into parent reply's replies array
+    const directReplies: any[] = [];
+    for (const item of treeList) {
+      if (item.parentReplyId && treeItemMap.has(item.parentReplyId)) {
+        treeItemMap.get(item.parentReplyId).replies.push(item);
+      } else {
+        item.parentReplyId = null;
+        directReplies.push(item);
+      }
+    }
+
+    // Update repliesCount on each tree item
+    for (const item of treeList) {
+      item.repliesCount = item.replies.length;
+    }
+
+    const isFlat = options?.format === 'flat' || options?.flat === true;
+    const targetList = isFlat
+      ? rawFormattedList.map((item) => ({ ...item, replies: [] }))
+      : directReplies;
+
+    const totalReplies = matchingReplies.length;
+    const paginatedReplies = targetList.slice(offset, offset + limit);
+    const totalPages = Math.ceil(targetList.length / limit) || 1;
+
+    return {
+      momentId,
+      parentComment: {
+        id: parentComment.id,
+        text: parentComment.content,
+        createdAt:
+          parentComment.createdAt instanceof Date
+            ? parentComment.createdAt.toISOString()
+            : parentComment.createdAt,
+        user: {
+          id: parentComment.sender?.id,
+          username: parentComment.sender?.username || null,
+          name: parentComment.sender?.fullName || parentComment.sender?.nickName || 'User',
+          avatar: parentComment.sender?.profilePicture
+            ? formatThumbnailUrl(parentComment.sender.profilePicture)
+            : null,
+          isVerified: !!parentComment.sender?.isFaceVerified,
+        },
+      },
+      replies: paginatedReplies,
+      pagination: {
+        page,
+        limit,
+        totalReplies,
+        totalPages,
+      },
+    };
+  }
+
+  /**
+   * Deletes a specific reply from a comment.
+   * Authorized for reply author, parent comment author, or moment creator.
+   * DELETE /api/v1/moments/:momentId/comments/:commentId/replies/:replyId
+   */
+  public async deleteMomentCommentReply(
+    userId: string,
+    momentId: string,
+    commentId: string,
+    replyId: string
+  ) {
+    // 1. Verify moment
+    const moment = await Moment.findByPk(momentId);
+    if (!moment || moment.status === 'deleted') {
+      throw new MomentServiceError('Moment not found or unavailable', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    // 2. Verify parent comment
+    const parentComment = await ChatMessage.findByPk(commentId);
+    if (!parentComment) {
+      throw new MomentServiceError('Comment not found or unavailable', 404, 'COMMENT_NOT_FOUND');
+    }
+
+    let commentMomentId: string | null = null;
+    if (parentComment.metadata) {
+      try {
+        const parsed =
+          typeof parentComment.metadata === 'string'
+            ? JSON.parse(parentComment.metadata)
+            : parentComment.metadata;
+        commentMomentId = parsed.momentId || null;
+      } catch {}
+    }
+    if (commentMomentId && commentMomentId !== momentId) {
+      throw new MomentServiceError(
+        'Comment does not belong to the specified moment',
+        404,
+        'COMMENT_MOMENT_MISMATCH'
+      );
+    }
+
+    // 3. Verify reply
+    const reply = await ChatMessage.findByPk(replyId);
+    if (!reply) {
+      throw new MomentServiceError('Reply not found or already deleted', 404, 'REPLY_NOT_FOUND');
+    }
+
+    let replyMomentId: string | null = null;
+    let replyParentCommentId: string | null = null;
+    let replyParentReplyId: string | null = null;
+    if (reply.metadata) {
+      try {
+        const parsed =
+          typeof reply.metadata === 'string'
+            ? JSON.parse(reply.metadata)
+            : reply.metadata;
+        replyMomentId = parsed.momentId || null;
+        replyParentCommentId = parsed.parentCommentId || null;
+        replyParentReplyId = parsed.parentReplyId || null;
+      } catch {}
+    }
+
+    if (
+      (replyMomentId && replyMomentId !== momentId) ||
+      (replyParentCommentId &&
+        replyParentCommentId !== commentId &&
+        replyParentReplyId !== commentId)
+    ) {
+      throw new MomentServiceError(
+        'Reply does not belong to the specified comment or moment',
+        404,
+        'REPLY_MISMATCH'
+      );
+    }
+
+    // 4. Authorization check: reply author, parent comment author, or moment creator
+    const isReplyAuthor = reply.senderId === userId;
+    const isCommentAuthor = parentComment.senderId === userId;
+    const isMomentCreator = moment.userId === userId;
+
+    if (!isReplyAuthor && !isCommentAuthor && !isMomentCreator) {
+      throw new MomentServiceError(
+        'You are not authorized to delete this reply',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    const conversationId = reply.conversationId;
+
+    // 5. Database transaction for clean cascade deletion
+    await sequelize.transaction(async (t) => {
+      // Delete any likes on this reply
+      await MomentCommentLike.destroy({ where: { commentId: replyId }, transaction: t });
+
+      // Find all descendant sub-replies pointing to this reply
+      const allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: '%"parentCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentReplyId"%' } },
+            { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentId"%' } },
+          ],
+        },
+        transaction: t,
+      });
+
+      const toDelete = new Set<string>([replyId]);
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const r of allMomentReplies) {
+          if (!toDelete.has(r.id)) {
+            let m: any = null;
+            if (r.metadata) {
+              try {
+                m = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+              } catch {}
+            }
+            if (
+              (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
+              (m?.parentReplyId && toDelete.has(m.parentReplyId)) ||
+              (m?.replyToCommentId && toDelete.has(m.replyToCommentId)) ||
+              (m?.parentId && toDelete.has(m.parentId))
+            ) {
+              toDelete.add(r.id);
+              expanded = true;
+            }
+          }
+        }
+      }
+      toDelete.delete(replyId);
+
+      for (const childId of toDelete) {
+        await MomentCommentLike.destroy({ where: { commentId: childId }, transaction: t });
+        await ChatMessage.destroy({ where: { id: childId }, transaction: t });
+      }
+
+      await reply.destroy({ transaction: t });
+    });
+
+    // If conversation lastMessage was this deleted reply, update conversation
+    try {
+      const remainingLatestMessage = await ChatMessage.findOne({
+        where: { conversationId },
+        order: [['createdAt', 'DESC']],
+      });
+
+      const conversation = await Conversation.findByPk(conversationId);
+      if (conversation) {
+        if (remainingLatestMessage) {
+          conversation.lastMessage = remainingLatestMessage.content;
+          conversation.lastMessageAt = remainingLatestMessage.createdAt;
+        } else {
+          conversation.lastMessage = '';
+        }
+        await conversation.save();
+      }
+    } catch {}
+
+    return {
+      replyId,
+      commentId,
+      momentId,
     };
   }
 
   /**
    * Deletes a comment/reply from a Moment.
-   * Authorized for either the comment author OR the moment creator.
+   * Authorized for comment author, parent comment author, OR moment creator.
    * DELETE /api/v1/moments/:momentId/comments/:commentId
    */
   public async deleteMomentComment(
@@ -1861,6 +3185,7 @@ export class MomentService {
     }
 
     let parsedMomentId: string | null = null;
+    let parentCommentId: string | null = null;
     if (comment.metadata) {
       try {
         const parsed =
@@ -1868,6 +3193,7 @@ export class MomentService {
             ? JSON.parse(comment.metadata)
             : comment.metadata;
         parsedMomentId = parsed.momentId || null;
+        parentCommentId = parsed.parentCommentId || null;
       } catch {}
     }
 
@@ -1877,17 +3203,74 @@ export class MomentService {
       moment = await Moment.findByPk(resolvedMomentId);
     }
 
-    // Authorization: User must be comment author OR moment creator
+    // Check if user is parent comment author (if this was a reply)
+    let isParentCommentAuthor = false;
+    if (parentCommentId) {
+      const parentComment = await ChatMessage.findByPk(parentCommentId);
+      if (parentComment && parentComment.senderId === userId) {
+        isParentCommentAuthor = true;
+      }
+    }
+
+    // Authorization: User must be comment author OR moment creator OR parent comment author
     const isCommentAuthor = comment.senderId === userId;
     const isMomentCreator = moment ? moment.userId === userId : false;
 
-    if (!isCommentAuthor && !isMomentCreator) {
+    if (!isCommentAuthor && !isMomentCreator && !isParentCommentAuthor) {
       throw new MomentServiceError(
         'You are not authorized to delete this comment',
         403,
         'FORBIDDEN'
       );
     }
+
+    // Cascade delete any child replies and comment likes
+    try {
+      await MomentCommentLike.destroy({ where: { commentId } });
+
+      const allMomentReplies = await ChatMessage.findAll({
+        where: {
+          messageType: 'moment_reply',
+          [Op.or]: [
+            { metadata: { [Op.like]: '%"parentCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentReplyId"%' } },
+            { metadata: { [Op.like]: '%"replyToCommentId"%' } },
+            { metadata: { [Op.like]: '%"parentId"%' } },
+          ],
+        },
+      });
+
+      const toDelete = new Set<string>([commentId]);
+      let expanded = true;
+      while (expanded) {
+        expanded = false;
+        for (const r of allMomentReplies) {
+          if (!toDelete.has(r.id)) {
+            let m: any = null;
+            if (r.metadata) {
+              try {
+                m = typeof r.metadata === 'string' ? JSON.parse(r.metadata) : r.metadata;
+              } catch {}
+            }
+            if (
+              (m?.parentCommentId && toDelete.has(m.parentCommentId)) ||
+              (m?.parentReplyId && toDelete.has(m.parentReplyId)) ||
+              (m?.replyToCommentId && toDelete.has(m.replyToCommentId)) ||
+              (m?.parentId && toDelete.has(m.parentId))
+            ) {
+              toDelete.add(r.id);
+              expanded = true;
+            }
+          }
+        }
+      }
+      toDelete.delete(commentId);
+
+      for (const childId of toDelete) {
+        await MomentCommentLike.destroy({ where: { commentId: childId } });
+        await ChatMessage.destroy({ where: { id: childId } });
+      }
+    } catch {}
 
     const conversationId = comment.conversationId;
     await comment.destroy();
@@ -1997,6 +3380,7 @@ export class MomentService {
         profilePhoto: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
         avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture) : null,
         isVerified: !!r.user?.isFaceVerified,
+        isSubscribed: !!r.user?.isSubscribed,
         city: r.user?.city || null,
       },
     }));
@@ -2115,7 +3499,7 @@ export class MomentService {
       attributes: ['id', 'fullName', 'nickName', 'coins', 'profilePicture'],
     });
 
-    const userBalance = typeof viewer?.coins === 'number' ? viewer.coins : 500;
+    const userBalance = typeof viewer?.coins === 'number' ? viewer.coins : 0;
 
     let momentInfo: any = null;
     let totalGiftsReceived = 0;
@@ -2147,6 +3531,7 @@ export class MomentService {
             profilePhoto: moment.user?.profilePicture ? formatThumbnailUrl(moment.user.profilePicture) : null,
             city: moment.user?.city || null,
             isVerified: !!moment.user?.isFaceVerified,
+            isSubscribed: !!moment.user?.isSubscribed,
           },
           totalGiftsReceived,
         };
@@ -2279,7 +3664,7 @@ export class MomentService {
       throw new MomentServiceError('Your account is inactive or not found', 401, 'UNAUTHORIZED');
     }
 
-    const senderCurrentCoins = typeof sender.coins === 'number' ? sender.coins : 500;
+    const senderCurrentCoins = typeof sender.coins === 'number' ? sender.coins : 0;
     if (senderCurrentCoins < totalCost) {
       throw new MomentServiceError(
         `Insufficient coin balance. You need ${totalCost} coins to send ${qty > 1 ? qty + 'x ' : ''}${gift.name}, but your balance is ${senderCurrentCoins} coins.`,
@@ -2307,7 +3692,7 @@ export class MomentService {
       // Credit coins to recipient creator
       const recipientUser = await User.findByPk(moment.userId, { transaction });
       if (recipientUser) {
-        recipientUser.coins = (typeof recipientUser.coins === 'number' ? recipientUser.coins : 500) + totalCost;
+        recipientUser.coins = (typeof recipientUser.coins === 'number' ? recipientUser.coins : 0) + totalCost;
         await recipientUser.save({ transaction });
       }
 
@@ -2402,6 +3787,33 @@ export class MomentService {
       conversation.lastMessage = giftMsgContent;
       conversation.lastMessageAt = new Date();
       await conversation.save();
+
+      if (moment.userId !== senderId) {
+        (async () => {
+          try {
+            const senderUser = await User.findByPk(senderId, {
+              attributes: ['id', 'username', 'fullName', 'nickName'],
+            });
+            const senderDisplayName =
+              senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
+            await notificationService.dispatchNotification(moment.userId, {
+              type: 'moment_gift',
+              title: 'Gift Received! 🎁',
+              body: `${senderDisplayName} sent you a gift (${gift.name} ${gift.icon}) on your Moment!`,
+              senderId,
+              entityId: moment.id,
+              navigation: { type: 'moment', targetId: moment.id },
+              data: {
+                type: 'gift',
+                momentId: moment.id,
+                giftCode: gift.code,
+                giftName: gift.name,
+                senderName: senderDisplayName,
+              },
+            });
+          } catch {}
+        })();
+      }
     } catch (_chatErr) {
       // Safe to ignore chat record failure
     }
@@ -2497,6 +3909,7 @@ export class MomentService {
         profilePhoto: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
         avatar: g.sender?.profilePicture ? formatThumbnailUrl(g.sender.profilePicture) : null,
         isVerified: !!g.sender?.isFaceVerified,
+        isSubscribed: !!g.sender?.isSubscribed,
         city: g.sender?.city || null,
       },
     }));

@@ -5,6 +5,10 @@ import {
   interactionService,
   InteractionServiceError,
 } from '../services/interaction.service';
+import {
+  complimentService,
+  ComplimentServiceError,
+} from '../services/compliment.service';
 import { InteractionType } from '../schemas/interaction.schema';
 
 /**
@@ -109,3 +113,57 @@ export const markInteractionReadHandler = async (
     );
   }
 };
+
+/**
+ * Send Compliment to a User's Profile
+ * POST /api/v1/users/:userId/compliment
+ * POST /api/v1/interactions/compliments
+ */
+export const sendComplimentHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const targetUserId =
+      req.params.userId || req.body.targetUserId || req.body.userId;
+    const { message, reason, momentId } = req.body;
+
+    if (!targetUserId) {
+      return sendError(
+        res,
+        'Target user ID must be provided in URL parameter (:userId) or request body (targetUserId)',
+        400,
+        'TARGET_USER_REQUIRED'
+      );
+    }
+
+    const result = await complimentService.sendCompliment(currentUserId, targetUserId, {
+      message,
+      reason,
+      momentId,
+    });
+
+    const successMessage = result.isNewMatch
+      ? 'Compliment accepted! You have a new match'
+      : 'Compliment sent successfully';
+
+    return sendSuccess(res, successMessage, result, 201);
+  } catch (error: any) {
+    if (error instanceof ComplimentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    console.error('[Compliment Controller Error]:', error);
+    return sendError(
+      res,
+      error.message || 'Error sending compliment',
+      error.statusCode || 500,
+      error.errorCode || 'INTERNAL_SERVER_ERROR'
+    );
+  }
+};
+

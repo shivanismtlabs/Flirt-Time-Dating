@@ -19,6 +19,7 @@ export interface InteractionUserCard {
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   distanceKm: number | null;
   locationLabel: string;
   isBlurred?: boolean;
@@ -174,6 +175,7 @@ export class InteractionService {
       age: calculateAge(targetUser.dateOfBirth),
       profilePhotoUrl: this.resolvePrimaryPhoto(targetUser.profilePicture, targetUser.photos),
       isVerified: Boolean(targetUser.isFaceVerified),
+      isSubscribed: Boolean(targetUser.isSubscribed),
       distanceKm,
       locationLabel: targetUser.city || 'Mumbai',
     };

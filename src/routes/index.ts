@@ -18,17 +18,21 @@ import subscriptionRoutes from './subscription.routes';
 import coinRoutes from './coin.routes';
 import walletRoutes from './wallet.routes';
 import chatRoutes from './chat.routes';
+import videoCallRoutes from './videoCall.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
   uploadFaceVerification,
   getGestureVerificationInfo,
 } from '../controllers/faceVerification.controller';
-
 import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
 import { getProfile, updateProfile } from '../controllers/user.controller';
 import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
 
 const router = Router();
 
@@ -51,6 +55,8 @@ router.use('/subscriptions', subscriptionRoutes);
 router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/chat', chatRoutes);
+router.use('/chats', chatRoutes);
+router.use('/calls/video', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);
@@ -63,7 +69,16 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 
 // Direct Profile aliases: /api/v1/profile, /api/profile
 router.get('/profile', authenticate, getProfile);
+router.post('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
+
+// Direct Compliments aliases: /api/v1/compliments, /api/v1/compliment
+router.post('/compliments', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+
+// Direct Search aliases: /api/v1/search, /api/search
+router.get('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
+router.post('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
 
 export default router;

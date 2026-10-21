@@ -1,13 +1,13 @@
 import { Op, WhereOptions } from 'sequelize';
 import { getFirebaseMessaging } from '../config/firebase';
-import { Notification, UserDevice, User, UserPhoto } from '../models';
+import { Notification, UserDevice, User, UserPhoto, NotificationSetting } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { resolveDisplayName } from './discovery.service';
 import type { MulticastMessage, BatchResponse } from 'firebase-admin/messaging';
 
 export interface PushNotificationResult {
   inAppCreated: boolean;
-  pushStatus: 'sent_to_fcm' | 'no_device_tokens' | 'failed';
+  pushStatus: 'sent_to_fcm' | 'no_device_tokens' | 'failed' | 'suppressed_by_settings';
   inAppNotificationId?: string;
   successCount?: number;
   failureCount?: number;
@@ -128,6 +128,118 @@ export class NotificationService {
   }
 
   /**
+   * Checks whether push notifications are enabled for the recipient and this event type.
+   * Rules:
+   * 1. Global master pushNotifications switch: When false, NOT a single notification is triggered.
+   * 2. Calls are explicitly blocked from push.
+   * 3. Category checks:
+   *    - New messages (newMessages)
+   *    - New matches (newMatches)
+   *    - Like & comments (likeComments)
+   *    - Profile visits (profileVisits)
+   */
+  public shouldSendPush(settings: any, type: string): boolean {
+    if (!settings) {
+      return true; // default all enabled
+    }
+
+    // 1. Master push switch: when OFF, not a single notification triggers!
+    const isMasterPushOn =
+      settings.pushNotifications !== undefined
+        ? settings.pushNotifications
+        : settings.push_notifications !== undefined
+        ? settings.push_notifications
+        : settings.push !== undefined
+        ? settings.push
+        : true;
+
+    if (!isMasterPushOn) {
+      return false;
+    }
+
+    const normalizedType = (type || '').toLowerCase();
+
+    // Calls are explicitly excluded
+    if (normalizedType.includes('call')) {
+      return false;
+    }
+
+    // New messages
+    if (normalizedType.includes('message') || normalizedType.includes('chat')) {
+      const allowed =
+        settings.newMessages !== undefined
+          ? settings.newMessages
+          : settings.new_messages !== undefined
+          ? settings.new_messages
+          : settings.new_message !== undefined
+          ? settings.new_message
+          : true;
+      return Boolean(allowed);
+    }
+
+    // New matches
+    if (normalizedType.includes('match') || normalizedType.includes('connection')) {
+      const allowed =
+        settings.newMatches !== undefined
+          ? settings.newMatches
+          : settings.new_matches !== undefined
+          ? settings.new_matches
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Like & comments (reactions, likes, moment comments) - NOT calls
+    if (
+      normalizedType.includes('like') ||
+      normalizedType.includes('comment') ||
+      normalizedType.includes('reaction') ||
+      normalizedType.includes('compliment')
+    ) {
+      const allowed =
+        settings.likeComments !== undefined
+          ? settings.likeComments
+          : settings.like_comments !== undefined
+          ? settings.like_comments
+          : settings.likes_comments_calls !== undefined
+          ? settings.likes_comments_calls
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Profile visits
+    if (
+      normalizedType.includes('visit') ||
+      normalizedType.includes('view') ||
+      normalizedType.includes('profile')
+    ) {
+      const allowed =
+        settings.profileVisits !== undefined
+          ? settings.profileVisits
+          : settings.profile_visits !== undefined
+          ? settings.profile_visits
+          : settings.profile_visit !== undefined
+          ? settings.profile_visit
+          : true;
+      return Boolean(allowed);
+    }
+
+    // Dating tips
+    if (normalizedType.includes('tip')) {
+      const allowed =
+        settings.datingTips !== undefined
+          ? settings.datingTips
+          : settings.dating_tips !== undefined
+          ? settings.dating_tips
+          : settings.new_tips_available !== undefined
+          ? settings.new_tips_available
+          : false;
+      return Boolean(allowed);
+    }
+
+    return true;
+  }
+
+  /**
    * Registers or updates a device token.
    * If the token was previously registered to another user, safely reassigns ownership.
    */
@@ -200,9 +312,10 @@ export class NotificationService {
       data?: Record<string, any> | null;
       navigation?: NotificationNavigationDTO;
       idempotencyKey?: string;
+      isForeground?: boolean;
     }
   ): Promise<PushNotificationResult> {
-    const { type, title, body, senderId, entityId, navigation, idempotencyKey } = input;
+    const { type, title, body, senderId, entityId, navigation, idempotencyKey, isForeground } = input;
 
     // 1. Idempotency / deduplication check
     if (idempotencyKey || entityId) {
@@ -250,7 +363,39 @@ export class NotificationService {
       throw dbErr;
     }
 
-    // 3. Query active device tokens for the recipient
+    // 3. Check user notification settings from notification_settings table before sending push
+    try {
+      const settingRecord = await NotificationSetting.findOne({
+        where: { userId: recipientId },
+      });
+
+      let settings: any = settingRecord;
+      if (!settings) {
+        const recipientUser = await User.findByPk(recipientId, {
+          attributes: ['id', 'notificationSettings'],
+        });
+        settings = recipientUser?.notificationSettings;
+      }
+
+      const isPushAllowed = this.shouldSendPush(settings, type);
+
+      if (!isPushAllowed) {
+        return {
+          inAppCreated: true,
+          pushStatus: 'suppressed_by_settings',
+          inAppNotificationId: createdRecord.id,
+          successCount: 0,
+          failureCount: 0,
+          message:
+            'Notification saved in DB, but push was suppressed by user notification settings',
+        };
+      }
+    } catch (checkErr: any) {
+      console.warn('[Notification Settings Check Warn]:', checkErr.message);
+      // Fallback: proceed with push if check encounters error
+    }
+
+    // 4. Query active device tokens for the recipient
     const devices = await UserDevice.findAll({
       where: { userId: recipientId, isActive: true },
       attributes: ['deviceToken', 'platform'],
@@ -274,12 +419,17 @@ export class NotificationService {
     // 4. Dispatch Multicast Message via Firebase Admin
     try {
       const messaging = getFirebaseMessaging();
+      const isAppForeground = Boolean(isForeground);
       const message: MulticastMessage = {
         tokens,
-        notification: {
-          title,
-          body,
-        },
+        ...(isAppForeground
+          ? {} // When foregrounded: data-only FCM to prevent duplicate system tray popup
+          : {
+              notification: {
+                title,
+                body,
+              },
+            }),
         data: {
           id: String(createdRecord.id),
           type,
@@ -288,37 +438,54 @@ export class NotificationService {
           navType: String(navigation?.type || type),
           navTargetId: String(navigation?.targetId || entityId || ''),
           click_action: 'FLUTTER_NOTIFICATION_CLICK',
+          isForeground: isAppForeground ? 'true' : 'false',
+          title,
+          body,
           ...(input.data
             ? Object.fromEntries(
                 Object.entries(input.data).map(([k, v]) => [k, String(v ?? '')])
               )
             : {}),
         },
-        android: {
-          priority: 'high',
-          notification: {
-            title,
-            body,
-            sound: 'default',
-            priority: 'high',
-            defaultSound: true,
-            defaultVibrateTimings: true,
-          },
-        },
-        apns: {
-          headers: {
-            'apns-priority': '10',
-            'apns-push-type': 'alert',
-          },
-          payload: {
-            aps: {
-              alert: { title, body },
-              sound: 'default',
-              badge: 1,
-              contentAvailable: true,
+        android: isAppForeground
+          ? { priority: 'high' }
+          : {
+              priority: 'high',
+              notification: {
+                title,
+                body,
+                sound: 'default',
+                priority: 'high',
+                defaultSound: true,
+                defaultVibrateTimings: true,
+              },
             },
-          },
-        },
+        apns: isAppForeground
+          ? {
+              headers: {
+                'apns-priority': '5',
+                'apns-push-type': 'background',
+              },
+              payload: {
+                aps: {
+                  contentAvailable: true,
+                },
+              },
+            }
+          : {
+              headers: {
+                'apns-priority': '10',
+                'apns-push-type': 'alert',
+              },
+              payload: {
+                aps: {
+                  alert: { title, body },
+                  sound: 'default',
+                  badge: 1,
+                  contentAvailable: true,
+                },
+              },
+            },
       };
 
       const response: BatchResponse = await messaging.sendEachForMulticast(message);
@@ -393,6 +560,255 @@ export class NotificationService {
       data: {
         reason: input.reason || '',
         senderName: input.requesterName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches In-App and Push Notification for a profile compliment
+   */
+  public async sendComplimentNotification(
+    targetUserId: string,
+    input: {
+      requesterId: string;
+      requesterName: string;
+      complimentId: string;
+      message: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const title = 'New Compliment!';
+    const preview =
+      input.message.length > 80
+        ? `${input.message.substring(0, 77)}...`
+        : input.message;
+    const body = `${input.requesterName} sent you a compliment: "${preview}"`;
+
+    return this.dispatchNotification(targetUserId, {
+      type: 'compliment',
+      title,
+      body,
+      senderId: input.requesterId,
+      entityId: input.complimentId,
+      navigation: {
+        type: 'compliments',
+        targetId: input.complimentId,
+      },
+      data: {
+        type: 'compliment',
+        interactionType: 'compliments',
+        complimentId: input.complimentId,
+        requestId: input.complimentId,
+        senderId: input.requesterId,
+        senderName: input.requesterName,
+        message: input.message,
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification for a new message
+   */
+  public async sendMessageNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      message: string;
+      conversationId?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const preview =
+      input.message.length > 70 ? `${input.message.slice(0, 67)}...` : input.message;
+    return this.dispatchNotification(recipientId, {
+      type: 'new_message',
+      title: input.senderName,
+      body: preview,
+      senderId: input.senderId,
+      entityId: input.conversationId || input.senderId,
+      navigation: {
+        type: 'chat',
+        targetId: input.conversationId || input.senderId,
+      },
+      data: {
+        type: 'chat',
+        conversationId: input.conversationId || '',
+        senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches mutual match notifications to both matched users
+   */
+  public async sendMatchNotification(
+    user1Id: string,
+    user2Id: string,
+    input: {
+      user1Name: string;
+      user2Name: string;
+      matchId: string;
+    }
+  ): Promise<void> {
+    try {
+      await Promise.allSettled([
+        this.dispatchNotification(user1Id, {
+          type: 'match',
+          title: "It's a Match! 🎉",
+          body: `You and ${input.user2Name} liked each other! Start chatting now.`,
+          senderId: user2Id,
+          entityId: input.matchId,
+          navigation: { type: 'match', targetId: input.matchId },
+          data: { matchId: input.matchId, partnerName: input.user2Name },
+        }),
+        this.dispatchNotification(user2Id, {
+          type: 'match',
+          title: "It's a Match! 🎉",
+          body: `You and ${input.user1Name} liked each other! Start chatting now.`,
+          senderId: user1Id,
+          entityId: input.matchId,
+          navigation: { type: 'match', targetId: input.matchId },
+          data: { matchId: input.matchId, partnerName: input.user1Name },
+        }),
+      ]);
+    } catch {}
+  }
+
+  /**
+   * Dispatches notification for a like or reaction on a profile or moment
+   */
+  public async sendLikeNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      isSuper?: boolean;
+      momentId?: string;
+      reaction?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    const isSuper = !!input.isSuper;
+    const isMoment = !!input.momentId;
+    const title = isSuper
+      ? 'New Super Like! ⭐'
+      : isMoment
+      ? 'Moment Liked ❤️'
+      : 'New Like ❤️';
+    const body = isMoment
+      ? `${input.senderName} liked your moment!`
+      : isSuper
+      ? `${input.senderName} super liked your profile!`
+      : `${input.senderName} liked your profile!`;
+
+    return this.dispatchNotification(recipientId, {
+      type: isMoment ? 'moment_like' : isSuper ? 'super_like' : 'like',
+      title,
+      body,
+      senderId: input.senderId,
+      entityId: input.momentId || input.senderId,
+      navigation: {
+        type: isMoment ? 'moment' : 'profile',
+        targetId: input.momentId || input.senderId,
+      },
+      data: {
+        senderId: input.senderId,
+        senderName: input.senderName,
+        momentId: input.momentId || '',
+        reaction: input.reaction || 'like',
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification for a comment or reply on a moment
+   */
+  public async sendCommentNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      comment: string;
+      momentId: string;
+      commentId?: string;
+      isReply?: boolean;
+    }
+  ): Promise<PushNotificationResult> {
+    const snippet =
+      input.comment.length > 60 ? `${input.comment.slice(0, 57)}...` : input.comment;
+    const title = input.isReply
+      ? 'New Reply to Your Comment 💬'
+      : 'New Comment on Your Moment 💬';
+    const body = `${input.senderName}: "${snippet}"`;
+
+    return this.dispatchNotification(recipientId, {
+      type: input.isReply ? 'moment_comment_reply' : 'moment_comment',
+      title,
+      body,
+      senderId: input.senderId,
+      entityId: input.momentId,
+      navigation: {
+        type: 'moment',
+        targetId: input.momentId,
+      },
+      data: {
+        momentId: input.momentId,
+        commentId: input.commentId || '',
+        senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification for a profile visit
+   */
+  public async sendProfileVisitNotification(
+    recipientId: string,
+    input: {
+      visitorId: string;
+      visitorName: string;
+    }
+  ): Promise<PushNotificationResult> {
+    return this.dispatchNotification(recipientId, {
+      type: 'profile_visit',
+      title: 'Profile Visit 👀',
+      body: `${input.visitorName} viewed your profile!`,
+      senderId: input.visitorId,
+      entityId: input.visitorId,
+      navigation: {
+        type: 'profile',
+        targetId: input.visitorId,
+      },
+      data: {
+        visitorId: input.visitorId,
+        visitorName: input.visitorName,
+      },
+      idempotencyKey: `profile_visit_${input.visitorId}_${recipientId}_${new Date().toISOString().slice(0, 13)}`,
+    });
+  }
+
+  /**
+   * Dispatches a Dating Tip alert to a user
+   */
+  public async sendDatingTipNotification(
+    recipientId: string,
+    input: {
+      title?: string;
+      body: string;
+      tipId?: string;
+    }
+  ): Promise<PushNotificationResult> {
+    return this.dispatchNotification(recipientId, {
+      type: 'dating_tip',
+      title: input.title || 'Dating Tip 💡',
+      body: input.body,
+      entityId: input.tipId || '',
+      navigation: {
+        type: 'dating_tips',
+        targetId: input.tipId || '',
+      },
+      data: {
+        tipId: input.tipId || '',
       },
     });
   }
@@ -710,6 +1126,45 @@ export class NotificationService {
       successCount: response.successCount,
       failureCount: response.failureCount,
     };
+  }
+
+  /**
+   * Dispatches In-App and Push Notification for a verified coin purchase
+   */
+  public async sendCoinPurchaseNotification(
+    recipientId: string,
+    input: {
+      purchaseId: string;
+      packageName: string;
+      coinsCredited: number;
+      currentBalance: number;
+      idempotencyKey?: string;
+      isForeground?: boolean;
+    }
+  ): Promise<PushNotificationResult> {
+    const title = 'Coins Added! 🪙';
+    const body = `Your purchase of ${input.packageName} was successful. ${input.coinsCredited} coins have been added to your wallet.`;
+
+    return this.dispatchNotification(recipientId, {
+      type: 'coin_purchase',
+      title,
+      body,
+      entityId: input.purchaseId,
+      idempotencyKey: input.idempotencyKey || `coin_purchase_${input.purchaseId}`,
+      isForeground: input.isForeground,
+      navigation: {
+        type: 'wallet',
+        targetId: input.purchaseId,
+      },
+      data: {
+        purchaseId: input.purchaseId,
+        packageName: input.packageName,
+        coinsCredited: String(input.coinsCredited),
+        currentBalance: String(input.currentBalance),
+        type: 'coin_purchase',
+        navType: 'wallet',
+      },
+    });
   }
 }
 

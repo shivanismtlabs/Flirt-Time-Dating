@@ -12,7 +12,10 @@ import {
   UserPhoto,
 } from '../models';
 import { formatThumbnailUrl } from './s3.service';
-import { calculateAge, calculateDistanceKm, calculateVibeScore, resolveDisplayName } from './discovery.service';
+import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
+import { momentService } from './moment.service';
+import { parseLocation } from './user.service';
+import { calculateProfileMatchPercentage } from '../utils/compatibility';
 
 export const SUPPORTED_GENDERS = [
   { id: 'women', label: 'Women' },
@@ -125,21 +128,21 @@ export interface PublicProfileCardDTO {
   name: string;
   username: string;
   age: number | null;
-  gender: string | null;
-  city: string;
+  about: string | null;
+  profilePhotoUrl: string | null;
+  location: string | null;
   distanceKm: number | null;
   isVerified: boolean;
   isOnline: boolean;
-  profilePhotoUrl: string | null;
-  about: string | null;
-  lookingFor: string | null;
   interests: Array<{
     id: string;
     name: string;
     icon: string | null;
   }>;
   sharedInterests: string[];
-  vibeScore: number | null;
+  commonInterestsCount: number;
+  profileMatchPercentage: number;
+  totalMoments: number;
 }
 
 export interface DiscoverySearchResultDTO {
@@ -151,7 +154,6 @@ export interface DiscoverySearchResultDTO {
     hasMore: boolean;
     nextCursor: string | null;
   };
-  totalCount: number;
   appliedFilters: {
     genders: string[];
     ageMin: number;
@@ -569,7 +571,6 @@ export class DiscoveryFilterService {
           hasMore: false,
           nextCursor: null,
         },
-        totalCount: count,
         appliedFilters: effectiveFilters,
       };
     }
@@ -588,13 +589,14 @@ export class DiscoveryFilterService {
       ],
     });
 
-    // 7. For the returned users, fetch complete active interests & primary photos
+    // 7. For the returned users, batch fetch active interests, primary photos, and eligible moment counts
     const targetUserIds = targetUsers.map((u) => u.id);
     const allUserInterestsMap = new Map<string, Array<{ id: string; name: string; icon: string | null }>>();
     const primaryPhotosMap = new Map<string, string>();
+    let momentCountsMap = new Map<string, number>();
 
     if (targetUserIds.length > 0) {
-      const [fullUsersWithInterests, photos] = await Promise.all([
+      const [fullUsersWithInterests, photos, momentCounts] = await Promise.all([
         User.findAll({
           where: { id: { [Op.in]: targetUserIds } },
           include: [
@@ -614,7 +616,10 @@ export class DiscoveryFilterService {
           },
           order: [['isPrimary', 'DESC'], ['displayOrder', 'ASC']],
         }),
+        momentService.getEligibleMomentCountsByUserIds(userId, targetUserIds),
       ]);
+
+      momentCountsMap = momentCounts;
 
       for (const u of fullUsersWithInterests) {
         const mapped = ((u.interests || []) as Interest[]).map((i) => ({
@@ -632,18 +637,49 @@ export class DiscoveryFilterService {
       }
     }
 
-    // Current user's interest names for shared vibe calculation
-    const currentUserInterests = (currentUser.interests || []) as Interest[];
-    const currentUserInterestNames = new Set(currentUserInterests.map((i) => i.name.toLowerCase()));
+    // Current user's canonical interest IDs for precise matching
+    const currentUserInterests = ((currentUser.interests || []) as Interest[]).filter(
+      (i) => i.isActive !== false
+    );
+    const currentUserInterestMap = new Map<string, string>();
+    for (const i of currentUserInterests) {
+      if (i.id) {
+        currentUserInterestMap.set(i.id, i.name);
+      }
+    }
+    const currentUserInterestIds = Array.from(currentUserInterestMap.keys());
 
-    // 8. Map to clean public profile card DTOs
+    // 8. Map to clean public profile card DTOs adhering to Global API Response Standard
     const profiles: PublicProfileCardDTO[] = [];
 
     for (const targetUser of targetUsers) {
       const userInterests = allUserInterestsMap.get(targetUser.id) || [];
-      const sharedInterests = userInterests
-        .filter((i) => currentUserInterestNames.has(i.name.toLowerCase()))
-        .map((i) => i.name);
+      const candidateInterestIds = userInterests.map((i) => i.id);
+
+      // Match shared interests strictly using canonical interest IDs, not display names
+      const sharedNamesSet = new Set<string>();
+      for (const interest of userInterests) {
+        if (currentUserInterestMap.has(interest.id)) {
+          sharedNamesSet.add(interest.name);
+        }
+      }
+      const sharedInterests = Array.from(sharedNamesSet);
+      const commonInterestsCount = sharedInterests.length;
+
+      // Calculate profileMatchPercentage using documented consistent algorithm
+      const profileMatchPercentage = calculateProfileMatchPercentage({
+        viewerInterestIds: currentUserInterestIds,
+        candidateInterestIds,
+        viewerLookingFor: currentUser.lookingFor,
+        candidateLookingFor: targetUser.lookingFor,
+      });
+
+      // Actual count of eligible moments
+      const totalMoments = momentCountsMap.get(targetUser.id) || 0;
+
+      // Location resolution: one complete location field with full available location (city, state, country)
+      const parsedLoc = parseLocation(targetUser.city, targetUser.latitude, targetUser.longitude);
+      const location = parsedLoc.fullLocation || (targetUser.city ? targetUser.city.trim() : null);
 
       // Distance calculation
       let distanceKm = calculateDistanceKm(
@@ -671,32 +707,26 @@ export class DiscoveryFilterService {
       const isOnline =
         targetUser.lastActiveAt != null && targetUser.lastActiveAt >= onlineCutoff;
 
-      // Profile photo resolution
-      const rawPhoto = targetUser.profilePicture || primaryPhotosMap.get(targetUser.id) || null;
-      const profilePhotoUrl = rawPhoto ? formatThumbnailUrl(rawPhoto) : null;
-
-      const vibeScore = calculateVibeScore(
-        sharedInterests.length,
-        targetUser.isFaceVerified,
-        targetUser.isProfileComplete
-      );
+      // Profile photo resolution: clean formatted thumbnail URL without malformation
+      const rawPhoto = (targetUser.profilePicture || primaryPhotosMap.get(targetUser.id) || '').trim();
+      const profilePhotoUrl = rawPhoto.length > 0 ? formatThumbnailUrl(rawPhoto) : null;
 
       profiles.push({
         id: targetUser.id,
         name: resolveDisplayName(targetUser),
         username: targetUser.username,
         age: calculateAge(targetUser.dateOfBirth),
-        gender: targetUser.gender || null,
-        city: targetUser.city || 'Mumbai',
+        about: targetUser.about || null,
+        profilePhotoUrl,
+        location,
         distanceKm,
         isVerified: !!targetUser.isFaceVerified,
         isOnline,
-        profilePhotoUrl,
-        about: targetUser.about || null,
-        lookingFor: targetUser.lookingFor || null,
         interests: userInterests,
         sharedInterests,
-        vibeScore,
+        commonInterestsCount,
+        profileMatchPercentage,
+        totalMoments,
       });
     }
 
@@ -712,7 +742,6 @@ export class DiscoveryFilterService {
         hasMore,
         nextCursor,
       },
-      totalCount: total,
       appliedFilters: effectiveFilters,
     };
   }

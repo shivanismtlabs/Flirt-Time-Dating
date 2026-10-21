@@ -11,7 +11,8 @@
     "test": "jest --runInBand",
     "seed:discovery": "ts-node src/scripts/seedDiscovery.ts",
     "seed:coin-packages": "ts-node src/scripts/seedCoinPackages.ts",
-    "seed:subscriptions": "ts-node src/scripts/seedSubscriptions.ts"
+    "seed:subscriptions": "ts-node src/scripts/seedSubscriptions.ts",
+    "migrate:chat": "ts-node src/scripts/migrateChatTables.ts"
   },
   "keywords": [
     "nodejs",
@@ -28,6 +29,7 @@
     "@aws-sdk/client-rekognition": "^3.1148.0",
     "@aws-sdk/client-s3": "^3.1148.0",
     "@types/nodemailer": "^8.0.2",
+    "agora-token": "^2.0.7",
     "axios": "^1.20.0",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
@@ -44,6 +46,7 @@
     "pg-hstore": "^2.3.4",
     "sequelize": "^6.37.5",
     "sharp": "^0.35.5",
+    "socket.io": "^4.8.4",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -60,6 +63,7 @@
     "@types/supertest": "^7.2.1",
     "jest": "^30.5.2",
     "rimraf": "^6.0.1",
+    "socket.io-client": "^4.8.4",
     "sqlite3": "^6.0.1",
     "supertest": "^7.3.1",
     "ts-jest": "^29.4.14",

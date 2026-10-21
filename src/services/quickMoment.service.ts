@@ -114,7 +114,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'author',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city'],
         },
         {
           model: QuickMomentReaction,
@@ -249,6 +249,7 @@ export class QuickMomentService {
         name: author.fullName || author.nickName || 'User',
         avatar: author.profilePicture ? formatThumbnailUrl(author.profilePicture) : null,
         isVerified: !!author.isFaceVerified,
+        isSubscribed: !!author.isSubscribed,
         hasUnread,
         totalStories: moments.length,
         latestTimeAgo: formatTimeAgo(latest.createdAt, true),
@@ -296,7 +297,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'author',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed'],
         },
         {
           model: QuickMomentReaction,
@@ -305,7 +306,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'user',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
             },
           ],
         },
@@ -316,7 +317,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'viewer',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'updatedAt'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'updatedAt'],
             },
           ],
         },
@@ -379,6 +380,7 @@ export class QuickMomentService {
             avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
             city: r.user?.city,
             isVerified: !!r.user?.isFaceVerified,
+            isSubscribed: !!r.user?.isSubscribed,
           },
         })),
         viewers: (m.views || []).map((v: any) => ({
@@ -386,6 +388,7 @@ export class QuickMomentService {
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
           avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
           isVerified: !!v.viewer?.isFaceVerified,
+          isSubscribed: !!v.viewer?.isSubscribed,
           viewedAt: v.createdAt,
         })),
       };
@@ -413,7 +416,7 @@ export class QuickMomentService {
     const now = new Date();
 
     const targetUser = await User.findByPk(targetUserId, {
-      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city'],
     });
 
     if (!targetUser) {
@@ -515,6 +518,7 @@ export class QuickMomentService {
         avatar: targetUser.profilePicture ? formatThumbnailUrl(targetUser.profilePicture) : null,
         city: targetUser.city,
         isVerified: !!targetUser.isFaceVerified,
+        isSubscribed: !!targetUser.isSubscribed,
       },
       totalStories: slides.length,
       stories: slides,
@@ -576,7 +580,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'user',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -595,6 +599,7 @@ export class QuickMomentService {
         avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
         city: r.user?.city,
         isVerified: !!r.user?.isFaceVerified,
+        isSubscribed: !!r.user?.isSubscribed,
       },
     }));
 
@@ -895,7 +900,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'viewer',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -906,6 +911,7 @@ export class QuickMomentService {
       name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
       avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
       isVerified: !!v.viewer?.isFaceVerified,
+      isSubscribed: !!v.viewer?.isSubscribed,
       city: v.viewer?.city,
       viewedAt: v.createdAt,
       timeAgo: formatTimeAgo(v.createdAt, false),

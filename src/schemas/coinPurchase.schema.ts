@@ -16,6 +16,9 @@ export const verifyCoinPurchaseSchema = z.object({
       purchaseToken: z.string().trim().min(1).optional(),
       orderId: z.string().trim().min(1).optional(),
       packageName: z.string().trim().min(1).optional(),
+      // App state
+      isForeground: z.boolean().optional(),
+      is_foreground: z.boolean().optional(),
     })
     .superRefine((val, ctx) => {
       // Must identify the intended package

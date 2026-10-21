@@ -27,6 +27,554 @@
   ],
   "item": [
     {
+      "name": "Chat & Conversations (Archive & Deletion)",
+      "description": "Production-ready APIs and Socket.IO real-time event specifications for conversation archive, Delete for Me, Delete for Everyone, and multi-device synchronization.",
+      "item": [
+        {
+          "name": "1. Archive Conversation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isArchived\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "archive"
+              ]
+            },
+            "description": "Hides a conversation from the requesting user's default chat list without deleting any messages or affecting other participants. Unpins if pinned. Synchronizes across user active devices via `conversation:archived` Socket.IO event."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Unarchive Conversation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isArchived\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "archive"
+              ]
+            },
+            "description": "Restores an archived conversation back to the requesting user's default active chat list."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Delete for Me",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"me\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Hides conversation for the requesting user only. Clears history cutoff (`clearedAt`), unpins, and notifies requesting user's active devices via `conversation:deleted` Socket.IO event. Other participants retain full history."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Delete for Everyone",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"everyone\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Globally deletes/hides conversation for all participants. Sets `isDeletedForEveryone: true`, unpins for all users, blocks new messages, and notifies all participants via `conversation:deleted` with `deleteType: 'everyone'`."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Get Default Chat List (Active Conversations)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Fetches active, unarchived, non-deleted conversations partitioned into pinned and unpinned sections."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Get Archived Chat List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats?archived=true&page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "archived",
+                  "value": "true"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Fetches all archived conversations for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Invalid Deletion Type (Negative Test)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"all\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Validates schema rejection when deleteType is not 'me' or 'everyone'."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Acknowledge Message Delivery",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageIds\": [\n    \"{{messageId1}}\",\n    \"{{messageId2}}\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/delivery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "delivery"
+              ]
+            },
+            "description": "Acknowledges receipt/delivery of messages on recipient device. Atomically transitions message status to 'delivered', sets server timestamp `deliveredAt`, and dispatches real-time `chat:delivery_receipt` / `message:delivery_receipt` to the message sender."
+          },
+          "response": []
+        },
+        {
+          "name": "9. Mark Messages as Read (Cursor Boundary)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lastReadMessageId\": \"{{lastReadMessageId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            },
+            "description": "Marks incoming messages up to `lastReadMessageId` boundary as read by the recipient. Atomically sets `isRead: true`, `readAt: NOW()`, ensuring `isDelivered: true`. Emits `chat:read_receipt` to sender and syncs unread badge via `conversation:unread_updated`."
+          },
+          "response": []
+        },
+        {
+          "name": "10. Mark All Messages as Read (Omit Cursor)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            },
+            "description": "Backwards-compatible read receipt: marks all currently unread incoming messages in the conversation as read when no cursor ID is provided."
+          },
+          "response": []
+        },
+        {
+          "name": "11. Get Conversation & Aggregate Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/unread-count?conversationId={{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "unread-count"
+              ],
+              "query": [
+                {
+                  "key": "conversationId",
+                  "value": "{{conversationId}}"
+                }
+              ]
+            },
+            "description": "Returns unread count for a specific conversation and the user's total aggregate unread messages badge count across all active conversations."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Video Calls (Agora)",
+      "item": [
+        {
+          "name": "1. Initiate Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"calleeId\": \"{{calleeId}}\",\n  \"conversationId\": \"{{conversationId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "initiate"
+              ]
+            },
+            "description": "Initiates a one-to-one Agora RTC video call to the recipient user. Generates server-side channel name, caller UID, callee UID, short-lived RTC token, and notifies recipient via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Accept Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "accept"
+              ]
+            },
+            "description": "Recipient accepts the incoming ringing call. Atomically transitions status to accepted, returns callee RTC token, and notifies caller via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Reject Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "reject"
+              ]
+            },
+            "description": "Recipient rejects the incoming ringing call. Transitions status to rejected and notifies caller via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "4. End Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/end",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "end"
+              ]
+            },
+            "description": "Participant terminates ongoing or ringing video call. Idempotent."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Get Active Video Call",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "active"
+              ]
+            },
+            "description": "Retrieves ongoing active call for current user with refreshed Agora RTC token."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Health Check",
       "item": [
         {
@@ -356,6 +904,40 @@
                 "me"
               ]
             }
+          },
+          "response": []
+        },
+        {
+          "name": "Logout User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deviceToken\": \"fcm_device_token_sample_abc123\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Logs out authenticated user and optionally deactivates FCM device token."
           },
           "response": []
         }
@@ -787,7 +1369,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"fullName\": \"Meera Patel\",\n  \"nickName\": \"Meera\",\n  \"dateOfBirth\": \"1998-05-15\",\n  \"gender\": \"female\",\n  \"about\": \"Travel enthusiast and food lover looking for genuine vibes:)\"\n}"
+              "raw": "{\n  \"fullName\": \"Madsudan Patel\",\n  \"username\": \"madupatel\",\n  \"dateOfBirth\": \"2007-06-07\",\n  \"gender\": \"male\",\n  \"about\": \"Def a. SCD kasndklat and you will never get a chance for this one day you are not going anywhere with your life in it you will be a legend and you are\",\n  \"location\": \"Mumbai, Maharashtra\",\n  \"latitude\": 19.076,\n  \"longitude\": 72.8777\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/api/v1/users/profile",
@@ -2090,6 +2672,50 @@
               "body": "{\n  \"success\": false,\n  \"message\": \"Authorization header missing or invalid format (Bearer token required)\",\n  \"data\": null\n}"
             }
           ]
+        },
+        {
+          "name": "Search Users by Name or City with Pagination",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "description": "Required: Authenticated user JWT token"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/search?query=Cindy&page=1&limit=10",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "Cindy",
+                  "description": "Search keyword matching user name or city"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (default: 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "description": "Items per page (default: 10, max: 50)"
+                }
+              ]
+            },
+            "description": "Search users by name or city with proper pagination. Directly powers the 'Search by name or city' screen in the FlirtTime app. Strictly excludes current user, blocked users, reported users, and inactive accounts."
+          },
+          "response": []
         }
       ]
     },
@@ -3882,6 +4508,153 @@
               ]
             },
             "description": "Deletes a comment/reply on a Moment. Allowed for either the comment author OR the creator of the moment (canDelete: true). Returns 403 Forbidden if an unauthorized user attempts to delete."
+          },
+          "response": []
+        },
+        {
+          "name": "Create Moment Comment Reply or Sub-reply",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reply\": \"Totally agree, stunning capture! ✨\",\n  \"parentReplyId\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to create a reply or sub-reply to an existing comment. Pass optional parentReplyId to reply directly to another reply."
+          },
+          "response": []
+        },
+        {
+          "name": "Get Moment Comment Replies",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Target comment UUID"
+                }
+              ]
+            },
+            "description": "Canonical API to fetch paginated replies for a specific comment, including parentComment metadata, likesCount, and isLiked status."
+          },
+          "response": []
+        },
+        {
+          "name": "Delete Moment Comment Reply",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/moments/:momentId/comments/:commentId/replies/:replyId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "moments",
+                ":momentId",
+                "comments",
+                ":commentId",
+                "replies",
+                ":replyId"
+              ],
+              "variable": [
+                {
+                  "key": "momentId",
+                  "value": "<MOMENT_ID>",
+                  "description": "Moment UUID"
+                },
+                {
+                  "key": "commentId",
+                  "value": "<COMMENT_ID>",
+                  "description": "Comment UUID"
+                },
+                {
+                  "key": "replyId",
+                  "value": "<REPLY_ID>",
+                  "description": "Reply UUID to delete"
+                }
+              ]
+            },
+            "description": "Canonical API to delete a specific reply. Authorized for the reply author, parent comment author, or moment creator."
           },
           "response": []
         },
@@ -5876,6 +6649,805 @@
               ]
             },
             "description": "Fetches subscription plans with authenticated user context attached."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chat & Messaging",
+      "description": "Production-ready 1-to-1 Chat and Real-Time Messaging APIs for FlirtTime dating application based on Chat UI screenshots.",
+      "item": [
+        {
+          "name": "1. Get Chat List (Screen 1)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats?page=1&limit=20&search=",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1",
+                  "description": "Page number (defaults to 1)"
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Items per page (max 50, defaults to 20)"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Optional search term filtering participant display name or username"
+                }
+              ]
+            },
+            "description": "Fetches conversations list separated into pinned items and unpinned chat items with unread badges, last message previews, timestamps, and real-time online status."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Start or Get 1-to-1 Chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"00000000-0000-0000-0000-000000000000\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ]
+            },
+            "description": "Retrieves an existing conversation with the recipient or creates a new one idempotently if not already existing."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Get Conversation Detail (Screen 2 Header & Common Interests)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000",
+                  "description": "Target Conversation UUID"
+                }
+              ]
+            },
+            "description": "Fetches target participant profile summary (display name, profile image, online indicator, age, distance in km, and common interests list) to render the One-to-One Chat header."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Get Message History",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages?page=1&limit=30",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "30"
+                },
+                {
+                  "key": "before",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Optional ISO timestamp cursor for backward message pagination"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Fetches conversation messages in chronological order (oldest to newest) with pagination and isMine flags."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Send Text Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Hey! How is your day going?\",\n  \"messageType\": \"text\",\n  \"clientMessageId\": \"11111111-2222-3333-4444-555555555555\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a text message with clientMessageId idempotency protection and real-time Socket.IO emission to the recipient's room."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Send Voice Note / Audio Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"https://s3.ap-south-1.amazonaws.com/flirttime/audio/voice_sample.m4a\",\n  \"messageType\": \"audio\",\n  \"clientMessageId\": \"22222222-3333-4444-5555-666666666666\",\n  \"metadata\": {\n    \"duration\": 14\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a voice note attachment (uploaded via /api/v1/media/presigned-url) with duration metadata."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Send Photo Message (Gallery Attachment)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"chat/3fa85f64-5717-4562-b3fc-2c963f66afa6/1700000000_photo.jpg\",\n  \"messageType\": \"image\",\n  \"clientMessageId\": \"33333333-4444-5555-6666-777777777777\",\n  \"metadata\": {\n    \"width\": 1080,\n    \"height\": 1920,\n    \"fileSize\": 1048576,\n    \"mimeType\": \"image/jpeg\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a photo attachment uploaded via S3 presigned URL (POST /api/v1/media/presigned-url with folder: 'chat'). Verifies attachment ownership, automatically generates thumbnail URL, updates conversation preview to '📷 Photo', and emits real-time event to recipient."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Send Camera Capture Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"chat/3fa85f64-5717-4562-b3fc-2c963f66afa6/1700000001_camera.jpg\",\n  \"messageType\": \"image\",\n  \"clientMessageId\": \"44444444-5555-6666-7777-888888888888\",\n  \"metadata\": {\n    \"source\": \"camera\",\n    \"width\": 1080,\n    \"height\": 1920,\n    \"fileSize\": 2097152,\n    \"mimeType\": \"image/jpeg\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Sends a camera-captured photo. Reuses the identical photo upload and message persistence pipeline without creating separate endpoints, tagging metadata with source: 'camera'."
+          },
+          "response": []
+        },
+        {
+          "name": "9. Send Location Message (Coordinates Sharing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageType\": \"location\",\n  \"clientMessageId\": \"55555555-6666-7777-8888-999999999999\",\n  \"metadata\": {\n    \"latitude\": 37.7749,\n    \"longitude\": -122.4194,\n    \"name\": \"Union Square, SF\",\n    \"address\": \"333 Post St, San Francisco, CA 94108\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Shares a selected location with validated latitude (-90..90) and longitude (-180..180). Canonical coordinates stored in metadata, content formatted to '📍 Union Square, SF', conversation preview updated to '📍 Union Square, SF'."
+          },
+          "response": []
+        },
+        {
+          "name": "10. Send Contact Message (Contact Card Sharing)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageType\": \"contact\",\n  \"clientMessageId\": \"66666666-7777-8888-9999-000000000000\",\n  \"metadata\": {\n    \"name\": \"Sarah Connor\",\n    \"phoneNumber\": \"+1-555-0199\",\n    \"email\": \"sarah.connor@example.com\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Shares a single selected contact card (name, phoneNumber, optional email). Strictly rejects bulk address-book dumps and unexpected properties, formats message content to '👤 Sarah Connor', and updates conversation preview to '👤 Sarah Connor'."
+          },
+          "response": []
+        },
+        {
+          "name": "11. Mark Messages as Read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "read"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Marks all unread messages received in the conversation as read and emits real-time read receipt to the sender."
+          },
+          "response": []
+        },
+        {
+          "name": "12. Pin Conversation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isPinned\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "pin"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Pins a conversation for the authenticated user, causing it to appear in the pinned section of the Chat List screen."
+          },
+          "response": []
+        },
+        {
+          "name": "13. Unpin Conversation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isPinned\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "pin"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Unpins a conversation for the authenticated user, restoring it to the standard conversation stream."
+          },
+          "response": []
+        },
+        {
+          "name": "14. Chat Action Menu: View Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "profile"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Triggered by the Chat Screen Action Menu ('View Profile'). Reuses the canonical profile-detail API to retrieve full profile details, bios, and photo galleries."
+          },
+          "response": []
+        },
+        {
+          "name": "15. Chat Action Menu: Report User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"spam\",\n  \"conversationId\": \"00000000-0000-0000-0000-000000000000\",\n  \"description\": \"Spam sent in 1-to-1 chat\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "report"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Triggered by the Chat Screen Action Menu ('Report Chat?'). Submits report using canonical user reporting endpoint with validation against the 4 UI modal reasons (spam, inappropriate_content, fake_profile, harassment) and optional conversationId with participant membership validation."
+          },
+          "response": [
+            {
+              "name": "200 OK - Report Submitted Successfully (Clean)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"spam\",\n  \"conversationId\": \"3fa85f64-5717-4562-b3fc-2c963f66afa6\",\n  \"description\": \"Spam sent in 1-to-1 chat\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    ":userId",
+                    "report"
+                  ],
+                  "variable": [
+                    {
+                      "key": "userId",
+                      "value": "e6a2b890-482a-4318-8f81-58c0c05a1e22"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Report submitted successfully\",\n  \"data\": {\n    \"reportId\": \"8f7e273e-3cb4-490b-9289-e1628d73b22b\",\n    \"status\": \"pending\"\n  }\n}"
+            },
+            {
+              "name": "400 Bad Request - Invalid Report Reason",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"reason\": \"invalid_reason\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/users/:userId/report",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "users",
+                    ":userId",
+                    "report"
+                  ],
+                  "variable": [
+                    {
+                      "key": "userId",
+                      "value": "e6a2b890-482a-4318-8f81-58c0c05a1e22"
+                    }
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Validation failed\",\n  \"data\": [\n    {\n      \"field\": \"body.reason\",\n      \"message\": \"Invalid report reason. Allowed values: fake_profile, harassment, inappropriate_content, spam, scam, underage, other\"\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "16. Chat Action Menu: Block User",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Harassment in chat\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "block"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Triggered by the Chat Screen Action Menu ('Block'). Reuses the canonical block endpoint to block the participant. Enforces restrictions across all chat listings, message streams, sending, and real-time socket events."
+          },
+          "response": []
+        },
+        {
+          "name": "17. Chat Action Menu: Unblock User",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/users/:userId/block",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                ":userId",
+                "block"
+              ],
+              "variable": [
+                {
+                  "key": "userId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Unblocks a previously blocked user, restoring standard interaction permissions."
           },
           "response": []
         }

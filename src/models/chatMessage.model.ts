@@ -1,15 +1,27 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export type ChatMessageType =
+  | 'text'
+  | 'audio'
+  | 'image'
+  | 'location'
+  | 'contact'
+  | 'moment_reply'
+  | 'moment_gift';
+
 export interface ChatMessageAttributes {
   id: string;
   conversationId: string;
   senderId: string;
   recipientId: string;
   content: string;
-  messageType: 'text' | 'moment_reply' | 'moment_gift';
+  messageType: ChatMessageType;
   metadata?: string | null;
+  isDelivered?: boolean;
+  deliveredAt?: Date | null;
   isRead: boolean;
+  readAt?: Date | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -17,7 +29,15 @@ export interface ChatMessageAttributes {
 export interface ChatMessageCreationAttributes
   extends Optional<
     ChatMessageAttributes,
-    'id' | 'messageType' | 'metadata' | 'isRead' | 'createdAt' | 'updatedAt'
+    | 'id'
+    | 'messageType'
+    | 'metadata'
+    | 'isDelivered'
+    | 'deliveredAt'
+    | 'isRead'
+    | 'readAt'
+    | 'createdAt'
+    | 'updatedAt'
   > {}
 
 export class ChatMessage
@@ -28,9 +48,12 @@ export class ChatMessage
   declare public senderId: string;
   declare public recipientId: string;
   declare public content: string;
-  declare public messageType: 'text' | 'moment_reply' | 'moment_gift';
+  declare public messageType: ChatMessageType;
   declare public metadata: string | null;
+  declare public isDelivered: boolean;
+  declare public deliveredAt: Date | null;
   declare public isRead: boolean;
+  declare public readAt: Date | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -38,6 +61,16 @@ export class ChatMessage
   declare public conversation?: any;
   declare public sender?: any;
   declare public recipient?: any;
+
+  /**
+   * Computed canonical message status according to receipt semantics:
+   * 'read' > 'delivered' > 'sent'
+   */
+  public get status(): 'sent' | 'delivered' | 'read' {
+    if (this.isRead) return 'read';
+    if (this.isDelivered) return 'delivered';
+    return 'sent';
+  }
 }
 
 ChatMessage.init(
@@ -90,10 +123,23 @@ ChatMessage.init(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    isDelivered: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+      allowNull: false,
+    },
+    deliveredAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
     isRead: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
       allowNull: false,
+    },
+    readAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
     },
   },
   {
@@ -108,6 +154,18 @@ ChatMessage.init(
       {
         fields: ['recipientId', 'isRead'],
         name: 'idx_chat_messages_recipient_read',
+      },
+      {
+        fields: ['recipientId', 'isDelivered'],
+        name: 'idx_chat_messages_recipient_deliv',
+      },
+      {
+        fields: ['conversationId', 'recipientId', 'isDelivered'],
+        name: 'idx_chat_messages_conv_recipient_deliv',
+      },
+      {
+        fields: ['conversationId', 'recipientId', 'isRead'],
+        name: 'idx_chat_messages_conv_recipient_read',
       },
     ],
   }

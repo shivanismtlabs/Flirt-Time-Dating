@@ -39,3 +39,38 @@ export const markInteractionReadSchema = z.object({
       .uuid('interactionId must be a valid UUID format'),
   }),
 });
+
+export const sendComplimentSchema = z.object({
+  params: z
+    .object({
+      userId: z.string().uuid('userId must be a valid UUID format').optional(),
+    })
+    .optional(),
+  body: z.object({
+    targetUserId: z
+      .string()
+      .uuid('targetUserId must be a valid UUID format')
+      .optional(),
+    userId: z
+      .string()
+      .uuid('userId must be a valid UUID format')
+      .optional(),
+    message: z
+      .string({ required_error: 'message is required' })
+      .trim()
+      .min(1, 'message cannot be empty')
+      .max(500, 'message cannot exceed 500 characters'),
+    reason: z
+      .string()
+      .trim()
+      .max(150, 'reason cannot exceed 150 characters')
+      .optional()
+      .nullable(),
+    momentId: z
+      .string()
+      .uuid('momentId must be a valid UUID format')
+      .optional()
+      .nullable(),
+  }),
+});
+

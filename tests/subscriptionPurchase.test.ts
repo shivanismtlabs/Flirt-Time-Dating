@@ -411,8 +411,8 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
   });
 
   describe('4. Entitlement & History APIs (GET /my and GET /history)', () => {
-    it('should retrieve current subscription and entitlement status via GET /api/v1/subscriptions/my', async () => {
-      const expiresDate = new Date(Date.now() + 10 * 86400000);
+    it('should retrieve current active weekly subscription with canonical envelope and dynamic remaining validity', async () => {
+      const expiresDate = new Date(Date.now() + 6 * 86400000 + 4 * 3600000); // 6 days 4 hours in future
 
       await UserSubscription.create({
         userId: testUser.id,
@@ -423,7 +423,7 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
         originalTransactionId: 'my_sub_tx_1',
         status: 'active',
         isEntitled: true,
-        startsAt: new Date(),
+        startsAt: new Date(Date.now() - 86400000),
         expiresAt: expiresDate,
         autoRenewing: true,
         currency: 'USD',
@@ -441,14 +441,127 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
+      expect((res.body as any).status).toBeUndefined(); // No duplicate status at root level
+      expect(res.body.message).toBe('Current subscription retrieved successfully');
+
+      // Top-level entitlement
       expect(res.body.data.isSubscribed).toBe(true);
-      expect(res.body.data.subscription.productId).toBe('com.flirttime.weekly');
-      expect(res.body.data.plan.name).toBe('One Week + 50 Coins');
-      expect(Array.isArray(res.body.data.features)).toBe(true);
-      expect(res.body.data.features.length).toBeGreaterThan(0);
+
+      // Subscription object
+      const subData = res.body.data.subscription;
+      expect(subData).toBeDefined();
+      expect(subData.platform).toBe('ios');
+      expect(subData.productId).toBe('com.flirttime.weekly');
+      expect(subData.status).toBe('active');
+      expect(subData.isExpired).toBe(false);
+      expect(subData.remainingValidity.days).toBe(6);
+      expect(subData.remainingValidity.hours).toBeGreaterThanOrEqual(3);
+      expect(subData.autoRenewing).toBe(true);
+      expect(subData.nextRenewalDate).toBe(expiresDate.toISOString());
+
+      // Plan object (Weekly/Monthly mismatch fixed!)
+      const planData = res.body.data.plan;
+      expect(planData).toBeDefined();
+      expect(planData.name).toBe('One Week + 50 Coins');
+      expect(planData.productId).toBe('com.flirttime.weekly');
+      expect(planData.billingCycle).toBe('weekly'); // Seven-day plan must show 'weekly'
+      expect(planData.durationDays).toBe(7);
+      expect(planData.price).toBe('4.99');
+      expect(planData.currency).toBe('USD');
+      expect(planData.includedCoins).toBe(50);
+
+      // Benefits array
+      expect(Array.isArray(res.body.data.benefits)).toBe(true);
+      expect(res.body.data.benefits.length).toBeGreaterThan(0);
+      expect(res.body.data.benefits[0]).toHaveProperty('id');
+      expect(res.body.data.benefits[0]).toHaveProperty('text');
+      expect(res.body.data.benefits[0]).toHaveProperty('sortOrder');
+
+      // Verify no duplicate root date objects or internal secrets
+      expect((res.body.data as any).expiresAt).toBeUndefined();
+      expect((res.body.data as any).autoRenewing).toBeUndefined();
+      expect((res.body.data as any).features).toBeUndefined();
+      expect(subData.purchaseToken).toBeUndefined();
+      expect(subData.rawVerificationData).toBeUndefined();
+      expect(subData.planName).toBeUndefined();
+      expect(subData.durationDays).toBeUndefined();
     });
 
-    it('should mark entitlement as false when subscription is expired', async () => {
+    it('should retrieve monthly subscription with monthly billing cycle and included coins', async () => {
+      const expiresDate = new Date(Date.now() + 30 * 86400000);
+
+      await UserSubscription.create({
+        userId: testUser.id,
+        planId: monthlyPlan.id,
+        platform: 'android',
+        productId: 'com.flirttime.monthly',
+        storeTransactionId: 'monthly_sub_tx',
+        originalTransactionId: 'monthly_sub_tx',
+        status: 'active',
+        isEntitled: true,
+        startsAt: new Date(),
+        expiresAt: expiresDate,
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 100,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isSubscribed).toBe(true);
+      expect(res.body.data.subscription.platform).toBe('android');
+      expect(res.body.data.subscription.autoRenewing).toBe(true);
+      expect(res.body.data.subscription.nextRenewalDate).toBe(expiresDate.toISOString());
+      expect(res.body.data.plan.name).toBe('One Month + 200 Coin');
+      expect(res.body.data.plan.billingCycle).toBe('monthly');
+      expect(res.body.data.plan.durationDays).toBe(30);
+      expect(res.body.data.plan.includedCoins).toBe(100);
+    });
+
+    it('should handle cancelled-but-still-valid subscription with positive remaining validity and null nextRenewalDate', async () => {
+      const futureExpiry = new Date(Date.now() + 4 * 86400000 + 10 * 3600000); // 4 days 10 hours left
+
+      await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'canceled_still_valid_tx',
+        originalTransactionId: 'canceled_still_valid_tx',
+        status: 'canceled',
+        isEntitled: true,
+        startsAt: new Date(Date.now() - 3 * 86400000),
+        expiresAt: futureExpiry,
+        autoRenewing: false,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isSubscribed).toBe(true); // User paid for full period, entitled until expiresAt
+      expect(res.body.data.subscription.status).toBe('canceled');
+      expect(res.body.data.subscription.isExpired).toBe(false);
+      expect(res.body.data.subscription.remainingValidity.days).toBe(4);
+      expect(res.body.data.subscription.autoRenewing).toBe(false);
+      expect(res.body.data.subscription.nextRenewalDate).toBeNull(); // No renewal since canceled
+    });
+
+    it('should mark entitlement as false and return zero remaining validity when subscription is expired', async () => {
       const pastDate = new Date(Date.now() - 2 * 86400000); // Expired 2 days ago
 
       await UserSubscription.create({
@@ -475,8 +588,136 @@ describe('Production-Ready Subscription Purchase and Lifecycle APIs', () => {
         .set('Authorization', `Bearer ${testToken}`);
 
       expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
       expect(res.body.data.isSubscribed).toBe(false);
       expect(res.body.data.subscription.status).toBe('expired');
+      expect(res.body.data.subscription.isExpired).toBe(true);
+      expect(res.body.data.subscription.remainingValidity).toEqual({
+        days: 0,
+        hours: 0,
+        minutes: 0,
+      });
+      expect(res.body.data.subscription.autoRenewing).toBe(false);
+      expect(res.body.data.subscription.nextRenewalDate).toBeNull();
+    });
+
+    it('should preserve provider-verified store expiry as authoritative and never overwrite with locally guessed expiry (Requirement 4)', async () => {
+      // Suppose provider returned a verified expiry of 2 days from purchase
+      const purchaseTime = new Date('2026-10-15T12:00:06.000Z');
+      const verifiedStoreExpiry = new Date('2026-10-17T12:00:06.000Z'); // 2-day verified store window
+
+      const subRecord = await UserSubscription.create({
+        userId: testUser.id,
+        planId: weeklyPlan.id,
+        platform: 'ios',
+        productId: 'com.flirttime.weekly',
+        storeTransactionId: 'authoritative_store_tx',
+        originalTransactionId: 'authoritative_store_tx',
+        status: 'active',
+        isEntitled: true,
+        startsAt: purchaseTime,
+        expiresAt: verifiedStoreExpiry,
+        autoRenewing: true,
+        currency: 'USD',
+        environment: 'production',
+        acknowledged: true,
+        bonusCoinsCredited: true,
+        bonusCoinsAmount: 50,
+      });
+
+      await testUser.update({ isSubscribed: true });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      const subData = res.body.data.subscription;
+      expect(subData).toBeDefined();
+
+      // Provider-verified date MUST NOT be overwritten by a local 7-day guess!
+      expect(subData.expiresAt).toBe(verifiedStoreExpiry.toISOString());
+      expect(subData.startsAt).toBe(purchaseTime.toISOString());
+
+      const reloadedSub = await UserSubscription.findByPk(subRecord.id);
+      expect(new Date(reloadedSub!.expiresAt).getTime()).toBe(verifiedStoreExpiry.getTime());
+    });
+
+    it('should calculate 7-day interval expiration date and dynamic remaining validity when store verification has no explicit expiresDate', async () => {
+      const mockTxId = `fallback_interval_tx_${Date.now()}`;
+      const purchaseTime = new Date('2026-10-15T12:00:06.000Z');
+
+      // Apple JWS payload with purchaseDate but missing expiresDate
+      jest.spyOn(iapService, 'decodeAndVerifyAppleJWS').mockReturnValue({
+        bundleId: 'com.flirttime.app',
+        productId: 'com.flirttime.weekly',
+        transactionId: mockTxId,
+        originalTransactionId: mockTxId,
+        purchaseDate: purchaseTime.getTime(),
+        // expiresDate omitted
+      });
+
+      const verifyRes = await request(app)
+        .post('/api/v1/subscriptions/purchase/verify')
+        .set('Authorization', `Bearer ${testToken}`)
+        .send({
+          platform: 'ios',
+          planId: weeklyPlan.id,
+          productId: 'com.flirttime.weekly',
+          signedTransactionInfo: 'header.payload.signature',
+        });
+
+      expect(verifyRes.status).toBe(200);
+      expect(verifyRes.body.success).toBe(true);
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${testToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.isSubscribed).toBe(true);
+
+      const subData = res.body.data.subscription;
+      expect(subData).toBeDefined();
+      expect(subData.status).toBe('active');
+      expect(subData.isExpired).toBe(false);
+
+      // Exactly 7 days from purchaseTime (2026-10-15T12:00:06.000Z -> 2026-10-22T12:00:06.000Z)
+      const expectedExpiry = new Date(purchaseTime.getTime() + 7 * 86400000);
+      expect(subData.startsAt).toBe(purchaseTime.toISOString());
+      expect(subData.expiresAt).toBe(expectedExpiry.toISOString());
+      expect(subData.nextRenewalDate).toBe(expectedExpiry.toISOString());
+    });
+
+    it('should return clean missing-subscription payload for user who never subscribed', async () => {
+      const unsubscribedUser = await User.create({
+        username: 'never_subscribed_user',
+        email: 'nosub@flirttime.app',
+        isActive: true,
+        role: 'user',
+        coins: 100,
+        isSubscribed: false,
+      });
+
+      const unsubToken = generateToken({
+        id: unsubscribedUser.id,
+        email: unsubscribedUser.email!,
+        role: unsubscribedUser.role,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/subscriptions/my')
+        .set('Authorization', `Bearer ${unsubToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect((res.body as any).status).toBeUndefined();
+      expect(res.body.message).toBe('Current subscription retrieved successfully');
+      expect(res.body.data.isSubscribed).toBe(false);
+      expect(res.body.data.subscription).toBeNull();
+      expect(res.body.data.plan).toBeNull();
+      expect(res.body.data.benefits).toEqual([]);
     });
 
     it('should retrieve paginated subscription history via GET /api/v1/subscriptions/history', async () => {

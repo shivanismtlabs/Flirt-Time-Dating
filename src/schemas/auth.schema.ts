@@ -118,4 +118,27 @@ export const firebaseAuthSchema = z.object({
   }),
 });
 
+export const deleteAccountSchema = z.object({
+  body: z
+    .object({
+      reason: z.string().trim().max(500, 'Reason cannot exceed 500 characters').optional(),
+      feedback: z.string().trim().max(1000, 'Feedback cannot exceed 1000 characters').optional(),
+    })
+    .optional(),
+});
+
+export const logoutSchema = z.object({
+  body: z
+    .object({
+      deviceToken: z.string().trim().optional(),
+      fcmToken: z.string().trim().optional(),
+      allDevices: z.boolean().optional(),
+    })
+    .optional()
+    .default({}),
+});
+
+export type LogoutInput = z.infer<typeof logoutSchema>;
+
+
 

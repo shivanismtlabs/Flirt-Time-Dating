@@ -206,7 +206,44 @@ export const deliveryReceiptHandler = async (req: AuthenticatedRequest, res: Res
 };
 
 /**
- * 5c. GET /api/v1/chats/unread-count
+ * 5c. POST / PATCH / PUT / GET /api/v1/chats/delivered/sync & /delivery/sync
+ * Synchronizes delivery status for pending or specified messages for the recipient.
+ */
+export const syncDeliveredMessagesHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const body = req.body || {};
+    const query = req.query || {};
+
+    const conversationId = (body.conversationId || query.conversationId) as string | undefined;
+
+    let messageIds: string[] | undefined;
+    if (Array.isArray(body.messageIds)) {
+      messageIds = body.messageIds;
+    } else if (Array.isArray(body.deliveredMessageIds)) {
+      messageIds = body.deliveredMessageIds;
+    } else if (Array.isArray(body.messages)) {
+      messageIds = body.messages.map((m: any) => (typeof m === 'string' ? m : m?.id)).filter(Boolean);
+    } else if (typeof body.messageId === 'string') {
+      messageIds = [body.messageId];
+    }
+
+    const result = await chatService.syncDeliveredMessages(currentUserId, {
+      conversationId: conversationId || null,
+      messageIds,
+    });
+
+    return sendSuccess(res, 'Delivery status synchronized successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to synchronize delivery status', 500);
+  }
+};
+
+/**
+ * 5d. GET /api/v1/chats/unread-count
  * Retrieves unread message count for a specific conversation or total across all conversations.
  */
 export const getUnreadCountHandler = async (req: AuthenticatedRequest, res: Response) => {

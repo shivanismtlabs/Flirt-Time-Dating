@@ -431,4 +431,118 @@ export const handleUploadQuickMomentMedia = (
   });
 };
 
+/**
+ * Universal media upload middleware for direct S3 file uploads
+ * Max 50MB, supports images (jpeg, png, webp, gif, avif, heic), audio (mp3, m4a, wav, aac, ogg, webm), video (mp4, quicktime, mov, webm), pdf
+ */
+const allowedUniversalMediaMimeTypes = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/aac',
+  'audio/ogg',
+  'audio/webm',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-m4v',
+  'video/mpeg',
+  'application/pdf',
+];
 
+export const uploadUniversalMedia = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB
+    files: 10,
+  },
+  fileFilter: (_req, file, cb) => {
+    const mime = file.mimetype.toLowerCase();
+    const isAllowed = allowedUniversalMediaMimeTypes.includes(mime);
+    const hasAllowedExt = /\.(jpe?g|png|webp|gif|avif|heic|heif|mp3|m4a|wav|aac|ogg|webm|mp4|mov|pdf)$/i.test(
+      file.originalname
+    );
+
+    if (isAllowed || hasAllowedExt) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Unsupported file format (${file.mimetype}). Please upload an image, audio, or video file.`
+        )
+      );
+    }
+  },
+});
+
+export const handleUploadUniversalMedia = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const upload = uploadUniversalMedia.fields([
+    { name: 'file', maxCount: 10 },
+    { name: 'files', maxCount: 10 },
+    { name: 'media', maxCount: 10 },
+    { name: 'medias', maxCount: 10 },
+    { name: 'image', maxCount: 10 },
+    { name: 'images', maxCount: 10 },
+    { name: 'photo', maxCount: 10 },
+    { name: 'photos', maxCount: 10 },
+    { name: 'audio', maxCount: 5 },
+    { name: 'video', maxCount: 5 },
+    { name: 'attachment', maxCount: 10 },
+    { name: 'attachments', maxCount: 10 },
+    { name: 'document', maxCount: 5 },
+  ]);
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'File size exceeds 50MB limit. Please upload a smaller file.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return sendError(
+            res,
+            'Maximum 10 files allowed per upload.',
+            400,
+            'LIMIT_FILE_COUNT'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(res, err.message || 'Media upload error', 400, 'UPLOAD_ERROR');
+    }
+
+    // Populate req.file for single-file handlers if any file exists
+    if (req.files) {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const key of Object.keys(filesObj)) {
+        if (filesObj[key]?.length > 0) {
+          req.file = filesObj[key][0];
+          break;
+        }
+      }
+    }
+
+    return next();
+  });
+};

@@ -33,6 +33,8 @@ import { sendComplimentHandler } from '../controllers/interaction.controller';
 import { sendComplimentSchema } from '../schemas/interaction.schema';
 import { searchUsersHandler } from '../controllers/userSearch.controller';
 import { userSearchSchema } from '../schemas/userSearch.schema';
+import { sendMultiMessageHandler, syncDeliveredMessagesHandler } from '../controllers/chat.controller';
+import { sendMultiMessageSchema, syncDeliveredMessagesSchema } from '../schemas/chat.schema';
 
 const router = Router();
 
@@ -49,6 +51,8 @@ router.use('/notifications', notificationRoutes);
 router.use('/interactions', interactionRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/media', mediaRoutes);
+router.use('/uploads', mediaRoutes);
+router.use('/upload', mediaRoutes);
 router.use('/deep-links', deepLinkRoutes);
 router.use('/coin-packages', coinPackageRoutes);
 router.use('/subscriptions', subscriptionRoutes);
@@ -56,6 +60,14 @@ router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/chat', chatRoutes);
 router.use('/chats', chatRoutes);
+router.use('/chat/conversations', chatRoutes);
+router.post('/chat/messages', authenticate, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+router.all(
+  ['/chat/delivered/sync', '/chat/delivery/sync'],
+  authenticate,
+  validate(syncDeliveredMessagesSchema),
+  syncDeliveredMessagesHandler
+);
 router.use('/calls/video', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts

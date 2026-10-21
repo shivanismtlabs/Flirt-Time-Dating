@@ -59,6 +59,32 @@ export const resolveChatDisplayName = (user: any): string => {
   return user?.nickName || user?.username || 'User';
 };
 
+/**
+ * Safely resolves the other participant's ID in a 1-to-1 conversation,
+ * performing case-insensitive trimmed matching against the current user's ID.
+ */
+export const getOtherParticipantId = (
+  conv: { user1Id: string; user2Id: string },
+  currentUserId: string
+): string => {
+  const normCurrent = String(currentUserId || '').trim().toLowerCase();
+  const normU1 = String(conv.user1Id || '').trim().toLowerCase();
+  return normU1 === normCurrent ? conv.user2Id : conv.user1Id;
+};
+
+/**
+ * Safely resolves the other participant User object in a 1-to-1 conversation,
+ * performing case-insensitive trimmed matching against the current user's ID.
+ */
+export const getOtherParticipantUser = (
+  conv: { user1Id: string; user2Id: string; user1?: any; user2?: any },
+  currentUserId: string
+): any => {
+  const normCurrent = String(currentUserId || '').trim().toLowerCase();
+  const normU1 = String(conv.user1Id || '').trim().toLowerCase();
+  return normU1 === normCurrent ? conv.user2 : conv.user1;
+};
+
 export interface ChatParticipantDTO {
   userId: string;
   displayName: string;
@@ -231,6 +257,8 @@ export class ChatService {
     });
     const pinnedConversationIdSet = new Set(pins.map((p) => p.conversationId));
 
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+
     // 3. Build where condition
     const whereCondition: any = {
       [Op.or]: [{ user1Id: currentUserId }, { user2Id: currentUserId }],
@@ -246,6 +274,22 @@ export class ChatService {
       ],
     });
 
+    // Exclude conversations without any messages (no chat history)
+    whereCondition[Op.and].push({
+      [Op.or]: [
+        {
+          lastMessage: {
+            [Op.and]: [{ [Op.ne]: null }, { [Op.ne]: '' }],
+          },
+        },
+        {
+          lastMessageAt: {
+            [Op.ne]: null,
+          },
+        },
+      ],
+    });
+
     if (blockedArray.length > 0) {
       whereCondition[Op.and].push({
         user1Id: { [Op.notIn]: blockedArray },
@@ -258,36 +302,22 @@ export class ChatService {
       const term = `%${query.search.trim().toLowerCase()}%`;
       const searchCondition = {
         [Op.or]: [
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user1.fullName')),
-            'LIKE',
-            term
-          ),
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user1.firstName')),
-            'LIKE',
-            term
-          ),
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user1.username')),
-            'LIKE',
-            term
-          ),
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user2.fullName')),
-            'LIKE',
-            term
-          ),
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user2.firstName')),
-            'LIKE',
-            term
-          ),
-          sequelize.where(
-            sequelize.fn('LOWER', sequelize.col('user2.username')),
-            'LIKE',
-            term
-          ),
+          {
+            user1Id: currentUserId,
+            [Op.or]: [
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user2.fullName')), 'LIKE', term),
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user2.firstName')), 'LIKE', term),
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user2.username')), 'LIKE', term),
+            ],
+          },
+          {
+            user2Id: currentUserId,
+            [Op.or]: [
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user1.fullName')), 'LIKE', term),
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user1.firstName')), 'LIKE', term),
+              sequelize.where(sequelize.fn('LOWER', sequelize.col('user1.username')), 'LIKE', term),
+            ],
+          },
         ],
       };
 
@@ -326,14 +356,46 @@ export class ChatService {
     const userStateMap = new Map<string, any>(userStates.map((s) => [s.conversationId, s]));
 
     // Filter out conversations based on:
-    // a) Inactive/deleted user
-    // b) Delete for Me state (hidden unless a new message arrived after deletion)
-    // c) Archive state (archived vs unarchived chat list)
+    // a) Self-conversations (user1Id === user2Id)
+    // b) Inactive/deleted user or partner resolving to current user
+    // c) Empty conversations (no chat / no messages)
+    // d) Search filter on other participant
+    // e) Delete for Me state (hidden unless a new message arrived after deletion)
+    // f) Archive state (archived vs unarchived chat list)
     const validConversations = allMatching.filter((conv) => {
       if (conv.isDeletedForEveryone) return false;
 
-      const otherUser = conv.user1Id === currentUserId ? conv.user2 : conv.user1;
+      const normU1 = String(conv.user1Id || '').trim().toLowerCase();
+      const normU2 = String(conv.user2Id || '').trim().toLowerCase();
+
+      // Exclude self-conversations
+      if (normU1 === normU2) return false;
+
+      // Safely resolve the other participant using case-insensitive check
+      const otherUser = normU1 === normCurrentUserId ? conv.user2 : conv.user1;
       if (!otherUser || otherUser.isActive === false) return false;
+
+      // Ensure other participant is NOT the current user
+      const normOtherUserId = String(otherUser.id || '').trim().toLowerCase();
+      if (normOtherUserId === normCurrentUserId) return false;
+
+      // Exclude empty conversations (no chat / no messages)
+      const hasChat = Boolean(
+        (conv.lastMessage && conv.lastMessage.trim().length > 0) || conv.lastMessageAt
+      );
+      if (!hasChat) {
+        return false;
+      }
+
+      // If search query was provided, ensure the OTHER participant matches
+      if (query.search && query.search.trim().length > 0) {
+        const searchLower = query.search.trim().toLowerCase();
+        const otherDisplayName = resolveChatDisplayName(otherUser).toLowerCase();
+        const otherUsername = String(otherUser.username || '').toLowerCase();
+        if (!otherDisplayName.includes(searchLower) && !otherUsername.includes(searchLower)) {
+          return false;
+        }
+      }
 
       const state = userStateMap.get(conv.id);
 
@@ -395,7 +457,8 @@ export class ChatService {
     const unpinnedList: ChatListItemDTO[] = [];
 
     for (const conv of validConversations) {
-      const otherUser = conv.user1Id === currentUserId ? conv.user2 : conv.user1;
+      const normU1 = String(conv.user1Id || '').trim().toLowerCase();
+      const otherUser = normU1 === normCurrentUserId ? conv.user2 : conv.user1;
       const isPinned = pinnedConversationIdSet.has(conv.id);
       const unreadCount = unreadMap.get(conv.id) || 0;
       const state = userStateMap.get(conv.id);
@@ -495,8 +558,16 @@ export class ChatService {
     }
 
     // Verify membership
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normCurrentUserId && normUser2Id !== normCurrentUserId) {
       throw new ChatServiceError('Conversation not found', 404);
+    }
+
+    if (normUser1Id === normUser2Id) {
+      throw new ChatServiceError('Invalid conversation', 400);
     }
 
     // Check user deletion state for Delete for Me
@@ -511,8 +582,8 @@ export class ChatService {
       }
     }
 
-    const viewerUser = conversation.user1Id === currentUserId ? conversation.user1 : conversation.user2;
-    const targetUser = conversation.user1Id === currentUserId ? conversation.user2 : conversation.user1;
+    const viewerUser = normUser1Id === normCurrentUserId ? conversation.user1 : conversation.user2;
+    const targetUser = normUser1Id === normCurrentUserId ? conversation.user2 : conversation.user1;
 
     if (!targetUser || targetUser.isActive === false) {
       throw new ChatServiceError('User profile is unavailable', 404);
@@ -621,7 +692,11 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normCurrentUserId && normUser2Id !== normCurrentUserId) {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
@@ -637,10 +712,7 @@ export class ChatService {
       }
     }
 
-    const otherUserId =
-      conversation.user1Id === currentUserId
-        ? conversation.user2Id
-        : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -848,11 +920,15 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found or has been deleted', conversation?.isDeletedForEveryone ? 400 : 404);
     }
 
-    if (conversation.user1Id !== senderId && conversation.user2Id !== senderId) {
+    const normSenderId = String(senderId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normSenderId && normUser2Id !== normSenderId) {
       throw new ChatServiceError('You are not a participant in this conversation', 403);
     }
 
-    const recipientId = conversation.user1Id === senderId ? conversation.user2Id : conversation.user1Id;
+    const recipientId = getOtherParticipantId(conversation, senderId);
 
     // Check if blocked
     const isBlocked = await UserBlock.findOne({
@@ -1176,7 +1252,7 @@ export class ChatService {
       if (conv.user1Id !== senderId && conv.user2Id !== senderId) {
         throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
       }
-      const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+      const otherId = getOtherParticipantId(conv, senderId);
       targetRecipientIds = [otherId];
       directConversationMap.set(otherId, conv);
     } else {
@@ -1342,7 +1418,7 @@ export class ChatService {
       });
 
       for (const conv of existingConvs) {
-        const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+        const otherId = getOtherParticipantId(conv, senderId);
         conversationMap.set(otherId, conv);
       }
     }
@@ -1653,7 +1729,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -1803,7 +1879,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -1892,6 +1968,134 @@ export class ChatService {
   }
 
   /**
+   * 6c. SYNC DELIVERED MESSAGES (Global or Conversation-scoped)
+   * Client device synchronizes delivery status for pending or received messages.
+   * Atomically transitions status to 'delivered' and emits real-time delivery receipts to senders.
+   */
+  public async syncDeliveredMessages(
+    currentUserId: string,
+    options?: {
+      conversationId?: string | null;
+      messageIds?: string[];
+    }
+  ): Promise<{
+    deliveredCount: number;
+    messageIds: string[];
+    syncedAt: string;
+    conversationId?: string;
+  }> {
+    const conversationId = options?.conversationId || undefined;
+    const messageIds =
+      Array.isArray(options?.messageIds) && options!.messageIds.length > 0
+        ? options!.messageIds
+        : undefined;
+
+    // If conversationId is specified, verify current user is a valid participant
+    if (conversationId) {
+      const conversation = await Conversation.findByPk(conversationId, {
+        attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
+      });
+
+      if (!conversation || conversation.isDeletedForEveryone) {
+        throw new ChatServiceError('Conversation not found', 404);
+      }
+
+      if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+        throw new ChatServiceError('Conversation not found', 404);
+      }
+    }
+
+    const whereBase: any = {
+      recipientId: currentUserId,
+    };
+
+    if (conversationId) {
+      whereBase.conversationId = conversationId;
+    }
+
+    if (messageIds && messageIds.length > 0) {
+      whereBase.id = { [Op.in]: messageIds };
+    } else {
+      whereBase.isDelivered = false;
+    }
+
+    const eligibleMessages = await ChatMessage.findAll({
+      where: whereBase,
+      attributes: ['id', 'conversationId', 'senderId', 'isDelivered'],
+    });
+
+    const now = new Date();
+
+    if (eligibleMessages.length === 0) {
+      return {
+        deliveredCount: 0,
+        messageIds: messageIds && messageIds.length > 0 ? messageIds : [],
+        syncedAt: now.toISOString(),
+        ...(conversationId ? { conversationId } : {}),
+      };
+    }
+
+    const undeliveredMessages = eligibleMessages.filter((m) => !m.isDelivered);
+    const undeliveredIds = undeliveredMessages.map((m) => m.id);
+    let deliveredCount = 0;
+
+    if (undeliveredIds.length > 0) {
+      const t = await sequelize.transaction();
+      try {
+        const [updatedRows] = await ChatMessage.update(
+          {
+            isDelivered: true,
+            deliveredAt: now,
+          },
+          {
+            where: {
+              id: { [Op.in]: undeliveredIds },
+            },
+            transaction: t,
+          }
+        );
+        deliveredCount = updatedRows;
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
+      }
+
+      // Group delivered messages by sender & conversation for real-time receipt dispatch
+      const groupedBySender = new Map<string, { conversationId: string; messageIds: string[] }>();
+      for (const msg of undeliveredMessages) {
+        const key = `${msg.senderId}:${msg.conversationId}`;
+        if (!groupedBySender.has(key)) {
+          groupedBySender.set(key, { conversationId: msg.conversationId, messageIds: [] });
+        }
+        groupedBySender.get(key)!.messageIds.push(msg.id);
+      }
+
+      try {
+        const io = getSocketServer();
+        for (const [key, group] of groupedBySender.entries()) {
+          const senderId = key.split(':')[0];
+          const deliveryPayload = {
+            conversationId: group.conversationId,
+            recipientId: currentUserId,
+            messageIds: group.messageIds,
+            deliveredAt: now.toISOString(),
+          };
+          io.to(getUserRoomName(senderId)).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(getUserRoomName(senderId)).emit('message:delivery_receipt' as any, deliveryPayload);
+        }
+      } catch {}
+    }
+
+    return {
+      deliveredCount,
+      messageIds: eligibleMessages.map((m) => m.id),
+      syncedAt: now.toISOString(),
+      ...(conversationId ? { conversationId } : {}),
+    };
+  }
+
+  /**
    * Helper to compute conversation unread count for a user considering clearedAt threshold.
    */
   public async getConversationUnreadCount(
@@ -1938,7 +2142,7 @@ export class ChatService {
 
     const conversationIds = userConversations
       .filter((c: any) => {
-        const otherUserId = c.user1Id === userId ? c.user2Id : c.user1Id;
+        const otherUserId = getOtherParticipantId(c, userId);
         return !blockedArray.includes(otherUserId);
       })
       .map((c: any) => c.id);
@@ -2003,7 +2207,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -2099,7 +2303,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -2317,10 +2521,7 @@ export class ChatService {
       where: { conversationId, userId: currentUserId },
     });
 
-    const otherUserId =
-      conversation.user1Id === currentUserId
-        ? conversation.user2Id
-        : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({

@@ -171,6 +171,37 @@ export const registerChatSocketHandlers = (
   socket.on('chat:message_delivered', handleMessageDelivered);
   socket.on('message:delivered' as any, handleMessageDelivered);
 
+  // 2c. Event: chat:delivered_sync & message:delivered_sync
+  const handleDeliveredSync = async (payload: any, callback?: Function) => {
+    try {
+      const conversationId = payload?.conversationId || undefined;
+      let messageIds: string[] | undefined;
+      if (Array.isArray(payload?.messageIds)) {
+        messageIds = payload.messageIds;
+      } else if (Array.isArray(payload?.deliveredMessageIds)) {
+        messageIds = payload.deliveredMessageIds;
+      } else if (typeof payload?.messageId === 'string') {
+        messageIds = [payload.messageId];
+      }
+
+      const result = await chatService.syncDeliveredMessages(currentUserId, {
+        conversationId,
+        messageIds,
+      });
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: err.message || 'Failed to sync delivery' });
+      }
+    }
+  };
+
+  socket.on('chat:delivered_sync', handleDeliveredSync);
+  socket.on('message:delivered_sync' as any, handleDeliveredSync);
+
   // 3. Event: chat:typing
   socket.on('chat:typing', async (payload: any) => {
     try {

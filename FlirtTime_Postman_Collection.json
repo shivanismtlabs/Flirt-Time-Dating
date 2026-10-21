@@ -318,6 +318,41 @@
           "response": []
         },
         {
+          "name": "8b. Sync Delivered Messages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageIds\": [\n    \"{{messageId1}}\",\n    \"{{messageId2}}\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/delivered/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "delivered",
+                "sync"
+              ]
+            },
+            "description": "Synchronizes delivery status for pending or specified messages on the recipient device. Can be called with specific `messageIds`, an optional `conversationId`, or an empty body `{}` to acknowledge all pending undelivered messages for the user. Emits real-time `chat:delivery_receipt` / `message:delivery_receipt` to senders."
+          },
+          "response": []
+        },
+        {
           "name": "9. Mark Messages as Read (Cursor Boundary)",
           "request": {
             "method": "PATCH",
@@ -6817,6 +6852,42 @@
               ]
             },
             "description": "Fetches conversation messages in chronological order (oldest to newest) with pagination and isMine flags."
+          },
+          "response": []
+        },
+        {
+          "name": "4c. Send Message to One or Multiple Selected People (WhatsApp Style)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientIds\": [\n    \"00000000-0000-0000-0000-000000000001\",\n    \"00000000-0000-0000-0000-000000000002\"\n  ],\n  \"type\": \"text\",\n  \"content\": \"Hello everyone!\",\n  \"clientMessageId\": \"11111111-2222-3333-4444-555555555555\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "messages"
+              ]
+            },
+            "description": "Sends a message to one or multiple selected recipients (WhatsApp broadcast style). Creates/reuses individual 1-to-1 conversations, validates permissions independently, prevents self-messaging, provides idempotency protection, and dispatches real-time Socket.IO events."
           },
           "response": []
         },

@@ -69,12 +69,20 @@ export class S3Service {
     if (mimeType.includes('png')) ext = 'png';
     else if (mimeType.includes('webp')) ext = 'webp';
     else if (mimeType.includes('jpeg') || mimeType.includes('jpg')) ext = 'jpg';
+    else if (mimeType.includes('gif')) ext = 'gif';
+    else if (mimeType.includes('avif')) ext = 'avif';
+    else if (mimeType.includes('heic')) ext = 'heic';
+    else if (mimeType.includes('heif')) ext = 'heif';
+    else if (mimeType.includes('video/mp4')) ext = 'mp4';
+    else if (mimeType.includes('quicktime') || mimeType.includes('mov')) ext = 'mov';
     else if (mimeType.includes('mpeg') || mimeType.includes('mp3')) ext = 'mp3';
-    else if (mimeType.includes('m4a') || mimeType.includes('mp4')) ext = 'm4a';
+    else if (mimeType.includes('m4a')) ext = 'm4a';
+    else if (mimeType.includes('mp4')) ext = 'mp4';
     else if (mimeType.includes('wav')) ext = 'wav';
     else if (mimeType.includes('aac')) ext = 'aac';
     else if (mimeType.includes('ogg')) ext = 'ogg';
     else if (mimeType.includes('webm')) ext = 'webm';
+    else if (mimeType.includes('pdf')) ext = 'pdf';
 
     const uniqueId = crypto.randomBytes(16).toString('hex');
     const key = `${folder}/${userId}/${Date.now()}_${uniqueId}.${ext}`;

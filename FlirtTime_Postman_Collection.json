@@ -318,6 +318,41 @@
           "response": []
         },
         {
+          "name": "8b. Sync Delivered Messages",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageIds\": [\n    \"{{messageId1}}\",\n    \"{{messageId2}}\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/delivered/sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "delivered",
+                "sync"
+              ]
+            },
+            "description": "Synchronizes delivery status for pending or specified messages on the recipient device. Can be called with specific `messageIds`, an optional `conversationId`, or an empty body `{}` to acknowledge all pending undelivered messages for the user. Emits real-time `chat:delivery_receipt` / `message:delivery_receipt` to senders."
+          },
+          "response": []
+        },
+        {
           "name": "9. Mark Messages as Read (Cursor Boundary)",
           "request": {
             "method": "PATCH",

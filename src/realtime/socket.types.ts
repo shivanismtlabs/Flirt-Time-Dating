@@ -209,6 +209,16 @@ export interface ClientToServerEvents {
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 
+  'chat:delivered_sync': (
+    data: { conversationId?: string; messageIds?: string[]; deliveredMessageIds?: string[]; messageId?: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:delivered_sync': (
+    data: { conversationId?: string; messageIds?: string[]; deliveredMessageIds?: string[]; messageId?: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
   'chat:pin_message': (
     data: {
       conversationId: string;

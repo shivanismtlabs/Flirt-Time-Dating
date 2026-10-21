@@ -349,6 +349,168 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
     });
   });
 
+  describe('2b. Sync Delivered Messages (/api/v1/chats/delivered/sync)', () => {
+    it('should reject unauthenticated requests with 401', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .send({ messageIds: [msg1.id] });
+
+      expect(res.status).toBe(401);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should reject invalid messageId UUID with 400', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: ['not-a-uuid'] });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should sync delivered status for specified messageIds via POST /api/v1/chats/delivered/sync', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg1.id, msg2.id] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toBe('Delivery status synchronized successfully');
+      expect(res.body.data.deliveredCount).toBe(2);
+      expect(res.body.data.messageIds).toEqual(expect.arrayContaining([msg1.id, msg2.id]));
+      expect(res.body.data.syncedAt).toBeDefined();
+
+      const updated1 = await ChatMessage.findByPk(msg1.id);
+      expect(updated1?.isDelivered).toBe(true);
+      expect(updated1?.deliveredAt).not.toBeNull();
+
+      const updated2 = await ChatMessage.findByPk(msg2.id);
+      expect(updated2?.isDelivered).toBe(true);
+
+      const unchanged3 = await ChatMessage.findByPk(msg3.id);
+      expect(unchanged3?.isDelivered).toBe(false);
+    });
+
+    it('should sync all undelivered messages when body is empty via POST /api/v1/chats/delivered/sync', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.deliveredCount).toBe(3);
+      expect(res.body.data.messageIds).toEqual(expect.arrayContaining([msg1.id, msg2.id, msg3.id]));
+
+      const count = await ChatMessage.count({ where: { recipientId: userB.id, isDelivered: true } });
+      expect(count).toBe(3);
+    });
+
+    it('should support GET /api/v1/chats/delivered/sync', async () => {
+      const res = await request(app)
+        .get('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.deliveredCount).toBe(3);
+    });
+
+    it('should support PATCH & PUT /api/v1/chats/delivered/sync', async () => {
+      const patchRes = await request(app)
+        .patch('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg1.id] });
+
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.success).toBe(true);
+      expect(patchRes.body.data.deliveredCount).toBe(1);
+
+      const putRes = await request(app)
+        .put('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg2.id] });
+
+      expect(putRes.status).toBe(200);
+      expect(putRes.body.success).toBe(true);
+      expect(putRes.body.data.deliveredCount).toBe(1);
+    });
+
+    it('should support aliases: /api/v1/chat/delivered/sync and /api/v1/chats/delivery/sync', async () => {
+      const alias1 = await request(app)
+        .post('/api/v1/chat/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg1.id] });
+
+      expect(alias1.status).toBe(200);
+      expect(alias1.body.success).toBe(true);
+      expect(alias1.body.data.deliveredCount).toBe(1);
+
+      const alias2 = await request(app)
+        .post('/api/v1/chats/delivery/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg2.id] });
+
+      expect(alias2.status).toBe(200);
+      expect(alias2.body.success).toBe(true);
+      expect(alias2.body.data.deliveredCount).toBe(1);
+    });
+
+    it('should scope sync to conversationId when provided', async () => {
+      const foreignMsg = await ChatMessage.create({
+        conversationId: convAC.id,
+        senderId: userA.id,
+        recipientId: userC.id,
+        content: 'Hey Charlie foreign',
+        messageType: 'text',
+        isDelivered: false,
+      });
+
+      // User B tries to sync with convAB
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ conversationId: convAB.id, messageIds: [msg1.id] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.deliveredCount).toBe(1);
+      expect(res.body.data.conversationId).toBe(convAB.id);
+
+      // Foreign message in convAC untouched
+      const checkedForeign = await ChatMessage.findByPk(foreignMsg.id);
+      expect(checkedForeign?.isDelivered).toBe(false);
+    });
+
+    it('should reject non-participant from syncing with a foreign conversationId with 404', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenC}`)
+        .send({ conversationId: convAB.id });
+
+      expect(res.status).toBe(404);
+      expect(res.body.success).toBe(false);
+    });
+
+    it('should be safe and idempotent on repeated calls', async () => {
+      const res1 = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg1.id] });
+
+      expect(res1.body.data.deliveredCount).toBe(1);
+
+      const res2 = await request(app)
+        .post('/api/v1/chats/delivered/sync')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [msg1.id] });
+
+      expect(res2.body.data.deliveredCount).toBe(0);
+      expect(res2.body.data.messageIds).toEqual([msg1.id]);
+    });
+  });
+
   describe('3. Read Receipts and Cursor Boundaries (REST APIs: PATCH & POST)', () => {
     it('should mark messages up to lastReadMessageId boundary as read', async () => {
       // Initial unread count for User B is 3
@@ -638,5 +800,42 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
       expect(ack.success).toBe(false);
       expect(ack.error).toMatch(/conversationId and messageIds array are required/i);
     });
+
+    it('should support chat:delivered_sync over socket and notify sender in real-time', async () => {
+      const socketSender = createClientSocket({ auth: { token: tokenA } });
+      const socketRecipient = createClientSocket({ auth: { token: tokenB } });
+
+      await Promise.all([
+        new Promise<void>((resolve) => socketSender.on('connect', resolve)),
+        new Promise<void>((resolve) => socketRecipient.on('connect', resolve)),
+      ]);
+
+      let receivedPayload: any = null;
+      socketSender.on('chat:delivery_receipt' as any, (payload: any) => {
+        receivedPayload = payload;
+      });
+
+      const ack: any = await new Promise((resolve) => {
+        socketRecipient.emit(
+          'chat:delivered_sync' as any,
+          {
+            conversationId: convAB.id,
+            messageIds: [msg1.id],
+          },
+          resolve
+        );
+      });
+
+      expect(ack.success).toBe(true);
+      expect(ack.data.deliveredCount).toBe(1);
+
+      await new Promise((r) => setTimeout(r, 150));
+
+      expect(receivedPayload).not.toBeNull();
+      expect(receivedPayload.conversationId).toBe(convAB.id);
+      expect(receivedPayload.recipientId).toBe(userB.id);
+      expect(receivedPayload.messageIds).toEqual([msg1.id]);
+    });
   });
 });
+

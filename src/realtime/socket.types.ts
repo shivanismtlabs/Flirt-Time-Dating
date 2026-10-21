@@ -60,12 +60,99 @@ export interface ServerToClientEvents {
   /**
    * Emitted to participant notifying that messages were read.
    */
-  'chat:read_receipt': (data: { conversationId: string; readerId: string; readAt: string }) => void;
+  'chat:read_receipt': (data: {
+    conversationId: string;
+    readerId: string;
+    lastReadMessageId?: string | null;
+    markedCount: number;
+    readAt: string;
+  }) => void;
+
+  'message:read_receipt': (data: {
+    conversationId: string;
+    readerId: string;
+    lastReadMessageId?: string | null;
+    markedCount: number;
+    readAt: string;
+  }) => void;
+
+  /**
+   * Emitted to sender notifying that messages were acknowledged as delivered.
+   */
+  'chat:delivery_receipt': (data: {
+    conversationId: string;
+    recipientId: string;
+    messageIds: string[];
+    deliveredAt: string;
+  }) => void;
+
+  'message:delivery_receipt': (data: {
+    conversationId: string;
+    recipientId: string;
+    messageIds: string[];
+    deliveredAt: string;
+  }) => void;
+
+  /**
+   * Emitted to user active sessions to synchronize updated unread badge counts.
+   */
+  'conversation:unread_updated': (data: {
+    conversationId: string;
+    unreadCount: number;
+  }) => void;
 
   /**
    * Emitted to participant notifying typing status change.
    */
   'chat:typing': (data: { conversationId: string; userId: string; isTyping: boolean }) => void;
+
+  /**
+   * Video Calling Real-Time Events
+   */
+  'video_call:incoming': (data: {
+    callId: string;
+    channelName: string;
+    caller: { id: string; name: string; avatarUrl: string | null };
+    status: string;
+    expiresAt: string;
+  }) => void;
+
+  'video_call:accepted': (data: { callId: string; status: string }) => void;
+
+  'video_call:rejected': (data: { callId: string; status: string }) => void;
+
+  'video_call:ended': (data: { callId: string; status: string; endedBy?: string }) => void;
+
+  'video_call:busy': (data: { callId?: string; calleeId?: string; message: string }) => void;
+
+  'video_call:missed': (data: { callId: string; status: string }) => void;
+
+  /**
+   * Conversation Archive & Deletion Events
+   */
+  'conversation:archived': (data: { conversationId: string; isArchived: boolean }) => void;
+
+  'conversation:deleted': (data: { conversationId: string; deleteType: 'me' | 'everyone' }) => void;
+
+  /**
+   * Emitted to authorized conversation participants when a message is pinned.
+   */
+  'chat:message_pinned': (data: {
+    conversationId: string;
+    messageId: string;
+    isPinned: boolean;
+    pinnedBy: string;
+    pinnedAt: string;
+  }) => void;
+
+  /**
+   * Emitted to authorized conversation participants when a message is unpinned.
+   */
+  'chat:message_unpinned': (data: {
+    conversationId: string;
+    messageId: string;
+    isPinned: boolean;
+  }) => void;
 }
 
 /**
@@ -84,11 +171,46 @@ export interface ClientToServerEvents {
   ) => void;
 
   'chat:mark_read': (
-    data: { conversationId: string },
+    data: { conversationId: string; lastReadMessageId?: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:read': (
+    data: { conversationId: string; lastReadMessageId?: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:message_delivered': (
+    data: { conversationId: string; messageIds: string[] },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:delivered': (
+    data: { conversationId: string; messageIds: string[] },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:pin_message': (
+    data: {
+      conversationId: string;
+      messageId: string;
+      isPinned: boolean;
+      scope?: 'user' | 'conversation';
+    },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 
   'chat:typing': (data: { conversationId: string; isTyping: boolean }) => void;
+
+  'conversation:archive': (
+    data: { conversationId: string; isArchived: boolean },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'conversation:delete': (
+    data: { conversationId: string; deleteType: 'me' | 'everyone' },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
 }
 
 /**

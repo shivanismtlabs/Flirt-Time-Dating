@@ -72,8 +72,8 @@ export const registerChatSocketHandlers = (
     }
   });
 
-  // 2. Event: chat:mark_read
-  socket.on('chat:mark_read', async (payload: any, callback?: Function) => {
+  // 2. Event: chat:mark_read & message:read (Read Acknowledgement)
+  const handleMarkRead = async (payload: any, callback?: Function) => {
     try {
       if (!payload?.conversationId) {
         if (typeof callback === 'function') {
@@ -84,7 +84,8 @@ export const registerChatSocketHandlers = (
 
       const result = await chatService.markMessagesAsRead(
         currentUserId,
-        payload.conversationId
+        payload.conversationId,
+        payload.lastReadMessageId
       );
 
       if (typeof callback === 'function') {
@@ -95,7 +96,42 @@ export const registerChatSocketHandlers = (
         callback({ success: false, error: err.message || 'Failed to mark as read' });
       }
     }
-  });
+  };
+
+  socket.on('chat:mark_read', handleMarkRead);
+  socket.on('message:read' as any, handleMarkRead);
+
+  // 2b. Event: chat:message_delivered & message:delivered (Delivery Acknowledgement)
+  const handleMessageDelivered = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload?.conversationId || !Array.isArray(payload.messageIds)) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and messageIds array are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.acknowledgeDelivery(
+        currentUserId,
+        payload.conversationId,
+        payload.messageIds
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: err.message || 'Failed to acknowledge delivery' });
+      }
+    }
+  };
+
+  socket.on('chat:message_delivered', handleMessageDelivered);
+  socket.on('message:delivered' as any, handleMessageDelivered);
 
   // 3. Event: chat:typing
   socket.on('chat:typing', async (payload: any) => {
@@ -136,4 +172,133 @@ export const registerChatSocketHandlers = (
       });
     } catch {}
   });
+
+  // 4. Event: conversation:archive
+  socket.on('conversation:archive', async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object' || !payload.conversationId || typeof payload.isArchived !== 'boolean') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and boolean isArchived are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.archiveConversation(
+        currentUserId,
+        payload.conversationId,
+        payload.isArchived
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling conversation:archive event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to update conversation archive status';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  });
+
+  // 5. Event: conversation:delete
+  socket.on('conversation:delete', async (payload: any, callback?: Function) => {
+    try {
+      if (
+        !payload ||
+        typeof payload !== 'object' ||
+        !payload.conversationId ||
+        (payload.deleteType !== 'me' && payload.deleteType !== 'everyone')
+      ) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and deleteType ("me" or "everyone") are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.deleteConversation(
+        currentUserId,
+        payload.conversationId,
+        payload.deleteType
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling conversation:delete event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to delete conversation';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  });
+
+  // 6. Event: chat:pin_message (Message Pin / Unpin Synchronization)
+  socket.on('chat:pin_message', async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object' || !payload.conversationId || !payload.messageId) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and messageId are required',
+          });
+        }
+        return;
+      }
+
+      const isPinned = payload.isPinned !== undefined ? !!payload.isPinned : true;
+      const scope = payload.scope === 'conversation' ? 'conversation' : 'user';
+
+      const result = await chatService.pinMessage(
+        currentUserId,
+        payload.conversationId,
+        payload.messageId,
+        isPinned,
+        scope
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling chat:pin_message event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+        messageId: payload?.messageId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to update message pin status';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  });
 };
+

@@ -27,6 +27,554 @@
   ],
   "item": [
     {
+      "name": "Chat & Conversations (Archive & Deletion)",
+      "description": "Production-ready APIs and Socket.IO real-time event specifications for conversation archive, Delete for Me, Delete for Everyone, and multi-device synchronization.",
+      "item": [
+        {
+          "name": "1. Archive Conversation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isArchived\": true\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "archive"
+              ]
+            },
+            "description": "Hides a conversation from the requesting user's default chat list without deleting any messages or affecting other participants. Unpins if pinned. Synchronizes across user active devices via `conversation:archived` Socket.IO event."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Unarchive Conversation",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"isArchived\": false\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/archive",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "archive"
+              ]
+            },
+            "description": "Restores an archived conversation back to the requesting user's default active chat list."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Delete for Me",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"me\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Hides conversation for the requesting user only. Clears history cutoff (`clearedAt`), unpins, and notifies requesting user's active devices via `conversation:deleted` Socket.IO event. Other participants retain full history."
+          },
+          "response": []
+        },
+        {
+          "name": "4. Delete for Everyone",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"everyone\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Globally deletes/hides conversation for all participants. Sets `isDeletedForEveryone: true`, unpins for all users, blocks new messages, and notifies all participants via `conversation:deleted` with `deleteType: 'everyone'`."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Get Default Chat List (Active Conversations)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Fetches active, unarchived, non-deleted conversations partitioned into pinned and unpinned sections."
+          },
+          "response": []
+        },
+        {
+          "name": "6. Get Archived Chat List",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats?archived=true&page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats"
+              ],
+              "query": [
+                {
+                  "key": "archived",
+                  "value": "true"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Fetches all archived conversations for the authenticated user."
+          },
+          "response": []
+        },
+        {
+          "name": "7. Invalid Deletion Type (Negative Test)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"all\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}"
+              ]
+            },
+            "description": "Validates schema rejection when deleteType is not 'me' or 'everyone'."
+          },
+          "response": []
+        },
+        {
+          "name": "8. Acknowledge Message Delivery",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageIds\": [\n    \"{{messageId1}}\",\n    \"{{messageId2}}\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/delivery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "delivery"
+              ]
+            },
+            "description": "Acknowledges receipt/delivery of messages on recipient device. Atomically transitions message status to 'delivered', sets server timestamp `deliveredAt`, and dispatches real-time `chat:delivery_receipt` / `message:delivery_receipt` to the message sender."
+          },
+          "response": []
+        },
+        {
+          "name": "9. Mark Messages as Read (Cursor Boundary)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lastReadMessageId\": \"{{lastReadMessageId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            },
+            "description": "Marks incoming messages up to `lastReadMessageId` boundary as read by the recipient. Atomically sets `isRead: true`, `readAt: NOW()`, ensuring `isDelivered: true`. Emits `chat:read_receipt` to sender and syncs unread badge via `conversation:unread_updated`."
+          },
+          "response": []
+        },
+        {
+          "name": "10. Mark All Messages as Read (Omit Cursor)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/conversations/{{conversationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "conversations",
+                "{{conversationId}}",
+                "read"
+              ]
+            },
+            "description": "Backwards-compatible read receipt: marks all currently unread incoming messages in the conversation as read when no cursor ID is provided."
+          },
+          "response": []
+        },
+        {
+          "name": "11. Get Conversation & Aggregate Unread Count",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/unread-count?conversationId={{conversationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "unread-count"
+              ],
+              "query": [
+                {
+                  "key": "conversationId",
+                  "value": "{{conversationId}}"
+                }
+              ]
+            },
+            "description": "Returns unread count for a specific conversation and the user's total aggregate unread messages badge count across all active conversations."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Video Calls (Agora)",
+      "item": [
+        {
+          "name": "1. Initiate Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"calleeId\": \"{{calleeId}}\",\n  \"conversationId\": \"{{conversationId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/initiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "initiate"
+              ]
+            },
+            "description": "Initiates a one-to-one Agora RTC video call to the recipient user. Generates server-side channel name, caller UID, callee UID, short-lived RTC token, and notifies recipient via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "2. Accept Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/accept",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "accept"
+              ]
+            },
+            "description": "Recipient accepts the incoming ringing call. Atomically transitions status to accepted, returns callee RTC token, and notifies caller via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "3. Reject Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/reject",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "reject"
+              ]
+            },
+            "description": "Recipient rejects the incoming ringing call. Transitions status to rejected and notifies caller via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "4. End Video Call",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/{{callId}}/end",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "{{callId}}",
+                "end"
+              ]
+            },
+            "description": "Participant terminates ongoing or ringing video call. Idempotent."
+          },
+          "response": []
+        },
+        {
+          "name": "5. Get Active Video Call",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/calls/video/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "calls",
+                "video",
+                "active"
+              ]
+            },
+            "description": "Retrieves ongoing active call for current user with refreshed Agora RTC token."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "Health Check",
       "item": [
         {

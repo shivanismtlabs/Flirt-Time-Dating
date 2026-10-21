@@ -7,6 +7,9 @@ export interface ConversationAttributes {
   user2Id: string;
   lastMessage?: string | null;
   lastMessageAt?: Date | null;
+  isDeletedForEveryone?: boolean;
+  deletedForEveryoneAt?: Date | null;
+  deletedForEveryoneBy?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -14,7 +17,14 @@ export interface ConversationAttributes {
 export interface ConversationCreationAttributes
   extends Optional<
     ConversationAttributes,
-    'id' | 'lastMessage' | 'lastMessageAt' | 'createdAt' | 'updatedAt'
+    | 'id'
+    | 'lastMessage'
+    | 'lastMessageAt'
+    | 'isDeletedForEveryone'
+    | 'deletedForEveryoneAt'
+    | 'deletedForEveryoneBy'
+    | 'createdAt'
+    | 'updatedAt'
   > {}
 
 export class Conversation
@@ -25,6 +35,9 @@ export class Conversation
   declare public user2Id: string;
   declare public lastMessage: string | null;
   declare public lastMessageAt: Date | null;
+  declare public isDeletedForEveryone: boolean;
+  declare public deletedForEveryoneAt: Date | null;
+  declare public deletedForEveryoneBy: string | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -32,6 +45,7 @@ export class Conversation
   declare public messages?: any[];
   declare public user1?: any;
   declare public user2?: any;
+  declare public userStates?: any[];
 }
 
 Conversation.init(
@@ -68,6 +82,25 @@ Conversation.init(
     lastMessageAt: {
       type: DataTypes.DATE,
       allowNull: true,
+    },
+    isDeletedForEveryone: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    deletedForEveryoneAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    deletedForEveryoneBy: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'users',
+        key: 'id',
+      },
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE',
     },
   },
   {

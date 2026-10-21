@@ -24,6 +24,7 @@ import {
 import { socketLogger } from './socket.errors';
 import { SOCKET_ERROR_CODES } from './socket.constants';
 import { registerChatSocketHandlers } from './socket.chat';
+import { registerVideoCallSocketHandlers } from './socket.videoCall';
 
 /**
  * Singleton Socket.IO server reference.
@@ -57,10 +58,11 @@ export const initSocketServer = (
   // 1. Mount Handshake Authentication Middleware
   io.use(socketAuthMiddleware);
 
-  // 2. Mount Connection Lifecycle Listener & Chat Event Handlers
+  // 2. Mount Connection Lifecycle Listener, Chat & Video Call Event Handlers
   io.on('connection', (socket: AppSocket) => {
     handleSocketConnection(socket, io);
     registerChatSocketHandlers(socket, io);
+    registerVideoCallSocketHandlers(socket, io);
   });
 
   ioInstance = io;

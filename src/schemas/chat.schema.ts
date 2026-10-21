@@ -3,6 +3,10 @@ import { z } from 'zod';
 export const getChatListSchema = z.object({
   query: z.object({
     search: z.string().trim().max(100, { message: 'Search query cannot exceed 100 characters' }).optional(),
+    archived: z
+      .string()
+      .optional()
+      .transform((val) => val === 'true' || val === '1'),
     page: z
       .string()
       .regex(/^\d+$/, { message: 'Page must be a positive integer' })
@@ -45,7 +49,13 @@ export const getMessagesSchema = z.object({
       .pipe(z.number().int().min(1).max(100, { message: 'Limit cannot exceed 100' }))
       .optional()
       .default('30'),
-    before: z.string().datetime({ message: 'Invalid ISO timestamp for before cursor' }).optional(),
+    before: z.string().optional(),
+    after: z.string().optional(),
+    cursor: z.string().optional(),
+    pinned: z
+      .string()
+      .optional()
+      .transform((val) => val === 'true' || val === '1'),
   }),
 });
 
@@ -235,6 +245,41 @@ export const markReadSchema = z.object({
   params: z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
   }),
+  body: z
+    .object({
+      lastReadMessageId: z
+        .string()
+        .uuid({ message: 'Invalid lastReadMessageId UUID format' })
+        .optional()
+        .nullable(),
+    })
+    .optional(),
+});
+
+export const deliveryReceiptSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+  }),
+  body: z.object({
+    messageIds: z
+      .array(
+        z.string().uuid({ message: 'Every messageId must be a valid UUID' }),
+        { required_error: 'messageIds array is required' }
+      )
+      .min(1, { message: 'messageIds array cannot be empty' })
+      .max(100, { message: 'Cannot acknowledge more than 100 messages at once' }),
+  }),
+});
+
+export const getUnreadCountSchema = z.object({
+  query: z
+    .object({
+      conversationId: z
+        .string()
+        .uuid({ message: 'Invalid conversationId UUID format' })
+        .optional(),
+    })
+    .optional(),
 });
 
 export const pinConversationSchema = z.object({
@@ -243,6 +288,45 @@ export const pinConversationSchema = z.object({
   }),
   body: z.object({
     isPinned: z.boolean({ required_error: 'isPinned is required (true to pin, false to unpin)' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }).optional(),
+    scope: z.enum(['user', 'conversation']).optional(),
+  }),
+});
+
+export const pinMessageSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
+  }),
+  body: z
+    .object({
+      isPinned: z.boolean().default(true),
+      scope: z.enum(['user', 'conversation']).optional().default('user'),
+    })
+    .optional()
+    .default({ isPinned: true, scope: 'user' }),
+});
+
+export const getPinnedMessagesSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+  }),
+  query: z.object({
+    page: z
+      .string()
+      .regex(/^\d+$/, { message: 'Page must be a positive integer' })
+      .transform(Number)
+      .pipe(z.number().int().min(1))
+      .optional()
+      .default('1'),
+    limit: z
+      .string()
+      .regex(/^\d+$/, { message: 'Limit must be a positive integer' })
+      .transform(Number)
+      .pipe(z.number().int().min(1).max(100, { message: 'Limit cannot exceed 100' }))
+      .optional()
+      .default('30'),
+    scope: z.enum(['user', 'conversation', 'all']).optional().default('all'),
   }),
 });
 
@@ -252,7 +336,36 @@ export const startConversationSchema = z.object({
   }),
 });
 
+export const archiveConversationSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+  }),
+  body: z.object({
+    isArchived: z.boolean({ required_error: 'isArchived is required' }),
+  }),
+});
+
+export const deleteConversationSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+  }),
+  body: z.object({
+    deleteType: z.enum(['me', 'everyone'], {
+      errorMap: () => ({ message: 'deleteType must be either "me" or "everyone"' }),
+    }),
+  }),
+});
+
 export type GetChatListQuery = z.infer<typeof getChatListSchema>['query'];
+export type GetMessagesQuery = z.infer<typeof getMessagesSchema>['query'];
 export type SendMessageInput = z.infer<typeof sendMessageSchema>['body'];
+export type MarkReadInput = z.infer<typeof markReadSchema>['body'];
+export type DeliveryReceiptInput = z.infer<typeof deliveryReceiptSchema>['body'];
+export type GetUnreadCountQuery = z.infer<typeof getUnreadCountSchema>['query'];
 export type PinConversationInput = z.infer<typeof pinConversationSchema>['body'];
+export type PinMessageInput = z.infer<typeof pinMessageSchema>['body'];
+export type GetPinnedMessagesQuery = z.infer<typeof getPinnedMessagesSchema>['query'];
 export type StartConversationInput = z.infer<typeof startConversationSchema>['body'];
+export type ArchiveConversationInput = z.infer<typeof archiveConversationSchema>['body'];
+export type DeleteConversationInput = z.infer<typeof deleteConversationSchema>['body'];
+

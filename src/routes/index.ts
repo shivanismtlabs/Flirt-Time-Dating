@@ -18,6 +18,7 @@ import subscriptionRoutes from './subscription.routes';
 import coinRoutes from './coin.routes';
 import walletRoutes from './wallet.routes';
 import chatRoutes from './chat.routes';
+import videoCallRoutes from './videoCall.routes';
 import { authenticate } from '../middlewares/auth.middleware';
 import { handleUploadSelfie } from '../middlewares/upload.middleware';
 import {
@@ -53,6 +54,8 @@ router.use('/subscriptions', subscriptionRoutes);
 router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/chats', chatRoutes);
+router.use('/chat/conversations', chatRoutes);
+router.use('/calls/video', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);

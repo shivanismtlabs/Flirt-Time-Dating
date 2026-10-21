@@ -41,6 +41,9 @@ import { SubscriptionEventLog } from './subscriptionEventLog.model';
 import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
 import { NotificationOutbox } from './notificationOutbox.model';
 import { NotificationSetting } from './notificationSetting.model';
+import { VideoCall } from './videoCall.model';
+import { ConversationUserState } from './conversationUserState.model';
+import { ChatMessagePin } from './chatMessagePin.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -403,6 +406,51 @@ ConversationPin.belongsTo(Conversation, {
   as: 'conversation',
 });
 
+// ChatMessagePin associations
+User.hasMany(ChatMessagePin, {
+  foreignKey: 'userId',
+  as: 'pinnedChatMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(ChatMessagePin, {
+  foreignKey: 'pinnedBy',
+  as: 'authoredMessagePins',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(User, {
+  foreignKey: 'pinnedBy',
+  as: 'pinner',
+});
+
+Conversation.hasMany(ChatMessagePin, {
+  foreignKey: 'conversationId',
+  as: 'pinnedMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+ChatMessage.hasMany(ChatMessagePin, {
+  foreignKey: 'messageId',
+  as: 'pins',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(ChatMessage, {
+  foreignKey: 'messageId',
+  as: 'message',
+});
+
 User.hasMany(ChatMessage, {
   foreignKey: 'senderId',
   as: 'sentMessages',
@@ -667,6 +715,79 @@ NotificationOutbox.belongsTo(User, {
   as: 'recipient',
 });
 
+// User <-> VideoCall associations
+User.hasMany(VideoCall, {
+  foreignKey: 'callerId',
+  as: 'initiatedVideoCalls',
+  onDelete: 'CASCADE',
+});
+
+User.hasMany(VideoCall, {
+  foreignKey: 'calleeId',
+  as: 'receivedVideoCalls',
+  onDelete: 'CASCADE',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'callerId',
+  as: 'caller',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'calleeId',
+  as: 'callee',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'endedBy',
+  as: 'terminator',
+});
+
+Conversation.hasMany(VideoCall, {
+  foreignKey: 'conversationId',
+  as: 'videoCalls',
+  onDelete: 'SET NULL',
+});
+
+VideoCall.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+// Conversation <-> ConversationUserState associations
+Conversation.hasMany(ConversationUserState, {
+  foreignKey: 'conversationId',
+  as: 'userStates',
+  onDelete: 'CASCADE',
+});
+
+ConversationUserState.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+User.hasMany(ConversationUserState, {
+  foreignKey: 'userId',
+  as: 'conversationStates',
+  onDelete: 'CASCADE',
+});
+
+ConversationUserState.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(Conversation, {
+  foreignKey: 'deletedForEveryoneBy',
+  as: 'globallyDeletedConversations',
+  onDelete: 'SET NULL',
+});
+
+Conversation.belongsTo(User, {
+  foreignKey: 'deletedForEveryoneBy',
+  as: 'globalDeleter',
+});
+
 export {
   sequelize,
   User,
@@ -709,6 +830,9 @@ export {
   MomentCommentLike,
   NotificationOutbox,
   NotificationSetting,
+  VideoCall,
+  ConversationUserState,
+  ChatMessagePin,
   DEFAULT_NOTIFY_SETTINGS,
   NotificationSettings,
 };
@@ -1164,6 +1288,9 @@ export const initDb = async (force = false): Promise<void> => {
     await MomentCommentLike.sync();
     await NotificationSetting.sync();
     await ConversationPin.sync();
+    await VideoCall.sync();
+    await ConversationUserState.sync();
+    await ChatMessagePin.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();

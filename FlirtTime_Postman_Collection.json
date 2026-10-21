@@ -6821,6 +6821,42 @@
           "response": []
         },
         {
+          "name": "4c. Send Message to One or Multiple Selected People (WhatsApp Style)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientIds\": [\n    \"00000000-0000-0000-0000-000000000001\",\n    \"00000000-0000-0000-0000-000000000002\"\n  ],\n  \"type\": \"text\",\n  \"content\": \"Hello everyone!\",\n  \"clientMessageId\": \"11111111-2222-3333-4444-555555555555\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chat/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                "messages"
+              ]
+            },
+            "description": "Sends a message to one or multiple selected recipients (WhatsApp broadcast style). Creates/reuses individual 1-to-1 conversations, validates permissions independently, prevents self-messaging, provides idempotency protection, and dispatches real-time Socket.IO events."
+          },
+          "response": []
+        },
+        {
           "name": "5. Send Text Message",
           "request": {
             "method": "POST",

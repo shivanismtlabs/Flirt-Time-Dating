@@ -9,6 +9,7 @@ import {
   sendMultiMessageHandler,
   markReadHandler,
   deliveryReceiptHandler,
+  syncDeliveredMessagesHandler,
   getUnreadCountHandler,
   pinConversationHandler,
   pinMessageHandler,
@@ -25,6 +26,7 @@ import {
   sendMultiMessageSchema,
   markReadSchema,
   deliveryReceiptSchema,
+  syncDeliveredMessagesSchema,
   getUnreadCountSchema,
   pinConversationSchema,
   pinMessageSchema,
@@ -44,6 +46,17 @@ router.get('/', validate(getChatListSchema), getChatListHandler);
 
 // 1b. GET /api/v1/chats/unread-count - Total or per-conversation unread message counts
 router.get('/unread-count', validate(getUnreadCountSchema), getUnreadCountHandler);
+
+// 1c. POST, PATCH, PUT, GET /api/v1/chats/delivered/sync & /delivery/sync - Synchronize delivered messages
+router.post('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.patch('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.put('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.get('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+
+router.post('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.patch('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.put('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.get('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
 
 // 2. POST /api/v1/chats - Start or get 1-to-1 conversation with a recipient
 router.post('/', validate(startConversationSchema), startConversationHandler);

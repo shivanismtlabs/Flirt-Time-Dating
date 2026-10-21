@@ -1834,6 +1834,134 @@ export class ChatService {
   }
 
   /**
+   * 6c. SYNC DELIVERED MESSAGES (Global or Conversation-scoped)
+   * Client device synchronizes delivery status for pending or received messages.
+   * Atomically transitions status to 'delivered' and emits real-time delivery receipts to senders.
+   */
+  public async syncDeliveredMessages(
+    currentUserId: string,
+    options?: {
+      conversationId?: string | null;
+      messageIds?: string[];
+    }
+  ): Promise<{
+    deliveredCount: number;
+    messageIds: string[];
+    syncedAt: string;
+    conversationId?: string;
+  }> {
+    const conversationId = options?.conversationId || undefined;
+    const messageIds =
+      Array.isArray(options?.messageIds) && options!.messageIds.length > 0
+        ? options!.messageIds
+        : undefined;
+
+    // If conversationId is specified, verify current user is a valid participant
+    if (conversationId) {
+      const conversation = await Conversation.findByPk(conversationId, {
+        attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
+      });
+
+      if (!conversation || conversation.isDeletedForEveryone) {
+        throw new ChatServiceError('Conversation not found', 404);
+      }
+
+      if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+        throw new ChatServiceError('Conversation not found', 404);
+      }
+    }
+
+    const whereBase: any = {
+      recipientId: currentUserId,
+    };
+
+    if (conversationId) {
+      whereBase.conversationId = conversationId;
+    }
+
+    if (messageIds && messageIds.length > 0) {
+      whereBase.id = { [Op.in]: messageIds };
+    } else {
+      whereBase.isDelivered = false;
+    }
+
+    const eligibleMessages = await ChatMessage.findAll({
+      where: whereBase,
+      attributes: ['id', 'conversationId', 'senderId', 'isDelivered'],
+    });
+
+    const now = new Date();
+
+    if (eligibleMessages.length === 0) {
+      return {
+        deliveredCount: 0,
+        messageIds: messageIds && messageIds.length > 0 ? messageIds : [],
+        syncedAt: now.toISOString(),
+        ...(conversationId ? { conversationId } : {}),
+      };
+    }
+
+    const undeliveredMessages = eligibleMessages.filter((m) => !m.isDelivered);
+    const undeliveredIds = undeliveredMessages.map((m) => m.id);
+    let deliveredCount = 0;
+
+    if (undeliveredIds.length > 0) {
+      const t = await sequelize.transaction();
+      try {
+        const [updatedRows] = await ChatMessage.update(
+          {
+            isDelivered: true,
+            deliveredAt: now,
+          },
+          {
+            where: {
+              id: { [Op.in]: undeliveredIds },
+            },
+            transaction: t,
+          }
+        );
+        deliveredCount = updatedRows;
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
+      }
+
+      // Group delivered messages by sender & conversation for real-time receipt dispatch
+      const groupedBySender = new Map<string, { conversationId: string; messageIds: string[] }>();
+      for (const msg of undeliveredMessages) {
+        const key = `${msg.senderId}:${msg.conversationId}`;
+        if (!groupedBySender.has(key)) {
+          groupedBySender.set(key, { conversationId: msg.conversationId, messageIds: [] });
+        }
+        groupedBySender.get(key)!.messageIds.push(msg.id);
+      }
+
+      try {
+        const io = getSocketServer();
+        for (const [key, group] of groupedBySender.entries()) {
+          const senderId = key.split(':')[0];
+          const deliveryPayload = {
+            conversationId: group.conversationId,
+            recipientId: currentUserId,
+            messageIds: group.messageIds,
+            deliveredAt: now.toISOString(),
+          };
+          io.to(getUserRoomName(senderId)).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(getUserRoomName(senderId)).emit('message:delivery_receipt' as any, deliveryPayload);
+        }
+      } catch {}
+    }
+
+    return {
+      deliveredCount,
+      messageIds: eligibleMessages.map((m) => m.id),
+      syncedAt: now.toISOString(),
+      ...(conversationId ? { conversationId } : {}),
+    };
+  }
+
+  /**
    * Helper to compute conversation unread count for a user considering clearedAt threshold.
    */
   public async getConversationUnreadCount(

@@ -504,8 +504,16 @@ export class ChatService {
     }
 
     // Verify membership
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normCurrentUserId && normUser2Id !== normCurrentUserId) {
       throw new ChatServiceError('Conversation not found', 404);
+    }
+
+    if (normUser1Id === normUser2Id) {
+      throw new ChatServiceError('Invalid conversation', 400);
     }
 
     // Check user deletion state for Delete for Me
@@ -520,8 +528,8 @@ export class ChatService {
       }
     }
 
-    const viewerUser = conversation.user1Id === currentUserId ? conversation.user1 : conversation.user2;
-    const targetUser = conversation.user1Id === currentUserId ? conversation.user2 : conversation.user1;
+    const viewerUser = normUser1Id === normCurrentUserId ? conversation.user1 : conversation.user2;
+    const targetUser = normUser1Id === normCurrentUserId ? conversation.user2 : conversation.user1;
 
     if (!targetUser || targetUser.isActive === false) {
       throw new ChatServiceError('User profile is unavailable', 404);
@@ -630,7 +638,11 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normCurrentUserId && normUser2Id !== normCurrentUserId) {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
@@ -646,10 +658,7 @@ export class ChatService {
       }
     }
 
-    const otherUserId =
-      conversation.user1Id === currentUserId
-        ? conversation.user2Id
-        : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -857,11 +866,15 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found or has been deleted', conversation?.isDeletedForEveryone ? 400 : 404);
     }
 
-    if (conversation.user1Id !== senderId && conversation.user2Id !== senderId) {
+    const normSenderId = String(senderId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normSenderId && normUser2Id !== normSenderId) {
       throw new ChatServiceError('You are not a participant in this conversation', 403);
     }
 
-    const recipientId = conversation.user1Id === senderId ? conversation.user2Id : conversation.user1Id;
+    const recipientId = getOtherParticipantId(conversation, senderId);
 
     // Check if blocked
     const isBlocked = await UserBlock.findOne({
@@ -1181,7 +1194,7 @@ export class ChatService {
       if (conv.user1Id !== senderId && conv.user2Id !== senderId) {
         throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
       }
-      const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+      const otherId = getOtherParticipantId(conv, senderId);
       targetRecipientIds = [otherId];
       directConversationMap.set(otherId, conv);
     } else {
@@ -1347,7 +1360,7 @@ export class ChatService {
       });
 
       for (const conv of existingConvs) {
-        const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+        const otherId = getOtherParticipantId(conv, senderId);
         conversationMap.set(otherId, conv);
       }
     }
@@ -1658,7 +1671,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -1808,7 +1821,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -2071,7 +2084,7 @@ export class ChatService {
 
     const conversationIds = userConversations
       .filter((c: any) => {
-        const otherUserId = c.user1Id === userId ? c.user2Id : c.user1Id;
+        const otherUserId = getOtherParticipantId(c, userId);
         return !blockedArray.includes(otherUserId);
       })
       .map((c: any) => c.id);
@@ -2136,7 +2149,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -2232,7 +2245,7 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    const otherUserId = conversation.user1Id === currentUserId ? conversation.user2Id : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({
@@ -2450,10 +2463,7 @@ export class ChatService {
       where: { conversationId, userId: currentUserId },
     });
 
-    const otherUserId =
-      conversation.user1Id === currentUserId
-        ? conversation.user2Id
-        : conversation.user1Id;
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
     // Mutual block check
     const isBlocked = await UserBlock.findOne({

@@ -50,6 +50,8 @@ router.use('/notifications', notificationRoutes);
 router.use('/interactions', interactionRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/media', mediaRoutes);
+router.use('/uploads', mediaRoutes);
+router.use('/upload', mediaRoutes);
 router.use('/deep-links', deepLinkRoutes);
 router.use('/coin-packages', coinPackageRoutes);
 router.use('/subscriptions', subscriptionRoutes);

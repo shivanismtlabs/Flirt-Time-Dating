@@ -17,7 +17,7 @@ export class MediaController {
     req: Request,
     res: Response,
     next: NextFunction
-  ): Promise<void> {
+  ): Promise<Response | void> {
     try {
       const userId = (req as any).user?.id || 'anonymous';
 
@@ -166,7 +166,7 @@ export class MediaController {
     req: Request,
     res: Response,
     next: NextFunction
-  ): Promise<void> {
+  ): Promise<Response | void> {
     try {
       const userId = (req as any).user?.id || 'anonymous';
       const folderRaw = (req.body?.folder || req.query?.folder || 'uploads').toString().trim();

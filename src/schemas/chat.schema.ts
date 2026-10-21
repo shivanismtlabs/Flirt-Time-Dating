@@ -95,17 +95,21 @@ export const contactMetadataSchema = z
 export const imageMetadataSchema = z
   .object({
     thumbnailUrl: z.string().url().max(1000).optional(),
+    imageUrl: z.string().url().max(1000).optional(),
+    mediaUrl: z.string().url().max(1000).optional(),
+    url: z.string().url().max(1000).optional(),
+    caption: z.string().max(1000).optional(),
     width: z.number().int().positive().optional(),
     height: z.number().int().positive().optional(),
     fileSize: z
       .number()
       .int()
       .positive()
-      .max(20 * 1024 * 1024, { message: 'Image size exceeds maximum limit (20MB)' })
+      .max(50 * 1024 * 1024, { message: 'Image size exceeds maximum limit (50MB)' })
       .optional(),
     mimeType: z
       .string()
-      .regex(/^image\/(jpeg|png|webp|gif|avif)$/, { message: 'Unsupported image MIME type' })
+      .regex(/^image\/(jpeg|jpg|png|webp|gif|avif|heic|heif)$/, { message: 'Unsupported image MIME type' })
       .optional(),
     source: z.enum(['photo', 'camera']).optional(),
   })
@@ -120,8 +124,13 @@ export const sendMessageSchema = z.object({
       content: z
         .string()
         .trim()
-        .max(5000, { message: 'Message content cannot exceed 5000 characters' })
+        .max(5000000, { message: 'Message content cannot exceed maximum limit' })
         .optional(),
+      imageUrl: z.string().trim().max(5000).optional(),
+      image: z.string().trim().max(5000000).optional(),
+      mediaUrl: z.string().trim().max(5000).optional(),
+      imageKey: z.string().trim().max(5000).optional(),
+      caption: z.string().trim().max(1000).optional(),
       type: z
         .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
         .optional(),
@@ -138,7 +147,11 @@ export const sendMessageSchema = z.object({
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
-      const type = data.type || data.messageType || 'text';
+      const resolvedContent = data.content || data.imageUrl || data.image || data.mediaUrl || data.imageKey;
+      if (resolvedContent && !data.content) {
+        data.content = resolvedContent;
+      }
+      const type = data.type || data.messageType || (data.imageUrl || data.image || data.imageKey ? 'image' : 'text');
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -265,8 +278,13 @@ export const sendMultiMessageSchema = z.object({
       content: z
         .string()
         .trim()
-        .max(5000, { message: 'Message content cannot exceed 5000 characters' })
+        .max(5000000, { message: 'Message content cannot exceed maximum limit' })
         .optional(),
+      imageUrl: z.string().trim().max(5000).optional(),
+      image: z.string().trim().max(5000000).optional(),
+      mediaUrl: z.string().trim().max(5000).optional(),
+      imageKey: z.string().trim().max(5000).optional(),
+      caption: z.string().trim().max(1000).optional(),
       type: z
         .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
           errorMap: () => ({
@@ -305,7 +323,11 @@ export const sendMultiMessageSchema = z.object({
         });
       }
 
-      const type = data.type || data.messageType || 'text';
+      const resolvedContent = data.content || data.imageUrl || data.image || data.mediaUrl || data.imageKey;
+      if (resolvedContent && !data.content) {
+        data.content = resolvedContent;
+      }
+      const type = data.type || data.messageType || (data.imageUrl || data.image || data.imageKey ? 'image' : 'text');
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
           ctx.addIssue({

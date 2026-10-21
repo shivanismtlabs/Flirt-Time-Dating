@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { chatService, ChatServiceError } from '../services/chat.service';
+import { s3Service } from '../services/s3.service';
 import { sendSuccess, sendError } from '../utils/response';
 
 /**
@@ -59,12 +60,17 @@ export const getMessagesHandler = async (req: AuthenticatedRequest, res: Respons
 /**
  * 4. POST /api/v1/chats/:conversationId/messages
  * Sends a message (text, audio, or image) with idempotency protection.
+ * Supports direct multipart/form-data image/audio file upload or pre-uploaded S3 keys.
  */
 export const sendMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
     const conversationId = req.params.conversationId as string;
-    const result = await chatService.sendMessage(currentUserId, conversationId, req.body);
+    const result = await chatService.sendMessage(currentUserId, conversationId, {
+      ...req.body,
+      file: req.file,
+      files: req.files,
+    });
     return sendSuccess(res, 'Message sent successfully', result, 201);
   } catch (error: any) {
     if (error instanceof ChatServiceError) {
@@ -77,11 +83,16 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
 /**
  * 4b. POST /api/v1/chat/messages & /api/v1/chats/messages
  * Sends a message to one person or multiple selected recipients (WhatsApp style multi-send).
+ * Supports direct multipart/form-data image/audio file upload to S3.
  */
 export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const result = await chatService.sendMultiMessage(currentUserId, req.body);
+    const result = await chatService.sendMultiMessage(currentUserId, {
+      ...req.body,
+      file: req.file,
+      files: req.files,
+    });
     const message =
       result.failureCount === 0
         ? 'Messages sent successfully'
@@ -94,6 +105,65 @@ export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Re
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Failed to send message', 500);
+  }
+};
+
+/**
+ * 4c. POST /api/v1/chats/upload, POST /api/v1/chats/media, POST /api/v1/chats/:conversationId/upload
+ * S3 image/media upload handler specifically for chat attachments.
+ * Accepts direct multipart file upload to S3 or presigned PUT URL generation.
+ */
+export const uploadChatMediaHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const file =
+      req.file ||
+      (req.files && (req.files as any).image?.[0]) ||
+      (req.files && (req.files as any).file?.[0]) ||
+      (req.files && (req.files as any).photo?.[0]) ||
+      (req.files && (req.files as any).media?.[0]);
+
+    if (file) {
+      const mimeType = file.mimetype || 'image/jpeg';
+      const s3Key = await s3Service.uploadMedia(file.buffer, currentUserId, mimeType, 'chat');
+
+      if (mimeType.startsWith('image/')) {
+        s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+      }
+
+      const publicUrl = s3Service.getPublicUrl(s3Key);
+      const thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+
+      return sendSuccess(
+        res,
+        'Chat media uploaded successfully',
+        {
+          key: s3Key,
+          imageKey: s3Key,
+          url: publicUrl,
+          imageUrl: publicUrl,
+          mediaUrl: publicUrl,
+          thumbnailUrl,
+          publicUrl,
+          mimeType,
+          size: file.size,
+        },
+        201
+      );
+    }
+
+    // If no file attached, generate presigned S3 upload URL for folder "chat"
+    const { mimeType = 'image/jpeg', expiresInSeconds = 900 } = req.body || req.query || {};
+    const presignedData = await s3Service.generatePresignedUploadUrl(
+      currentUserId,
+      mimeType,
+      'chat',
+      Number(expiresInSeconds) || 900
+    );
+
+    return sendSuccess(res, 'Presigned upload URL generated successfully', presignedData, 200);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Failed to upload chat media', 500);
   }
 };
 

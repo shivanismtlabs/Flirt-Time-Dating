@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
+import { handleUploadChatMedia } from '../middlewares/upload.middleware';
 import {
   getChatListHandler,
   getConversationDetailHandler,
   getMessagesHandler,
   sendMessageHandler,
   sendMultiMessageHandler,
+  uploadChatMediaHandler,
   markReadHandler,
   deliveryReceiptHandler,
   syncDeliveredMessagesHandler,
@@ -62,10 +64,20 @@ router.get('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDelivere
 router.post('/', validate(startConversationSchema), startConversationHandler);
 
 // 2b. POST /api/v1/chats/messages - Send message to one or multiple recipients (WhatsApp-style broadcast/multi-send)
-router.post('/messages', validate(sendMultiMessageSchema), sendMultiMessageHandler);
+// Supports JSON payload and direct multipart/form-data media file upload to AWS S3
+router.post('/messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+
+// 2c. Dedicated S3 Chat Media Upload & Presigned URL Endpoints
+// Supports POST /api/v1/chats/upload, POST /api/v1/chats/media
+router.post('/upload', handleUploadChatMedia, uploadChatMediaHandler);
+router.post('/media', handleUploadChatMedia, uploadChatMediaHandler);
 
 // 3. GET /api/v1/chats/:conversationId - Conversation header details and shared interests
 router.get('/:conversationId', validate(getConversationDetailSchema), getConversationDetailHandler);
+
+// 3b. POST /api/v1/chats/:conversationId/upload & media - Conversation-scoped S3 media upload
+router.post('/:conversationId/upload', handleUploadChatMedia, uploadChatMediaHandler);
+router.post('/:conversationId/media', handleUploadChatMedia, uploadChatMediaHandler);
 
 // 4. GET /api/v1/chats/:conversationId/messages - Paginated message history
 router.get('/:conversationId/messages', validate(getMessagesSchema), getMessagesHandler);
@@ -79,7 +91,8 @@ router.post('/:conversationId/messages/:messageId/pin', validate(pinMessageSchem
 router.patch('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
 
 // 5. POST /api/v1/chats/:conversationId/messages - Send message (text, audio, image)
-router.post('/:conversationId/messages', validate(sendMessageSchema), sendMessageHandler);
+// Supports JSON payload, base64 payload, and direct multipart/form-data media file upload to AWS S3
+router.post('/:conversationId/messages', handleUploadChatMedia, validate(sendMessageSchema), sendMessageHandler);
 
 // 6. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);

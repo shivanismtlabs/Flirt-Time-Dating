@@ -20,7 +20,7 @@ import walletRoutes from './wallet.routes';
 import chatRoutes from './chat.routes';
 import videoCallRoutes from './videoCall.routes';
 import { authenticate } from '../middlewares/auth.middleware';
-import { handleUploadSelfie } from '../middlewares/upload.middleware';
+import { handleUploadSelfie, handleUploadChatMedia } from '../middlewares/upload.middleware';
 import {
   uploadFaceVerification,
   getGestureVerificationInfo,
@@ -59,13 +59,14 @@ router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/chats', chatRoutes);
 router.use('/chat/conversations', chatRoutes);
-router.post('/chat/messages', authenticate, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+router.post('/chat/messages', authenticate, handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
 router.all(
   ['/chat/delivered/sync', '/chat/delivery/sync'],
   authenticate,
   validate(syncDeliveredMessagesSchema),
   syncDeliveredMessagesHandler
 );
+router.use('/chat', chatRoutes);
 router.use('/calls/video', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts

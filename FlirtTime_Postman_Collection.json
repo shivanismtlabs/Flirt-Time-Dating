@@ -5382,6 +5382,47 @@
             "description": "Alias endpoint for generating presigned upload URLs for profile photos, moments, etc."
           },
           "response": []
+        },
+        {
+          "name": "3. Direct S3 Media Upload",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "folder",
+                  "value": "uploads",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/media/uploads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "media",
+                "uploads"
+              ]
+            },
+            "description": "Uploads a media file (image, audio, video) directly to AWS S3. Returns S3 key, publicUrl, mediaUrl, and Lambda thumbnailUrl. If sent without file, seamlessly generates and returns a presigned S3 upload URL."
+          },
+          "response": []
         }
       ]
     },

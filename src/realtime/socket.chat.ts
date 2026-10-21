@@ -64,8 +64,9 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      const msgType = payload.messageType || payload.type || 'text';
-      if ((msgType === 'text' || msgType === 'image') && !payload.content) {
+      const msgType = payload.messageType || payload.type || (payload.image || payload.imageUrl || payload.mediaUrl ? 'image' : 'text');
+      const content = payload.content || payload.image || payload.imageUrl || payload.mediaUrl || payload.imageKey;
+      if ((msgType === 'text' || msgType === 'image') && !content) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
@@ -79,7 +80,7 @@ export const registerChatSocketHandlers = (
         currentUserId,
         payload.conversationId,
         {
-          content: payload.content,
+          content,
           messageType: msgType,
           clientMessageId: payload.clientMessageId,
           metadata: payload.metadata,

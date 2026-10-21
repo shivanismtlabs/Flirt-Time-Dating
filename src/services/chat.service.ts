@@ -857,6 +857,22 @@ export class ChatService {
         }
       }
 
+      if (msg.messageType === 'image' && msg.content) {
+        if (!parsedMetadata || typeof parsedMetadata !== 'object') {
+          parsedMetadata = {};
+        }
+        const cleanKey = s3Service.extractKey(msg.content);
+        if (!parsedMetadata.thumbnailUrl) {
+          parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        }
+        if (!parsedMetadata.imageUrl) {
+          parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.mediaUrl) {
+          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        }
+      }
+
       const status: 'sent' | 'delivered' | 'read' = msg.isRead
         ? 'read'
         : msg.isDelivered
@@ -968,35 +984,117 @@ export class ChatService {
       }
     }
 
-    const msgType: ChatMessageType = (data.messageType as ChatMessageType) || 'text';
-    let messageContent = (data.content || '').trim();
+    const msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
+    let messageContent = (data.content || (data as any).imageUrl || (data as any).image || (data as any).mediaUrl || (data as any).imageKey || '').trim();
 
-    // Photo / Camera handling
-    if (msgType === 'image') {
-      if (!messageContent) {
-        throw new ChatServiceError('Image URL or storage key is required in content', 400);
-      }
-
-      // Attachment Ownership Verification:
-      // Ensure users cannot attach media files uploaded by another user
-      const userFolderMatch = messageContent.match(
-        /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
-      );
-      if (userFolderMatch && userFolderMatch[1]) {
-        const ownerId = userFolderMatch[1];
-        if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
-          throw new ChatServiceError(
-            'You cannot attach media belonging to another user',
-            403,
-            'ATTACHMENT_OWNERSHIP_INVALID'
-          );
+    // 1. If direct file was attached via multipart/form-data: upload directly to S3 under folder "chat"
+    let attachedFile: Express.Multer.File | undefined = (data as any).file;
+    if (!attachedFile && (data as any).files) {
+      if (Array.isArray((data as any).files) && (data as any).files.length > 0) {
+        attachedFile = (data as any).files[0];
+      } else if (typeof (data as any).files === 'object') {
+        const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
+        for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment']) {
+          if (fileObj[k]?.length > 0) {
+            attachedFile = fileObj[k][0];
+            break;
+          }
         }
       }
+    }
 
-      // Automatically generate/resolve thumbnail URL if missing
-      if (!metadataObj.thumbnailUrl) {
+    if (attachedFile && attachedFile.buffer) {
+      const mimeType = attachedFile.mimetype || 'image/jpeg';
+      const s3Key = await s3Service.uploadMedia(attachedFile.buffer, senderId, mimeType, 'chat');
+
+      // Asynchronously upload resized thumbnail
+      if (mimeType.startsWith('image/')) {
+        s3Service.generateAndUploadThumbnail(s3Key, attachedFile.buffer).catch((err: any) => {
+          console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${s3Key}:`, err.message);
+        });
+      }
+
+      messageContent = s3Key;
+      metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+      metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
+      metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+      metadataObj.mimeType = mimeType;
+      metadataObj.fileSize = attachedFile.size;
+      if ((data as any).caption) {
+        metadataObj.caption = (data as any).caption;
+      }
+    } else if (msgType === 'image') {
+      // 2. Base64 encoded image upload
+      const isBase64DataUri = messageContent.startsWith('data:image/');
+      const isPureBase64 =
+        !messageContent.includes(' ') &&
+        !messageContent.startsWith('http') &&
+        !messageContent.startsWith('chat/') &&
+        !messageContent.startsWith('uploads/') &&
+        messageContent.length > 500;
+
+      if (isBase64DataUri || isPureBase64) {
+        let mimeType = 'image/jpeg';
+        let base64Data = messageContent;
+
+        if (isBase64DataUri) {
+          const match = messageContent.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+          if (match) {
+            mimeType = match[1];
+            base64Data = match[2];
+          }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        const s3Key = await s3Service.uploadMedia(buffer, senderId, mimeType, 'chat');
+
+        s3Service.generateAndUploadThumbnail(s3Key, buffer).catch((err: any) => {
+          console.warn(`[Thumbnail Warning] Could not generate thumbnail for ${s3Key}:`, err.message);
+        });
+
+        messageContent = s3Key;
+        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+        metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = buffer.length;
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+      } else {
+        if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+          throw new ChatServiceError('Image URL or storage key is required in content', 400);
+        }
+
+        // 3. Attachment Ownership Verification for pre-uploaded S3 keys
+        const userFolderMatch = messageContent.match(
+          /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
+        );
+        if (userFolderMatch && userFolderMatch[1]) {
+          const ownerId = userFolderMatch[1];
+          if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
+            throw new ChatServiceError(
+              'You cannot attach media belonging to another user',
+              403,
+              'ATTACHMENT_OWNERSHIP_INVALID'
+            );
+          }
+        }
+
+        // Automatically resolve thumbnail and public S3 URLs if missing
         const cleanKey = s3Service.extractKey(messageContent);
-        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        if (!metadataObj.thumbnailUrl) {
+          metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        }
+        if (!metadataObj.imageUrl) {
+          metadataObj.imageUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!metadataObj.mediaUrl) {
+          metadataObj.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if ((data as any).caption && !metadataObj.caption) {
+          metadataObj.caption = (data as any).caption;
+        }
       }
     }
 
@@ -1302,32 +1400,117 @@ export class ChatService {
     }
 
     const msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
-    let messageContent = (data.content || '').trim();
+    let messageContent = (data.content || (data as any).imageUrl || (data as any).image || (data as any).mediaUrl || (data as any).imageKey || '').trim();
 
-    // Media and attachment checks
-    if (msgType === 'image') {
-      if (!messageContent) {
-        throw new ChatServiceError('Image URL or storage key is required in content', 400);
-      }
-
-      // Attachment Ownership Verification
-      const userFolderMatch = messageContent.match(
-        /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
-      );
-      if (userFolderMatch && userFolderMatch[1]) {
-        const ownerId = userFolderMatch[1];
-        if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
-          throw new ChatServiceError(
-            'You cannot attach media belonging to another user',
-            403,
-            'ATTACHMENT_OWNERSHIP_INVALID'
-          );
+    // 1. Direct file attachment on broadcast: upload to S3 ONCE before distributing
+    let attachedFile: Express.Multer.File | undefined = (data as any).file;
+    if (!attachedFile && (data as any).files) {
+      if (Array.isArray((data as any).files) && (data as any).files.length > 0) {
+        attachedFile = (data as any).files[0];
+      } else if (typeof (data as any).files === 'object') {
+        const fileObj = (data as any).files as Record<string, Express.Multer.File[]>;
+        for (const k of ['image', 'images', 'file', 'files', 'photo', 'photos', 'media', 'attachment']) {
+          if (fileObj[k]?.length > 0) {
+            attachedFile = fileObj[k][0];
+            break;
+          }
         }
       }
+    }
 
-      if (!metadataObj.thumbnailUrl) {
+    if (attachedFile && attachedFile.buffer) {
+      const mimeType = attachedFile.mimetype || 'image/jpeg';
+      const s3Key = await s3Service.uploadMedia(attachedFile.buffer, senderId, mimeType, 'chat');
+
+      if (mimeType.startsWith('image/')) {
+        s3Service.generateAndUploadThumbnail(s3Key, attachedFile.buffer).catch(() => {});
+      }
+
+      messageContent = s3Key;
+      data.content = s3Key;
+      (data as any).file = undefined;
+      (data as any).files = undefined;
+
+      metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+      metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
+      metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+      metadataObj.mimeType = mimeType;
+      metadataObj.fileSize = attachedFile.size;
+      if ((data as any).caption) {
+        metadataObj.caption = (data as any).caption;
+      }
+      data.metadata = metadataObj;
+    } else if (msgType === 'image') {
+      const isBase64DataUri = messageContent.startsWith('data:image/');
+      const isPureBase64 =
+        !messageContent.includes(' ') &&
+        !messageContent.startsWith('http') &&
+        !messageContent.startsWith('chat/') &&
+        !messageContent.startsWith('uploads/') &&
+        messageContent.length > 500;
+
+      if (isBase64DataUri || isPureBase64) {
+        let mimeType = 'image/jpeg';
+        let base64Data = messageContent;
+
+        if (isBase64DataUri) {
+          const match = messageContent.match(/^data:(image\/[a-zA-Z0-9+.-]+);base64,(.+)$/);
+          if (match) {
+            mimeType = match[1];
+            base64Data = match[2];
+          }
+        }
+
+        const buffer = Buffer.from(base64Data, 'base64');
+        const s3Key = await s3Service.uploadMedia(buffer, senderId, mimeType, 'chat');
+
+        s3Service.generateAndUploadThumbnail(s3Key, buffer).catch(() => {});
+
+        messageContent = s3Key;
+        data.content = s3Key;
+        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+        metadataObj.imageUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.mediaUrl = s3Service.getPublicUrl(s3Key);
+        metadataObj.mimeType = mimeType;
+        metadataObj.fileSize = buffer.length;
+        if ((data as any).caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+        data.metadata = metadataObj;
+      } else {
+        if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+          throw new ChatServiceError('Image URL or storage key is required in content', 400);
+        }
+
+        // Attachment Ownership Verification
+        const userFolderMatch = messageContent.match(
+          /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
+        );
+        if (userFolderMatch && userFolderMatch[1]) {
+          const ownerId = userFolderMatch[1];
+          if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
+            throw new ChatServiceError(
+              'You cannot attach media belonging to another user',
+              403,
+              'ATTACHMENT_OWNERSHIP_INVALID'
+            );
+          }
+        }
+
         const cleanKey = s3Service.extractKey(messageContent);
-        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        if (!metadataObj.thumbnailUrl) {
+          metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        }
+        if (!metadataObj.imageUrl) {
+          metadataObj.imageUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!metadataObj.mediaUrl) {
+          metadataObj.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if ((data as any).caption && !metadataObj.caption) {
+          metadataObj.caption = (data as any).caption;
+        }
+        data.metadata = metadataObj;
       }
     } else if (msgType === 'audio') {
       if (!messageContent) {
@@ -2618,6 +2801,22 @@ export class ChatService {
           parsedMetadata = JSON.parse(msg.metadata);
         } catch {
           parsedMetadata = msg.metadata;
+        }
+      }
+
+      if (msg.messageType === 'image' && msg.content) {
+        if (!parsedMetadata || typeof parsedMetadata !== 'object') {
+          parsedMetadata = {};
+        }
+        const cleanKey = s3Service.extractKey(msg.content);
+        if (!parsedMetadata.thumbnailUrl) {
+          parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+        }
+        if (!parsedMetadata.imageUrl) {
+          parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.mediaUrl) {
+          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
         }
       }
 

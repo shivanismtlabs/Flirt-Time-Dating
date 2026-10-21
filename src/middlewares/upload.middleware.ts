@@ -546,3 +546,59 @@ export const handleUploadUniversalMedia = (
     return next();
   });
 };
+
+/**
+ * Middleware for direct chat message media attachments (images, photos, voice notes).
+ * Automatically parses multipart form-data, auto-detects messageType from file mime,
+ * and sets placeholder content to pass schema validation.
+ */
+export const handleUploadChatMedia = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  handleUploadUniversalMedia(req, res, (err: any) => {
+    if (err) {
+      return next(err);
+    }
+
+    // Auto-detect message type if direct file is attached
+    if (req.file) {
+      const mime = (req.file.mimetype || '').toLowerCase();
+      if (!req.body.messageType && !req.body.type) {
+        if (mime.startsWith('audio/')) {
+          req.body.messageType = 'audio';
+        } else {
+          req.body.messageType = 'image';
+        }
+      }
+      if (!req.body.content && !req.body.imageUrl && !req.body.image && !req.body.mediaUrl) {
+        req.body.content = '__FILE_ATTACHMENT__';
+      }
+    }
+
+    // Parse JSON strings from multipart fields
+    if (typeof req.body.metadata === 'string') {
+      try {
+        req.body.metadata = JSON.parse(req.body.metadata);
+      } catch {}
+    }
+
+    if (typeof req.body.recipientIds === 'string') {
+      try {
+        req.body.recipientIds = JSON.parse(req.body.recipientIds);
+      } catch {
+        if (req.body.recipientIds.includes(',')) {
+          req.body.recipientIds = req.body.recipientIds
+            .split(',')
+            .map((id: string) => id.trim())
+            .filter(Boolean);
+        } else if (req.body.recipientIds.trim()) {
+          req.body.recipientIds = [req.body.recipientIds.trim()];
+        }
+      }
+    }
+
+    return next();
+  });
+};

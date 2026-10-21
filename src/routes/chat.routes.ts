@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { authenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
+import { handleUploadChatMedia } from '../middlewares/upload.middleware';
 import {
   getChatListHandler,
   getConversationsHandler,
@@ -8,8 +9,10 @@ import {
   getMessagesHandler,
   sendMessageHandler,
   sendMultiMessageHandler,
+  uploadChatMediaHandler,
   markReadHandler,
   deliveryReceiptHandler,
+  syncDeliveredMessagesHandler,
   getUnreadCountHandler,
   pinConversationHandler,
   pinMessageHandler,
@@ -26,6 +29,7 @@ import {
   sendMultiMessageSchema,
   markReadSchema,
   deliveryReceiptSchema,
+  syncDeliveredMessagesSchema,
   getUnreadCountSchema,
   pinConversationSchema,
   pinMessageSchema,
@@ -46,6 +50,17 @@ router.get('/', validate(getChatListSchema), getChatListHandler);
 // 1b. GET /api/v1/chats/unread-count - Total or per-conversation unread message counts
 router.get('/unread-count', validate(getUnreadCountSchema), getUnreadCountHandler);
 
+// 1c. POST, PATCH, PUT, GET /api/v1/chats/delivered/sync & /delivery/sync - Synchronize delivered messages
+router.post('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.patch('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.put('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.get('/delivered/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+
+router.post('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.patch('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.put('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+router.get('/delivery/sync', validate(syncDeliveredMessagesSchema), syncDeliveredMessagesHandler);
+
 // 2. GET /api/v1/chat/conversations - List conversations (backward compatibility)
 router.get('/conversations', getConversationsHandler);
 
@@ -53,10 +68,15 @@ router.get('/conversations', getConversationsHandler);
 router.post('/', validate(startConversationSchema), startConversationHandler);
 
 // 4. Send Message Endpoints
-// Single message / recipient send: POST /messages and POST /send
-router.post('/messages', sendMessageHandler);
-router.post('/send', sendMessageHandler);
-router.post('/bulk-messages', validate(sendMultiMessageSchema), sendMultiMessageHandler);
+// Single or multi-recipient send with multipart/form-data S3 upload support:
+router.post('/messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+router.post('/send', handleUploadChatMedia, sendMessageHandler);
+router.post('/bulk-messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+
+// 4b. Dedicated S3 Chat Media Upload & Presigned URL Endpoints
+// Supports POST /api/v1/chats/upload, POST /api/v1/chats/media
+router.post('/upload', handleUploadChatMedia, uploadChatMediaHandler);
+router.post('/media', handleUploadChatMedia, uploadChatMediaHandler);
 
 // 5. Message History by Target User (backward compatibility):
 // GET /api/v1/chat/messages/:targetUserId
@@ -64,6 +84,10 @@ router.get('/messages/:targetUserId', getMessagesHandler);
 
 // 6. GET /api/v1/chats/:conversationId - Conversation header details and shared interests
 router.get('/:conversationId', validate(getConversationDetailSchema), getConversationDetailHandler);
+
+// 6b. POST /api/v1/chats/:conversationId/upload & media - Conversation-scoped S3 media upload
+router.post('/:conversationId/upload', handleUploadChatMedia, uploadChatMediaHandler);
+router.post('/:conversationId/media', handleUploadChatMedia, uploadChatMediaHandler);
 
 // 7. GET /api/v1/chats/:conversationId/messages - Paginated message history
 router.get('/:conversationId/messages', validate(getMessagesSchema), getMessagesHandler);
@@ -77,7 +101,8 @@ router.post('/:conversationId/messages/:messageId/pin', validate(pinMessageSchem
 router.patch('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
 
 // 8. POST /api/v1/chats/:conversationId/messages - Send message (text, audio, image)
-router.post('/:conversationId/messages', validate(sendMessageSchema), sendMessageHandler);
+// Supports JSON payload, base64 payload, and direct multipart/form-data media file upload to AWS S3
+router.post('/:conversationId/messages', handleUploadChatMedia, validate(sendMessageSchema), sendMessageHandler);
 
 // 9. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);
@@ -97,3 +122,4 @@ router.patch('/:conversationId/archive', validate(archiveConversationSchema), ar
 router.delete('/:conversationId', validate(deleteConversationSchema), deleteConversationHandler);
 
 export default router;
+

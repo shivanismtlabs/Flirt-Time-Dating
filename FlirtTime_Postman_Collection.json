@@ -7057,7 +7057,104 @@
                 }
               ]
             },
-            "description": "Sends a photo attachment uploaded via S3 presigned URL (POST /api/v1/media/presigned-url with folder: 'chat'). Verifies attachment ownership, automatically generates thumbnail URL, updates conversation preview to '📷 Photo', and emits real-time event to recipient."
+          },
+          "response": []
+        },
+        {
+          "name": "7b. Send Image via Direct Multipart Upload (Gallery / Camera File)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file from device gallery or camera (JPEG, PNG, WebP, GIF, AVIF)"
+                },
+                {
+                  "key": "messageType",
+                  "value": "image",
+                  "type": "text"
+                },
+                {
+                  "key": "caption",
+                  "value": "Here is the picture!",
+                  "type": "text"
+                },
+                {
+                  "key": "clientMessageId",
+                  "value": "33333333-4444-5555-6666-777777777777",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/:conversationId/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                ":conversationId",
+                "messages"
+              ],
+              "variable": [
+                {
+                  "key": "conversationId",
+                  "value": "00000000-0000-0000-0000-000000000000"
+                }
+              ]
+            },
+            "description": "Directly uploads a photo/image file to AWS S3 and creates the chat message in a single request using multipart/form-data. Automatically generates thumbnail in S3, enriches metadata with public URLs, updates conversation preview to '📷 Photo', and emits real-time event."
+          },
+          "response": []
+        },
+        {
+          "name": "7c. Upload Chat Image to S3 (POST /api/v1/chats/upload)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Image file to upload to AWS S3"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/upload",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "upload"
+              ]
+            },
+            "description": "Dedicated S3 upload endpoint for chat media. Uploads image directly to AWS S3 under folder 'chat', generates thumbnail, and returns S3 key, publicUrl, mediaUrl, and thumbnailUrl. If called without a file, generates and returns an S3 presigned PUT URL."
           },
           "response": []
         },

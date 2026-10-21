@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { chatService, ChatServiceError } from '../services/chat.service';
+import { s3Service } from '../services/s3.service';
 
 /**
  * 1. GET /api/v1/chats
@@ -119,18 +120,24 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
 
     const conversationId = req.params.conversationId as string | undefined;
 
+    const messagePayload = {
+      ...req.body,
+      file: req.file,
+      files: req.files,
+    };
+
     if (conversationId) {
-      const result = await chatService.sendMessage(currentUserId, conversationId, req.body);
+      const result = await chatService.sendMessage(currentUserId, conversationId, messagePayload);
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
     if (req.body?.recipientId) {
-      const result = await chatService.sendMessageToRecipient(currentUserId, req.body);
+      const result = await chatService.sendMessageToRecipient(currentUserId, messagePayload);
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
     if (req.body?.conversationId) {
-      const result = await chatService.sendMessage(currentUserId, req.body.conversationId, req.body);
+      const result = await chatService.sendMessage(currentUserId, req.body.conversationId, messagePayload);
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
@@ -147,11 +154,16 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
 /**
  * 4b. POST /api/v1/chat/messages & /api/v1/chats/messages
  * Sends a message to one person or multiple selected recipients (WhatsApp style multi-send).
+ * Supports direct multipart/form-data image/audio file upload to S3.
  */
 export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const result = await chatService.sendMultiMessage(currentUserId, req.body);
+    const result = await chatService.sendMultiMessage(currentUserId, {
+      ...req.body,
+      file: req.file,
+      files: req.files,
+    });
     const message =
       result.failureCount === 0
         ? 'Messages sent successfully'
@@ -164,6 +176,65 @@ export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Re
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Failed to send message', 500);
+  }
+};
+
+/**
+ * 4c. POST /api/v1/chats/upload, POST /api/v1/chats/media, POST /api/v1/chats/:conversationId/upload
+ * S3 image/media upload handler specifically for chat attachments.
+ * Accepts direct multipart file upload to S3 or presigned PUT URL generation.
+ */
+export const uploadChatMediaHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const file =
+      req.file ||
+      (req.files && (req.files as any).image?.[0]) ||
+      (req.files && (req.files as any).file?.[0]) ||
+      (req.files && (req.files as any).photo?.[0]) ||
+      (req.files && (req.files as any).media?.[0]);
+
+    if (file) {
+      const mimeType = file.mimetype || 'image/jpeg';
+      const s3Key = await s3Service.uploadMedia(file.buffer, currentUserId, mimeType, 'chat');
+
+      if (mimeType.startsWith('image/')) {
+        s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+      }
+
+      const publicUrl = s3Service.getPublicUrl(s3Key);
+      const thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+
+      return sendSuccess(
+        res,
+        'Chat media uploaded successfully',
+        {
+          key: s3Key,
+          imageKey: s3Key,
+          url: publicUrl,
+          imageUrl: publicUrl,
+          mediaUrl: publicUrl,
+          thumbnailUrl,
+          publicUrl,
+          mimeType,
+          size: file.size,
+        },
+        201
+      );
+    }
+
+    // If no file attached, generate presigned S3 upload URL for folder "chat"
+    const { mimeType = 'image/jpeg', expiresInSeconds = 900 } = req.body || req.query || {};
+    const presignedData = await s3Service.generatePresignedUploadUrl(
+      currentUserId,
+      mimeType,
+      'chat',
+      Number(expiresInSeconds) || 900
+    );
+
+    return sendSuccess(res, 'Presigned upload URL generated successfully', presignedData, 200);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Failed to upload chat media', 500);
   }
 };
 
@@ -202,6 +273,43 @@ export const deliveryReceiptHandler = async (req: AuthenticatedRequest, res: Res
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Failed to update delivery receipts', 500);
+  }
+};
+
+/**
+ * 5c. POST / PATCH / PUT / GET /api/v1/chats/delivered/sync & /delivery/sync
+ * Synchronizes delivery status for pending or specified messages for the recipient.
+ */
+export const syncDeliveredMessagesHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const body = req.body || {};
+    const query = req.query || {};
+
+    const conversationId = (body.conversationId || query.conversationId) as string | undefined;
+
+    let messageIds: string[] | undefined;
+    if (Array.isArray(body.messageIds)) {
+      messageIds = body.messageIds;
+    } else if (Array.isArray(body.deliveredMessageIds)) {
+      messageIds = body.deliveredMessageIds;
+    } else if (Array.isArray(body.messages)) {
+      messageIds = body.messages.map((m: any) => (typeof m === 'string' ? m : m?.id)).filter(Boolean);
+    } else if (typeof body.messageId === 'string') {
+      messageIds = [body.messageId];
+    }
+
+    const result = await chatService.syncDeliveredMessages(currentUserId, {
+      conversationId: conversationId || null,
+      messageIds,
+    });
+
+    return sendSuccess(res, 'Delivery status synchronized successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to synchronize delivery status', 500);
   }
 };
 

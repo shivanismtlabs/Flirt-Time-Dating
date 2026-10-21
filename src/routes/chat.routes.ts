@@ -6,6 +6,7 @@ import {
   getConversationDetailHandler,
   getMessagesHandler,
   sendMessageHandler,
+  sendMultiMessageHandler,
   markReadHandler,
   deliveryReceiptHandler,
   getUnreadCountHandler,
@@ -21,6 +22,7 @@ import {
   getConversationDetailSchema,
   getMessagesSchema,
   sendMessageSchema,
+  sendMultiMessageSchema,
   markReadSchema,
   deliveryReceiptSchema,
   getUnreadCountSchema,
@@ -45,6 +47,9 @@ router.get('/unread-count', validate(getUnreadCountSchema), getUnreadCountHandle
 
 // 2. POST /api/v1/chats - Start or get 1-to-1 conversation with a recipient
 router.post('/', validate(startConversationSchema), startConversationHandler);
+
+// 2b. POST /api/v1/chats/messages - Send message to one or multiple recipients (WhatsApp-style broadcast/multi-send)
+router.post('/messages', validate(sendMultiMessageSchema), sendMultiMessageHandler);
 
 // 3. GET /api/v1/chats/:conversationId - Conversation header details and shared interests
 router.get('/:conversationId', validate(getConversationDetailSchema), getConversationDetailHandler);

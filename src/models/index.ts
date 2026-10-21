@@ -1088,6 +1088,30 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
             END IF;
 
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'conversations') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'isDeletedForEveryone') THEN
+                ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT false;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'deletedForEveryoneAt') THEN
+                ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'deletedForEveryoneBy') THEN
+                ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" UUID;
+              END IF;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'chat_messages') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'isDelivered') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT false;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'deliveredAt') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'readAt') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "readAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+            END IF;
+
             IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'coin_packages') THEN
               CREATE TABLE IF NOT EXISTS "coin_packages" (
                 "id" SERIAL PRIMARY KEY,
@@ -1216,6 +1240,22 @@ export const initDb = async (force = false): Promise<void> => {
           // Safe to ignore if users does not exist yet
         }
 
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "isDeletedForEveryone" BOOLEAN DEFAULT false;');
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneBy" UUID;');
+        } catch (_convColErr) {
+          // Safe to ignore if conversations does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "isDelivered" BOOLEAN DEFAULT false;');
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "deliveredAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP WITH TIME ZONE;');
+        } catch (_msgColErr) {
+          // Safe to ignore if chat_messages does not exist yet
+        }
+
         // Ensure quick_moments and moment_gifts tables exist immediately on all environments
         try {
           await QuickMoment.sync();
@@ -1253,6 +1293,24 @@ export const initDb = async (force = false): Promise<void> => {
         try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN "lastActiveAt" DATETIME;');
         } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" VARCHAR(36);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT 0;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+        } catch (_) {}
       } else {
         await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
       }
@@ -1281,6 +1339,7 @@ export const initDb = async (force = false): Promise<void> => {
       }
     }
 
+    await ensureChatTables();
     await ensureCoinPackageTables();
     await ensureSubscriptionTables();
     await ensureCoinPurchaseTables();
@@ -1460,6 +1519,74 @@ export const ensureCoinPurchaseTables = async (): Promise<void> => {
     await NotificationOutbox.sync();
   } catch (err: any) {
     console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction / NotificationOutbox tables:', err.message);
+  }
+};
+
+/**
+ * Ensures conversations, chat_messages, conversation_user_states, and chat_message_pins
+ * have all required columns, indexes, and tables across all database environments (PostgreSQL and SQLite)
+ */
+export const ensureChatTables = async (): Promise<void> => {
+  try {
+    if (sequelize.getDialect() === 'postgres') {
+      // 1. Conversations columns
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "isDeletedForEveryone" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneBy" UUID REFERENCES "users"("id") ON DELETE SET NULL;');
+      } catch (_convErr: any) {
+        console.warn('⚠️ Could not alter conversations columns:', _convErr.message);
+      }
+
+      // 2. Chat messages columns
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "isDelivered" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "deliveredAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP WITH TIME ZONE;');
+        // Backfill existing read messages so receipts are consistent
+        await sequelize.query(`
+          UPDATE "chat_messages"
+          SET "isDelivered" = true,
+              "deliveredAt" = COALESCE("deliveredAt", "createdAt"),
+              "readAt" = COALESCE("readAt", "createdAt")
+          WHERE "isRead" = true AND ("isDelivered" = false OR "isDelivered" IS NULL);
+        `);
+      } catch (_msgErr: any) {
+        console.warn('⚠️ Could not alter chat_messages columns:', _msgErr.message);
+      }
+
+      // 3. Receipt index
+      try {
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_recipient_deliv" ON "chat_messages" ("recipientId", "isDelivered");');
+      } catch (_idxErr: any) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" VARCHAR(36);');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT 0;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+      } catch (_e) {}
+    }
+
+    // Ensure dependent tables exist
+    await ConversationUserState.sync();
+    await ConversationPin.sync();
+    await ChatMessagePin.sync();
+    await VideoCall.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync chat tables:', err.message);
   }
 };
 

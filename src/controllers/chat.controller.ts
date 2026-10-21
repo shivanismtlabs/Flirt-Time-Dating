@@ -75,6 +75,29 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
 };
 
 /**
+ * 4b. POST /api/v1/chat/messages & /api/v1/chats/messages
+ * Sends a message to one person or multiple selected recipients (WhatsApp style multi-send).
+ */
+export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const result = await chatService.sendMultiMessage(currentUserId, req.body);
+    const message =
+      result.failureCount === 0
+        ? 'Messages sent successfully'
+        : result.successCount > 0
+        ? 'Messages sent with some delivery failures'
+        : 'Failed to deliver messages to all recipients';
+    return sendSuccess(res, message, result, 201);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to send message', 500);
+  }
+};
+
+/**
  * 5. POST / PATCH /api/v1/chats/:conversationId/read
  * Marks unread messages in the conversation as read up to lastReadMessageId (or all if omitted).
  */

@@ -9,6 +9,7 @@ import {
   Conversation,
   ChatMessage,
   ChatMessagePin,
+  ConversationPin,
   ConversationUserState,
   UserBlock,
   initDb,
@@ -88,12 +89,13 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       }
     }
 
-    await ChatMessagePin.destroy({ where: {} });
-    await ChatMessage.destroy({ where: {} });
-    await ConversationUserState.destroy({ where: {} });
-    await Conversation.destroy({ where: {} });
-    await UserBlock.destroy({ where: {} });
-    await User.destroy({ where: {} });
+    await ChatMessagePin.destroy({ where: {}, force: true });
+    await ChatMessage.destroy({ where: {}, force: true });
+    await ConversationUserState.destroy({ where: {}, force: true });
+    await ConversationPin.destroy({ where: {}, force: true });
+    await Conversation.destroy({ where: {}, force: true });
+    await UserBlock.destroy({ where: {}, force: true });
+    await User.destroy({ where: {}, force: true });
 
     userA = await User.create({
       username: 'user_a',
@@ -535,25 +537,24 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
 
     it('should reject pinning when pin limit is exceeded with 400 PIN_LIMIT_EXCEEDED', async () => {
       // Seed 50 pins for userA in convAB
-      const bulkPins = [];
       const now = new Date();
-      for (let i = 0; i < 50; i++) {
-        const dummyMsg = await ChatMessage.create({
-          conversationId: convAB.id,
-          senderId: userA.id,
-          recipientId: userB.id,
-          content: `Bulk message ${i}`,
-          messageType: 'text',
-        });
-        bulkPins.push({
-          conversationId: convAB.id,
-          messageId: dummyMsg.id,
-          userId: userA.id,
-          pinnedBy: userA.id,
-          createdAt: now,
-          updatedAt: now,
-        });
-      }
+      const dummyMessagesData = Array.from({ length: 50 }, (_, i) => ({
+        conversationId: convAB.id,
+        senderId: userA.id,
+        recipientId: userB.id,
+        content: `Bulk message ${i}`,
+        messageType: 'text' as const,
+      }));
+      const createdMessages = await ChatMessage.bulkCreate(dummyMessagesData);
+
+      const bulkPins = createdMessages.map((msg) => ({
+        conversationId: convAB.id,
+        messageId: msg.id,
+        userId: userA.id,
+        pinnedBy: userA.id,
+        createdAt: now,
+        updatedAt: now,
+      }));
       await ChatMessagePin.bulkCreate(bulkPins);
 
       // Attempt to pin 51st message (msg1)

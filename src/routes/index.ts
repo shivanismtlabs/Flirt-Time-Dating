@@ -32,6 +32,8 @@ import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
 import { sendComplimentHandler } from '../controllers/interaction.controller';
 import { sendComplimentSchema } from '../schemas/interaction.schema';
+import { sendMultiMessageHandler } from '../controllers/chat.controller';
+import { sendMultiMessageSchema } from '../schemas/chat.schema';
 
 const router = Router();
 
@@ -55,6 +57,7 @@ router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
 router.use('/chats', chatRoutes);
 router.use('/chat/conversations', chatRoutes);
+router.post('/chat/messages', authenticate, validate(sendMultiMessageSchema), sendMultiMessageHandler);
 router.use('/calls/video', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts

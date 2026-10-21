@@ -20,7 +20,8 @@ import { s3Service, formatMediaUrl } from './s3.service';
 import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
 import { isUserConnected, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
-import { GetChatListQuery, SendMessageInput } from '../schemas/chat.schema';
+import { GetChatListQuery, SendMessageInput, SendMultiMessageInput } from '../schemas/chat.schema';
+import { env } from '../config/env';
 
 export class ChatServiceError extends Error {
   public readonly statusCode: number;
@@ -100,6 +101,22 @@ export interface ChatMessageDTO {
   pinnedAt: Date | string | null;
   pinnedBy: string | null;
   sender?: ChatMessageSenderDTO;
+}
+
+export interface SendMessageResultItemDTO {
+  recipientId: string;
+  conversationId: string | null;
+  status: 'success' | 'failed';
+  message?: ChatMessageDTO;
+  error?: string;
+  errorCode?: string;
+}
+
+export interface SendMultiMessageResultDTO {
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+  results: SendMessageResultItemDTO[];
 }
 
 export class ChatService {
@@ -1077,6 +1094,478 @@ export class ChatService {
     }
 
     return messageDto;
+  }
+
+  /**
+   * 4b. SEND MESSAGE TO ONE OR MULTIPLE RECIPIENTS (WhatsApp-style Broadcast / Multi-Send)
+   * Resolves individual 1-to-1 conversations, creates messages with transactional isolation,
+   * enforces block/privacy rules per-recipient, provides idempotency protection, and dispatches
+   * real-time updates via Socket.IO.
+   */
+  public async sendMultiMessage(
+    senderId: string,
+    data: SendMultiMessageInput
+  ): Promise<SendMultiMessageResultDTO> {
+    // 1. Resolve target recipient IDs
+    let targetRecipientIds: string[] = [];
+    const directConversationMap = new Map<string, Conversation>();
+
+    if (data.conversationId && (!data.recipientIds || data.recipientIds.length === 0) && !data.recipientId) {
+      const conv = await Conversation.findByPk(data.conversationId);
+      if (!conv || conv.isDeletedForEveryone) {
+        throw new ChatServiceError('Conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
+      }
+      if (conv.user1Id !== senderId && conv.user2Id !== senderId) {
+        throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
+      }
+      const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+      targetRecipientIds = [otherId];
+      directConversationMap.set(otherId, conv);
+    } else {
+      const rawIds: string[] = [];
+      if (Array.isArray(data.recipientIds)) {
+        rawIds.push(...data.recipientIds);
+      }
+      if (data.recipientId) {
+        rawIds.push(data.recipientId);
+      }
+      // Deduplicate preserving order
+      targetRecipientIds = Array.from(new Set(rawIds));
+    }
+
+    if (targetRecipientIds.length === 0) {
+      throw new ChatServiceError('At least one valid recipient is required', 400, 'INVALID_RECIPIENTS');
+    }
+
+    // Configurable recipient limit
+    const maxBulkRecipients = env.CHAT_MAX_BULK_RECIPIENTS || 50;
+    if (targetRecipientIds.length > maxBulkRecipients) {
+      throw new ChatServiceError(
+        `Recipient limit exceeded. Maximum ${maxBulkRecipients} recipients allowed per operation`,
+        400,
+        'RECIPIENT_LIMIT_EXCEEDED'
+      );
+    }
+
+    // Prohibit self-messaging if only sending to oneself
+    if (targetRecipientIds.length === 1 && targetRecipientIds[0] === senderId) {
+      throw new ChatServiceError('You cannot send a message to yourself', 400, 'SELF_MESSAGING_PROHIBITED');
+    }
+
+    // 2. Prepare message content and metadata
+    const metadataObj: Record<string, any> = {};
+    if (data.metadata) {
+      if (typeof data.metadata === 'object') {
+        Object.assign(metadataObj, data.metadata);
+      } else if (typeof data.metadata === 'string') {
+        try {
+          const parsed = JSON.parse(data.metadata);
+          if (parsed && typeof parsed === 'object') {
+            Object.assign(metadataObj, parsed);
+          }
+        } catch {}
+      }
+    }
+
+    const msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
+    let messageContent = (data.content || '').trim();
+
+    // Media and attachment checks
+    if (msgType === 'image') {
+      if (!messageContent) {
+        throw new ChatServiceError('Image URL or storage key is required in content', 400);
+      }
+
+      // Attachment Ownership Verification
+      const userFolderMatch = messageContent.match(
+        /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
+      );
+      if (userFolderMatch && userFolderMatch[1]) {
+        const ownerId = userFolderMatch[1];
+        if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
+          throw new ChatServiceError(
+            'You cannot attach media belonging to another user',
+            403,
+            'ATTACHMENT_OWNERSHIP_INVALID'
+          );
+        }
+      }
+
+      if (!metadataObj.thumbnailUrl) {
+        const cleanKey = s3Service.extractKey(messageContent);
+        metadataObj.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+      }
+    } else if (msgType === 'audio') {
+      if (!messageContent) {
+        throw new ChatServiceError('Audio URL or storage key is required in content', 400);
+      }
+    } else if (msgType === 'location') {
+      const lat = Number(metadataObj.latitude);
+      const lng = Number(metadataObj.longitude);
+      if (
+        !Number.isFinite(lat) ||
+        lat < -90 ||
+        lat > 90 ||
+        !Number.isFinite(lng) ||
+        lng < -180 ||
+        lng > 180
+      ) {
+        throw new ChatServiceError(
+          'Invalid location coordinates: latitude must be between -90 and 90, and longitude between -180 and 180',
+          400,
+          'INVALID_LOCATION_COORDINATES'
+        );
+      }
+      if (!messageContent) {
+        messageContent = metadataObj.name
+          ? `📍 ${metadataObj.name}`
+          : `📍 Location (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      }
+    } else if (msgType === 'contact') {
+      const contactName =
+        typeof metadataObj.name === 'string' ? metadataObj.name.trim() : '';
+      const phone =
+        typeof metadataObj.phoneNumber === 'string'
+          ? metadataObj.phoneNumber.trim()
+          : '';
+      if (!contactName || !phone) {
+        throw new ChatServiceError(
+          'Contact details (name and phoneNumber) are required in metadata',
+          400,
+          'INVALID_CONTACT_DETAILS'
+        );
+      }
+      if (!messageContent) {
+        messageContent = `👤 ${contactName}`;
+      }
+    }
+
+    // 3. Batch fetch sender user profile
+    const senderUser = await User.findByPk(senderId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+    });
+
+    // 4. Batch query target users, blocks, and conversations (avoid N+1)
+    const targetUsers = await User.findAll({
+      where: { id: { [Op.in]: targetRecipientIds } },
+      attributes: ['id', 'isActive'],
+    });
+    const targetUserMap = new Map(targetUsers.map((u) => [u.id, u]));
+
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [
+          { userId: senderId, blockedUserId: { [Op.in]: targetRecipientIds } },
+          { userId: { [Op.in]: targetRecipientIds }, blockedUserId: senderId },
+        ],
+      },
+      attributes: ['userId', 'blockedUserId'],
+      raw: true,
+    });
+    const blockedRecipientIdSet = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === senderId) blockedRecipientIdSet.add(b.blockedUserId);
+      if (b.blockedUserId === senderId) blockedRecipientIdSet.add(b.userId);
+    }
+
+    const conversationMap = new Map<string, Conversation>(directConversationMap);
+    const missingConvRecipientIds = targetRecipientIds.filter((id) => !conversationMap.has(id));
+
+    if (missingConvRecipientIds.length > 0) {
+      const convPairs = missingConvRecipientIds.map((rId) => {
+        const [u1, u2] = [senderId, rId].sort();
+        return { user1Id: u1, user2Id: u2 };
+      });
+
+      const existingConvs = await Conversation.findAll({
+        where: {
+          [Op.or]: convPairs,
+        },
+      });
+
+      for (const conv of existingConvs) {
+        const otherId = conv.user1Id === senderId ? conv.user2Id : conv.user1Id;
+        conversationMap.set(otherId, conv);
+      }
+    }
+
+    // 5. Process each recipient independently with transaction safety
+    const results: SendMessageResultItemDTO[] = [];
+
+    for (const recipientId of targetRecipientIds) {
+      // Check self-messaging in bulk list
+      if (recipientId === senderId) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'You cannot send a message to yourself',
+          errorCode: 'SELF_MESSAGING_PROHIBITED',
+        });
+        continue;
+      }
+
+      // Check recipient account validity
+      const recipient = targetUserMap.get(recipientId);
+      if (!recipient || recipient.isActive === false) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'User profile is unavailable',
+          errorCode: 'USER_NOT_FOUND',
+        });
+        continue;
+      }
+
+      // Check block restrictions
+      if (blockedRecipientIdSet.has(recipientId)) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'You cannot chat with this user',
+          errorCode: 'USER_BLOCKED',
+        });
+        continue;
+      }
+
+      // Determine per-recipient clientMessageId for idempotency
+      const clientMessageId =
+        data.clientMessageIds?.[recipientId] ||
+        (data.clientMessageId ? (targetRecipientIds.length === 1 ? data.clientMessageId : `${data.clientMessageId}:${recipientId}`) : undefined);
+
+      // Execute database write inside an atomic transaction
+      const t = await sequelize.transaction();
+      try {
+        let conv = conversationMap.get(recipientId);
+        if (!conv) {
+          const [u1, u2] = [senderId, recipientId].sort();
+          conv = await Conversation.create(
+            {
+              user1Id: u1,
+              user2Id: u2,
+              isDeletedForEveryone: false,
+            },
+            { transaction: t }
+          );
+          conversationMap.set(recipientId, conv);
+        } else if (conv.isDeletedForEveryone) {
+          conv.isDeletedForEveryone = false;
+          conv.deletedForEveryoneAt = null;
+          conv.deletedForEveryoneBy = null;
+          await conv.save({ transaction: t });
+        }
+
+        const conversationId = conv.id;
+
+        // Idempotency check: if clientMessageId already processed, return existing message
+        if (clientMessageId) {
+          const existingMessage = await ChatMessage.findOne({
+            where: {
+              conversationId,
+              senderId,
+              metadata: {
+                [Op.like]: `%"clientMessageId":"${clientMessageId}"%`,
+              },
+            },
+            transaction: t,
+          });
+
+          if (existingMessage) {
+            await t.commit();
+            let meta: any = null;
+            try {
+              meta = JSON.parse(existingMessage.metadata || '{}');
+            } catch {
+              meta = existingMessage.metadata;
+            }
+
+            const status: 'sent' | 'delivered' | 'read' = existingMessage.isRead
+              ? 'read'
+              : existingMessage.isDelivered
+              ? 'delivered'
+              : 'sent';
+
+            const pin = await ChatMessagePin.findOne({
+              where: {
+                conversationId,
+                messageId: existingMessage.id,
+                userId: senderId,
+              },
+            });
+
+            const msgDto: ChatMessageDTO = {
+              id: existingMessage.id,
+              conversationId: existingMessage.conversationId,
+              senderId: existingMessage.senderId,
+              recipientId: existingMessage.recipientId,
+              content: existingMessage.content,
+              messageType: existingMessage.messageType as any,
+              metadata: meta,
+              status,
+              isDelivered: !!existingMessage.isDelivered,
+              deliveredAt: existingMessage.deliveredAt || null,
+              isRead: existingMessage.isRead,
+              readAt: existingMessage.readAt || null,
+              sentAt: existingMessage.createdAt,
+              isMine: true,
+              isPinned: !!pin,
+              pinnedAt: pin?.createdAt || null,
+              pinnedBy: pin?.pinnedBy || null,
+              sender: senderUser
+                ? {
+                    id: senderUser.id,
+                    displayName: resolveChatDisplayName(senderUser),
+                    profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+                  }
+                : undefined,
+            };
+
+            results.push({
+              recipientId,
+              conversationId,
+              status: 'success',
+              message: msgDto,
+            });
+            continue;
+          }
+        }
+
+        // Prepare recipient-specific metadata payload
+        const recipientMetadataObj = { ...metadataObj };
+        if (clientMessageId) {
+          recipientMetadataObj.clientMessageId = clientMessageId;
+        }
+        const metadataPayload =
+          Object.keys(recipientMetadataObj).length > 0
+            ? JSON.stringify(recipientMetadataObj)
+            : null;
+
+        const savedMessage = await ChatMessage.create(
+          {
+            conversationId,
+            senderId,
+            recipientId,
+            content: messageContent,
+            messageType: msgType,
+            metadata: metadataPayload,
+            isRead: false,
+          },
+          { transaction: t }
+        );
+
+        // Update conversation lastMessage preview
+        let lastMessagePreview: string;
+        if (msgType === 'image') {
+          lastMessagePreview = '📷 Photo';
+        } else if (msgType === 'location') {
+          lastMessagePreview = recipientMetadataObj.name ? `📍 ${recipientMetadataObj.name}` : '📍 Location';
+        } else if (msgType === 'contact') {
+          lastMessagePreview = recipientMetadataObj.name ? `👤 ${recipientMetadataObj.name}` : '👤 Contact';
+        } else if (msgType === 'audio') {
+          lastMessagePreview = '🎤 Voice message';
+        } else {
+          lastMessagePreview = messageContent;
+        }
+
+        conv.lastMessage = lastMessagePreview;
+        conv.lastMessageAt = savedMessage.createdAt;
+        await conv.save({ transaction: t });
+
+        // Unhide conversation if previously deleted for me
+        await ConversationUserState.update(
+          { isDeleted: false },
+          {
+            where: {
+              conversationId,
+              userId: { [Op.in]: [senderId, recipientId] },
+              isDeleted: true,
+            },
+            transaction: t,
+          }
+        );
+
+        await t.commit();
+
+        let parsedMeta: any = null;
+        if (savedMessage.metadata) {
+          try {
+            parsedMeta = JSON.parse(savedMessage.metadata);
+          } catch {
+            parsedMeta = savedMessage.metadata;
+          }
+        }
+
+        const messageDto: ChatMessageDTO = {
+          id: savedMessage.id,
+          conversationId: savedMessage.conversationId,
+          senderId: savedMessage.senderId,
+          recipientId: savedMessage.recipientId,
+          content: savedMessage.content,
+          messageType: savedMessage.messageType as any,
+          metadata: parsedMeta,
+          status: 'sent',
+          isDelivered: false,
+          deliveredAt: null,
+          isRead: false,
+          readAt: null,
+          sentAt: savedMessage.createdAt,
+          isMine: true,
+          isPinned: false,
+          pinnedAt: null,
+          pinnedBy: null,
+          sender: senderUser
+            ? {
+                id: senderUser.id,
+                displayName: resolveChatDisplayName(senderUser),
+                profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+              }
+            : undefined,
+        };
+
+        // Real-Time Delivery via Socket.IO
+        try {
+          const io = getSocketServer();
+          const recipientRoom = getUserRoomName(recipientId);
+          const senderRoom = getUserRoomName(senderId);
+
+          // Deliver to recipient's multi-device room
+          io.to(recipientRoom).emit('chat:message_received' as any, {
+            ...messageDto,
+            isMine: false,
+          });
+
+          // Synchronize sender's other connected devices
+          io.to(senderRoom).emit('chat:message_sent' as any, messageDto);
+        } catch {
+          // Socket server may not be bound in isolated test contexts; continue gracefully
+        }
+
+        results.push({
+          recipientId,
+          conversationId,
+          status: 'success',
+          message: messageDto,
+        });
+      } catch (err: any) {
+        await t.rollback();
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: err.message || 'Failed to deliver message',
+          errorCode: 'DELIVERY_ERROR',
+        });
+      }
+    }
+
+    return {
+      totalCount: targetRecipientIds.length,
+      successCount: results.filter((r) => r.status === 'success').length,
+      failureCount: results.filter((r) => r.status === 'failed').length,
+      results,
+    };
   }
 
   /**

@@ -101,6 +101,9 @@ export const env = {
   AGORA_APP_CERTIFICATE: process.env.AGORA_APP_CERTIFICATE || '',
   AGORA_TOKEN_EXPIRATION_SECONDS: parseInt(process.env.AGORA_TOKEN_EXPIRATION_SECONDS || '3600', 10),
   AGORA_RINGING_EXPIRATION_SECONDS: parseInt(process.env.AGORA_RINGING_EXPIRATION_SECONDS || '60', 10),
+
+  // Chat Configuration
+  CHAT_MAX_BULK_RECIPIENTS: parseInt(process.env.CHAT_MAX_BULK_RECIPIENTS || '50', 10),
 };
 
 

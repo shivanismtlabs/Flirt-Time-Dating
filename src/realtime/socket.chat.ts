@@ -17,20 +17,54 @@ export const registerChatSocketHandlers = (
 ): void => {
   const currentUserId = socket.data.user.userId;
 
-  // 1. Event: chat:send_message
-  socket.on('chat:send_message', async (payload: any, callback?: Function) => {
+  // 1. Event: chat:send_message & message:send
+  const handleSendMessage = async (payload: any, callback?: Function) => {
     try {
-      if (!payload || typeof payload !== 'object' || !payload.conversationId) {
+      if (!payload || typeof payload !== 'object') {
         if (typeof callback === 'function') {
           return callback({
             success: false,
-            error: 'conversationId is required',
+            error: 'Payload must be an object',
           });
         }
         return;
       }
 
-      const msgType = payload.messageType || 'text';
+      const hasRecipients =
+        (Array.isArray(payload.recipientIds) && payload.recipientIds.length > 0) ||
+        !!payload.recipientId;
+
+      if (hasRecipients) {
+        // Multi / Selected recipients send
+        const result = await chatService.sendMultiMessage(currentUserId, {
+          recipientIds: payload.recipientIds,
+          recipientId: payload.recipientId,
+          conversationId: payload.conversationId,
+          content: payload.content,
+          type: payload.type,
+          messageType: payload.messageType,
+          clientMessageId: payload.clientMessageId,
+          clientMessageIds: payload.clientMessageIds,
+          metadata: payload.metadata,
+        });
+
+        if (typeof callback === 'function') {
+          callback({ success: true, data: result });
+        }
+        return;
+      }
+
+      if (!payload.conversationId) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId, recipientId, or recipientIds is required',
+          });
+        }
+        return;
+      }
+
+      const msgType = payload.messageType || payload.type || 'text';
       if ((msgType === 'text' || msgType === 'image') && !payload.content) {
         if (typeof callback === 'function') {
           return callback({
@@ -46,7 +80,7 @@ export const registerChatSocketHandlers = (
         payload.conversationId,
         {
           content: payload.content,
-          messageType: payload.messageType || 'text',
+          messageType: msgType,
           clientMessageId: payload.clientMessageId,
           metadata: payload.metadata,
         }
@@ -59,6 +93,7 @@ export const registerChatSocketHandlers = (
       socketLogger.error('Error handling chat:send_message event', err, {
         userId: currentUserId,
         conversationId: payload?.conversationId,
+        recipientIds: payload?.recipientIds,
       });
 
       const errorMessage =
@@ -70,7 +105,10 @@ export const registerChatSocketHandlers = (
         callback({ success: false, error: errorMessage });
       }
     }
-  });
+  };
+
+  socket.on('chat:send_message', handleSendMessage);
+  socket.on('message:send' as any, handleSendMessage);
 
   // 2. Event: chat:mark_read & message:read (Read Acknowledgement)
   const handleMarkRead = async (payload: any, callback?: Function) => {

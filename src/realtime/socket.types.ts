@@ -161,10 +161,29 @@ export interface ServerToClientEvents {
 export interface ClientToServerEvents {
   'chat:send_message': (
     data: {
-      conversationId: string;
+      conversationId?: string;
+      recipientId?: string;
+      recipientIds?: string[];
       content?: string;
+      type?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       clientMessageId?: string;
+      clientMessageIds?: Record<string, string>;
+      metadata?: any;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:send': (
+    data: {
+      conversationId?: string;
+      recipientId?: string;
+      recipientIds?: string[];
+      content?: string;
+      type?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
+      messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
+      clientMessageId?: string;
+      clientMessageIds?: Record<string, string>;
       metadata?: any;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void

@@ -122,6 +122,9 @@ export const sendMessageSchema = z.object({
         .trim()
         .max(5000, { message: 'Message content cannot exceed 5000 characters' })
         .optional(),
+      type: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
+        .optional(),
       messageType: z
         .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
           errorMap: () => ({
@@ -131,11 +134,11 @@ export const sendMessageSchema = z.object({
         })
         .optional()
         .default('text'),
-      clientMessageId: z.string().uuid({ message: 'Invalid clientMessageId UUID format' }).optional(),
+      clientMessageId: z.string().trim().max(100, { message: 'Invalid clientMessageId format' }).optional(),
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
-      const type = data.messageType || 'text';
+      const type = data.type || data.messageType || 'text';
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -176,6 +179,181 @@ export const sendMessageSchema = z.object({
               });
             }
           }
+        }
+      } else if (type === 'audio') {
+        if (!data.content || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Audio URL or storage key is required in content for audio message',
+          });
+        }
+      } else if (type === 'location') {
+        let metaObj = data.metadata;
+        if (typeof metaObj === 'string') {
+          try {
+            metaObj = JSON.parse(metaObj);
+          } catch {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['metadata'],
+              message: 'Invalid JSON string in metadata',
+            });
+            return;
+          }
+        }
+        if (!metaObj || typeof metaObj !== 'object') {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['metadata'],
+            message: 'Location coordinates (latitude and longitude) are required in metadata',
+          });
+          return;
+        }
+        const parsed = locationMetadataSchema.safeParse(metaObj);
+        if (!parsed.success) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['metadata'],
+            message: parsed.error.errors[0]?.message || 'Invalid location metadata',
+          });
+        }
+      } else if (type === 'contact') {
+        let metaObj = data.metadata;
+        if (typeof metaObj === 'string') {
+          try {
+            metaObj = JSON.parse(metaObj);
+          } catch {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['metadata'],
+              message: 'Invalid JSON string in metadata',
+            });
+            return;
+          }
+        }
+        if (!metaObj || typeof metaObj !== 'object' || Array.isArray(metaObj)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['metadata'],
+            message: 'Contact details (name and phoneNumber) are required in metadata',
+          });
+          return;
+        }
+        const parsed = contactMetadataSchema.safeParse(metaObj);
+        if (!parsed.success) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['metadata'],
+            message: parsed.error.errors[0]?.message || 'Invalid contact metadata',
+          });
+        }
+      }
+    }),
+});
+
+export const sendMultiMessageSchema = z.object({
+  body: z
+    .object({
+      recipientIds: z
+        .array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' }))
+        .min(1, { message: 'recipientIds array cannot be empty' })
+        .max(50, { message: 'Cannot send message to more than 50 recipients at once' })
+        .optional(),
+      recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
+      conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }).optional(),
+      content: z
+        .string()
+        .trim()
+        .max(5000, { message: 'Message content cannot exceed 5000 characters' })
+        .optional(),
+      type: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
+          errorMap: () => ({
+            message:
+              'Invalid message type. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+          }),
+        })
+        .optional(),
+      messageType: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
+          errorMap: () => ({
+            message:
+              'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+          }),
+        })
+        .optional(),
+      clientMessageId: z
+        .string()
+        .trim()
+        .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
+        .optional(),
+      clientMessageIds: z.record(z.string().trim().max(100)).optional(),
+      metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+    })
+    .superRefine((data, ctx) => {
+      const hasRecipients =
+        (data.recipientIds && data.recipientIds.length > 0) ||
+        !!data.recipientId ||
+        !!data.conversationId;
+
+      if (!hasRecipients) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['recipientIds'],
+          message: 'At least one recipientId or recipientIds or conversationId must be provided',
+        });
+      }
+
+      const type = data.type || data.messageType || 'text';
+      if (type === 'text') {
+        if (!data.content || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Message content cannot be empty for text message',
+          });
+        }
+      } else if (type === 'image') {
+        if (!data.content || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Image URL or storage key is required in content for image message',
+          });
+        }
+        if (data.metadata) {
+          let metaObj = data.metadata;
+          if (typeof metaObj === 'string') {
+            try {
+              metaObj = JSON.parse(metaObj);
+            } catch {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: 'Invalid JSON string in metadata',
+              });
+              return;
+            }
+          }
+          if (metaObj && typeof metaObj === 'object') {
+            const parsed = imageMetadataSchema.safeParse(metaObj);
+            if (!parsed.success) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['metadata'],
+                message: parsed.error.errors[0]?.message || 'Invalid image metadata',
+              });
+            }
+          }
+        }
+      } else if (type === 'audio') {
+        if (!data.content || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Audio URL or storage key is required in content for audio message',
+          });
         }
       } else if (type === 'location') {
         let metaObj = data.metadata;
@@ -359,6 +537,7 @@ export const deleteConversationSchema = z.object({
 export type GetChatListQuery = z.infer<typeof getChatListSchema>['query'];
 export type GetMessagesQuery = z.infer<typeof getMessagesSchema>['query'];
 export type SendMessageInput = z.infer<typeof sendMessageSchema>['body'];
+export type SendMultiMessageInput = z.infer<typeof sendMultiMessageSchema>['body'];
 export type MarkReadInput = z.infer<typeof markReadSchema>['body'];
 export type DeliveryReceiptInput = z.infer<typeof deliveryReceiptSchema>['body'];
 export type GetUnreadCountQuery = z.infer<typeof getUnreadCountSchema>['query'];

@@ -523,10 +523,32 @@ export class InteractionService {
       limit: limit + 1,
     });
 
-    // Filter out blocked or inactive counterpart users
+    // Fetch users marked as nope by or against current user
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUser.id, action: 'nope' },
+          { targetUserId: currentUser.id, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const nopedUserIds = new Set<string>();
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUser.id) nopedUserIds.add(s.targetUserId);
+      if (s.targetUserId === currentUser.id) nopedUserIds.add(s.userId);
+    });
+
+    // Filter out blocked, noped, or inactive counterpart users
     const validMatches = rows.filter((m) => {
       const partner = m.user1Id === currentUser.id ? (m as any).user2 : (m as any).user1;
-      return partner && partner.isActive && !excludedUserIds.has(partner.id);
+      return (
+        partner &&
+        partner.isActive &&
+        !excludedUserIds.has(partner.id) &&
+        !nopedUserIds.has(partner.id)
+      );
     });
 
     const hasMore = validMatches.length > limit;
@@ -774,10 +796,27 @@ export class InteractionService {
       }),
     ]);
 
-    // Filter active matches whose counterpart is active and not blocked
+    // Fetch users marked as nope by or against current user
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUserId, action: 'nope' },
+          { targetUserId: currentUserId, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const nopedUserIds = new Set<string>();
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUserId) nopedUserIds.add(s.targetUserId);
+      if (s.targetUserId === currentUserId) nopedUserIds.add(s.userId);
+    });
+
+    // Filter active matches whose counterpart is active, not blocked, and not noped
     const matchesCount = allMatches.filter((m) => {
       const partnerId = m.user1Id === currentUserId ? m.user2Id : m.user1Id;
-      return !excludedUserIds.has(partnerId);
+      return !excludedUserIds.has(partnerId) && !nopedUserIds.has(partnerId);
     }).length;
 
     return {

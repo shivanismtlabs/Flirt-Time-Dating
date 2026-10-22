@@ -192,6 +192,7 @@ export class QuickMomentService {
           reporterId: viewerUserId,
           status: { [Op.ne]: 'dismissed' },
         },
+        attributes: ['targetUserId', 'momentId', 'targetType'],
       }),
     ]);
 
@@ -200,13 +201,22 @@ export class QuickMomentService {
       if (b.userId === viewerUserId) excludedUserIds.add(b.blockedUserId);
       if (b.blockedUserId === viewerUserId) excludedUserIds.add(b.userId);
     }
+    const reportedMomentIds = new Set<string>();
     for (const r of reports) {
-      if (r.targetUserId) excludedUserIds.add(r.targetUserId);
+      if (!r.momentId && (r.targetType === 'user' || !r.targetType) && r.targetUserId) {
+        excludedUserIds.add(r.targetUserId);
+      }
+      if (r.momentId) {
+        reportedMomentIds.add(r.momentId);
+      }
     }
 
     // 2. Group other users' stories
     const otherMoments = activeMoments.filter(
-      (m) => m.userId !== viewerUserId && !excludedUserIds.has(m.userId)
+      (m) =>
+        m.userId !== viewerUserId &&
+        !excludedUserIds.has(m.userId) &&
+        !reportedMomentIds.has(m.id)
     );
     const userGroups = new Map<string, typeof otherMoments>();
 
@@ -441,7 +451,11 @@ export class QuickMomentService {
           reporterId: viewerUserId,
           targetUserId,
           status: { [Op.ne]: 'dismissed' },
-        },
+          [Op.or]: [
+            { targetType: 'user' },
+            { momentId: null },
+          ],
+        } as any,
       });
       if (isReported) {
         return {

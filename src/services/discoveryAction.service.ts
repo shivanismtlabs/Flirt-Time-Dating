@@ -227,15 +227,8 @@ export class DiscoveryActionService {
               matchId: existingMatch ? existingMatch.id : null,
             };
           }
-
-          // If trying to change an existing action, reject with conflict
-          await t.rollback();
-          isCommitted = true;
-          throw new DiscoveryActionError(
-            `Conflicting action: you have already submitted '${existingSwipe.action}' for this user`,
-            409,
-            'ACTION_CONFLICT'
-          );
+          // If the action is different (e.g. was previously 'nope' and user re-swipes on reload),
+          // proceed to validate limits/coins and update the swipe action
         }
 
         // Fetch current user details with lock for quota and coin evaluations
@@ -331,15 +324,20 @@ export class DiscoveryActionService {
         }
       }
 
-      // Record the new swipe action
-      await SwipeAction.create(
-        {
-          userId: currentUserId,
-          targetUserId,
-          action,
-        },
-        { transaction: t }
-      );
+      // Record or update the swipe action
+      if (existingSwipe) {
+        existingSwipe.action = action;
+        await existingSwipe.save({ transaction: t });
+      } else {
+        await SwipeAction.create(
+          {
+            userId: currentUserId,
+            targetUserId,
+            action,
+          },
+          { transaction: t }
+        );
+      }
 
       // Nope actions never create matches
       if (action === 'nope') {

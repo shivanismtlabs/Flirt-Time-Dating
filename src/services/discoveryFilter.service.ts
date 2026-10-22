@@ -10,6 +10,7 @@ import {
   UserDiscoveryPreference,
   UserDevice,
   UserPhoto,
+  Match,
 } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
@@ -435,11 +436,17 @@ export class DiscoveryFilterService {
     }
 
     // 3. Exclude self, already swiped, blocked, and reported users
-    const excludedUserIds = await this.getExcludedUserIds(userId);
+    const hardExcludedIds = await this.getHardExcludedUserIds(userId);
+    const existingSwipes = await SwipeAction.findAll({
+      where: { userId },
+      attributes: ['targetUserId'],
+    });
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    const unswipedExcludedIds = Array.from(new Set([...hardExcludedIds, ...swipedUserIds]));
 
     // 4. Build SQL where clauses
     const where: any = {
-      id: { [Op.notIn]: excludedUserIds },
+      id: { [Op.notIn]: unswipedExcludedIds },
       isActive: true,
     };
 
@@ -575,19 +582,57 @@ export class DiscoveryFilterService {
       };
     }
 
+    // Check unswiped cards count
+    const unswipedCount = await User.count({
+      where,
+      include: includeClause,
+      distinct: true,
+    });
+
+    if (unswipedCount === 0) {
+      // Once all cards are swiped, reload and show all cards again, including those marked "Not Interested" or "Nope", to avoid a blank screen
+      where.id = { [Op.notIn]: hardExcludedIds };
+      await SwipeAction.destroy({
+        where: {
+          userId,
+          action: 'nope',
+        },
+      });
+    }
+
     // 6. Execute query
-    const { count: total, rows: targetUsers } = await User.findAndCountAll({
+    let effectiveOffset = offset;
+    let { count: total, rows: targetUsers } = await User.findAndCountAll({
       where,
       include: includeClause,
       distinct: true,
       limit,
-      offset,
+      offset: effectiveOffset,
       order: [
         ['isFaceVerified', 'DESC'],
         ['createdAt', 'DESC'],
         ['id', 'ASC'], // deterministic tie-breaker
       ],
     });
+
+    // If offset went beyond available cards on reload, fall back to page 1
+    if (targetUsers.length === 0 && total > 0 && effectiveOffset > 0) {
+      effectiveOffset = 0;
+      const fallback = await User.findAndCountAll({
+        where,
+        include: includeClause,
+        distinct: true,
+        limit,
+        offset: 0,
+        order: [
+          ['isFaceVerified', 'DESC'],
+          ['createdAt', 'DESC'],
+          ['id', 'ASC'],
+        ],
+      });
+      targetUsers = fallback.rows;
+      total = fallback.count;
+    }
 
     // 7. For the returned users, batch fetch active interests, primary photos, and eligible moment counts
     const targetUserIds = targetUsers.map((u) => u.id);
@@ -747,14 +792,11 @@ export class DiscoveryFilterService {
   }
 
   /**
-   * Retrieves excluded user IDs for discovery: self, already swiped, blocked, and non-dismissed reported
+   * Retrieves base hard-excluded user IDs: self, blocked in either direction,
+   * non-dismissed user-level reports, and active mutual matches.
    */
-  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
-    const [existingSwipes, blocks, reports] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUserId },
-        attributes: ['targetUserId'],
-      }),
+  public async getHardExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [blocks, reports, matches] = await Promise.all([
       UserBlock.findAll({
         where: {
           [Op.or]: [
@@ -771,19 +813,47 @@ export class DiscoveryFilterService {
         },
         attributes: ['targetUserId'],
       }),
+      Match.findAll({
+        where: {
+          [Op.or]: [
+            { user1Id: currentUserId },
+            { user2Id: currentUserId },
+          ],
+          isActive: true,
+        },
+        attributes: ['user1Id', 'user2Id'],
+      }),
     ]);
 
-    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
     const blockedUserIds = blocks.map((b) =>
       b.userId === currentUserId ? b.blockedUserId : b.userId
     );
     const reportedUserIds = reports
       .map((r) => r.targetUserId)
       .filter((id): id is string => Boolean(id));
+    const matchedUserIds = matches.map((m) =>
+      m.user1Id === currentUserId ? m.user2Id : m.user1Id
+    );
 
     return Array.from(
-      new Set([currentUserId, ...swipedUserIds, ...blockedUserIds, ...reportedUserIds])
+      new Set([currentUserId, ...blockedUserIds, ...reportedUserIds, ...matchedUserIds])
     );
+  }
+
+  /**
+   * Retrieves excluded user IDs for discovery: self, already swiped, blocked, and non-dismissed reported
+   */
+  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [hardExcluded, existingSwipes] = await Promise.all([
+      this.getHardExcludedUserIds(currentUserId),
+      SwipeAction.findAll({
+        where: { userId: currentUserId },
+        attributes: ['targetUserId'],
+      }),
+    ]);
+
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    return Array.from(new Set([...hardExcluded, ...swipedUserIds]));
   }
 
   /**

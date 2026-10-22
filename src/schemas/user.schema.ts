@@ -277,6 +277,15 @@ export const reportUserSchema = z.object({
       .uuid('Invalid conversation ID format')
       .optional()
       .nullable(),
+    momentId: z
+      .string()
+      .uuid('Invalid moment ID format')
+      .optional()
+      .nullable(),
+    targetType: z
+      .enum(['user', 'moment', 'chat'])
+      .optional()
+      .nullable(),
   }),
 });
 

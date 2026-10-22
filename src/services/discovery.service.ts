@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
 import { sequelize } from '../config/database';
-import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto, UserReport } from '../models';
+import { User, Interest, UserInterest, SwipeAction, UserBlock, UserPhoto, UserReport, Match } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { momentService } from './moment.service';
 import { quickMomentService } from './quickMoment.service';
@@ -230,14 +230,11 @@ export const resolveDisplayName = (user: any): string => {
 
 export class DiscoveryService {
   /**
-   * Retrieves excluded user IDs for the current user (self, swiped, blocked, reported)
+   * Retrieves base hard-excluded user IDs: self, blocked in either direction,
+   * non-dismissed user-level reports, and active mutual matches.
    */
-  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
-    const [existingSwipes, blocks, reports] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUserId },
-        attributes: ['targetUserId'],
-      }),
+  public async getHardExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [blocks, reports, matches] = await Promise.all([
       UserBlock.findAll({
         where: {
           [Op.or]: [
@@ -254,19 +251,47 @@ export class DiscoveryService {
         } as any,
         attributes: ['targetUserId'],
       }),
+      Match.findAll({
+        where: {
+          [Op.or]: [
+            { user1Id: currentUserId },
+            { user2Id: currentUserId },
+          ],
+          isActive: true,
+        },
+        attributes: ['user1Id', 'user2Id'],
+      }),
     ]);
 
-    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
     const blockedUserIds = blocks.map((b) =>
       b.userId === currentUserId ? b.blockedUserId : b.userId
     );
     const reportedUserIds = reports
       .map((r) => r.targetUserId)
       .filter((id): id is string => Boolean(id));
+    const matchedUserIds = matches.map((m) =>
+      m.user1Id === currentUserId ? m.user2Id : m.user1Id
+    );
 
     return Array.from(
-      new Set([currentUserId, ...swipedUserIds, ...blockedUserIds, ...reportedUserIds])
+      new Set([currentUserId, ...blockedUserIds, ...reportedUserIds, ...matchedUserIds])
     );
+  }
+
+  /**
+   * Retrieves excluded user IDs for the current user (self, swiped, blocked, reported, matched)
+   */
+  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [hardExcluded, existingSwipes] = await Promise.all([
+      this.getHardExcludedUserIds(currentUserId),
+      SwipeAction.findAll({
+        where: { userId: currentUserId },
+        attributes: ['targetUserId'],
+      }),
+    ]);
+
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    return Array.from(new Set([...hardExcluded, ...swipedUserIds]));
   }
 
   /**
@@ -318,10 +343,15 @@ export class DiscoveryService {
     }
 
     // 3. Build query filters for target discovery users
-    const excludedIds = await this.getExcludedUserIds(currentUserId);
+    const hardExcludedIds = await this.getHardExcludedUserIds(currentUserId);
+    const existingSwipes = await SwipeAction.findAll({
+      where: { userId: currentUserId },
+      attributes: ['targetUserId'],
+    });
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    const unswipedExcludedIds = Array.from(new Set([...hardExcludedIds, ...swipedUserIds]));
 
-    const whereClause: any = {
-      id: { [Op.notIn]: excludedIds },
+    const baseWhereClause: any = {
       isActive: true,
     };
 
@@ -329,9 +359,9 @@ export class DiscoveryService {
     if (currentUser.genderPreference) {
       const pref = currentUser.genderPreference.toLowerCase();
       if (pref === 'men') {
-        whereClause.gender = { [Op.in]: ['male', 'man'] };
+        baseWhereClause.gender = { [Op.in]: ['male', 'man'] };
       } else if (pref === 'women') {
-        whereClause.gender = { [Op.in]: ['female', 'woman'] };
+        baseWhereClause.gender = { [Op.in]: ['female', 'woman'] };
       }
     }
 
@@ -348,18 +378,66 @@ export class DiscoveryService {
       },
     ];
 
+    // Check count of unswiped cards
+    const unswipedCount = await User.count({
+      where: {
+        ...baseWhereClause,
+        id: { [Op.notIn]: unswipedExcludedIds },
+      },
+      include: targetInclude,
+      distinct: true,
+    });
+
+    let activeExcludedIds = unswipedExcludedIds;
+    let effectiveOffset = offset;
+
+    if (unswipedCount === 0) {
+      // Once all cards are swiped, reload and show all cards again, including those marked "Not Interested" or "Nope", to avoid a blank screen
+      activeExcludedIds = hardExcludedIds;
+      // Clean up old 'nope' swipes for current user so cards are fresh
+      await SwipeAction.destroy({
+        where: {
+          userId: currentUserId,
+          action: 'nope',
+        },
+      });
+    }
+
+    const whereClause: any = {
+      ...baseWhereClause,
+      id: { [Op.notIn]: activeExcludedIds },
+    };
+
     // 4. Query total count and users page
-    const { count: total, rows: targetUsers } = await User.findAndCountAll({
+    let { count: total, rows: targetUsers } = await User.findAndCountAll({
       where: whereClause,
       include: targetInclude,
       distinct: true,
       limit: validatedLimit,
-      offset,
+      offset: effectiveOffset,
       order: [
         ['isFaceVerified', 'DESC'],
         ['createdAt', 'DESC'],
       ],
     });
+
+    // If offset went beyond available cards on reload, fall back to page 1
+    if (targetUsers.length === 0 && total > 0 && effectiveOffset > 0) {
+      effectiveOffset = 0;
+      const fallback = await User.findAndCountAll({
+        where: whereClause,
+        include: targetInclude,
+        distinct: true,
+        limit: validatedLimit,
+        offset: 0,
+        order: [
+          ['isFaceVerified', 'DESC'],
+          ['createdAt', 'DESC'],
+        ],
+      });
+      targetUsers = fallback.rows;
+      total = fallback.count;
+    }
 
     // 5. For each target user, fetch their complete saved interests, eligible moment counts, and quick moment viewed status in parallel batches
     const targetUserIds = targetUsers.map((u) => u.id);
@@ -489,10 +567,10 @@ export class DiscoveryService {
         : null,
       users: mappedProfiles,
       pagination: {
-        page: validatedPage,
+        page: effectiveOffset === 0 && offset > 0 ? 1 : validatedPage,
         limit: validatedLimit,
         total,
-        hasMore: offset + mappedProfiles.length < total,
+        hasMore: effectiveOffset + mappedProfiles.length < total,
       },
     };
   }

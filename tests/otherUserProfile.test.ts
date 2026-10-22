@@ -9,6 +9,7 @@ import {
   SwipeAction,
   Match,
   UserBlock,
+  Conversation,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
@@ -32,6 +33,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
 
   beforeEach(async () => {
     // Clear all related tables
+    await Conversation.destroy({ where: {} });
     await Match.destroy({ where: {} });
     await SwipeAction.destroy({ where: {} });
     await UserBlock.destroy({ where: {} });
@@ -213,6 +215,8 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.myAction).toBeNull();
       expect(data.isMatched).toBe(false);
       expect(data.canConnect).toBe(true);
+      expect(typeof data.conversationId).toBe('string');
+      expect(data.conversationId).toMatch(/^[0-9a-fA-F-]{36}$/);
     });
   });
 
@@ -773,6 +777,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(res.status).toBe(200);
       expect(res.body.data.profileMatchPercentage).toBe(100);
       expect(res.body.data.vibeScore).toBe(100);
+      expect(res.body.data.conversationId).toBeNull();
     });
 
     it('should return 0% profileMatchPercentage when there are no shared interests and no matching preferences', async () => {
@@ -792,5 +797,48 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(res.body.data.vibeScore).toBe(0);
     });
   });
+
+  describe('19. Direct Conversation Navigation Support (conversationId)', () => {
+    it('should return a non-null conversationId for other user profile and allow opening direct chat', async () => {
+      const profileRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(profileRes.status).toBe(200);
+      expect(profileRes.body.success).toBe(true);
+      const convId = profileRes.body.data.conversationId;
+      expect(typeof convId).toBe('string');
+      expect(convId).toMatch(/^[0-9a-fA-F-]{36}$/);
+
+      // Verify the returned conversationId can be queried immediately via chat messages endpoint
+      const chatRes = await request(app)
+        .get(`/api/v1/chats/${convId}/messages`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(chatRes.status).toBe(200);
+      expect(chatRes.body.success).toBe(true);
+      expect(chatRes.body.data.conversationId).toBe(convId);
+      expect(Array.isArray(chatRes.body.data.messages)).toBe(true);
+    });
+
+    it('should return the same conversationId on subsequent profile views', async () => {
+      const firstRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(firstRes.status).toBe(200);
+      expect(firstRes.body.success).toBe(true);
+
+      const secondRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(secondRes.status).toBe(200);
+      expect(secondRes.body.success).toBe(true);
+
+      expect(firstRes.body.data.conversationId).toBe(secondRes.body.data.conversationId);
+    });
+  });
 });
+
 

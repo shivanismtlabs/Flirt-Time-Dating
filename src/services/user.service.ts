@@ -935,16 +935,33 @@ export const getOtherUserProfile = async (
       },
     }),
     (async () => {
-      const { Conversation } = await import('../models');
-      const [u1, u2] = [viewerUserId, targetUserId].sort();
-      return Conversation.findOne({
-        where: {
-          user1Id: u1,
-          user2Id: u2,
-          isDeletedForEveryone: false,
-        },
-        attributes: ['id'],
-      });
+      if (!viewerUserId || !targetUserId || viewerUserId === targetUserId) {
+        return null;
+      }
+      try {
+        const { Conversation } = await import('../models');
+        const [u1, u2] = [viewerUserId, targetUserId].sort();
+        const [conv, isNew] = await Conversation.findOrCreate({
+          where: {
+            user1Id: u1,
+            user2Id: u2,
+          },
+          defaults: {
+            user1Id: u1,
+            user2Id: u2,
+            isDeletedForEveryone: false,
+          },
+        });
+
+        if (!isNew && conv.isDeletedForEveryone) {
+          await conv.update({ isDeletedForEveryone: false });
+        }
+
+        return conv;
+      } catch (err: any) {
+        console.warn('[GetOtherUserProfile] Warning: Could not find or create conversation:', err?.message || err);
+        return null;
+      }
     })(),
   ]);
 

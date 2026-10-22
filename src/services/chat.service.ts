@@ -182,6 +182,8 @@ export interface ChatMessageDTO {
   reaction?: string | null;
   emoji?: string | null;
   hasReacted?: boolean;
+  totalCount?: number;
+  results?: any[];
 }
 
 export interface MessageReactionDTO {
@@ -1034,6 +1036,36 @@ export class ChatService {
         }
       }
 
+      if (parsedMetadata && typeof parsedMetadata === 'object') {
+        if (typeof parsedMetadata.images === 'string') {
+          try {
+            parsedMetadata.images = JSON.parse(parsedMetadata.images);
+          } catch {}
+        }
+        if (typeof parsedMetadata.imageUrls === 'string') {
+          try {
+            parsedMetadata.imageUrls = JSON.parse(parsedMetadata.imageUrls);
+          } catch {}
+        }
+        if (typeof parsedMetadata.mediaUrls === 'string') {
+          try {
+            parsedMetadata.mediaUrls = JSON.parse(parsedMetadata.mediaUrls);
+          } catch {}
+        }
+        if (!Array.isArray(parsedMetadata.images) && Array.isArray(parsedMetadata.imageUrls) && parsedMetadata.imageUrls.length > 0) {
+          parsedMetadata.images = parsedMetadata.imageUrls.map((u: any) => {
+            const rawUrl = typeof u === 'string' ? u : u?.url || u?.imageUrl || '';
+            const k = s3Service.extractKey(rawUrl);
+            return {
+              url: rawUrl ? s3Service.getPublicUrl(k) : '',
+              imageUrl: rawUrl ? s3Service.getPublicUrl(k) : '',
+              thumbnailUrl: rawUrl ? s3Service.getThumbnailUrl(k) : '',
+              key: k,
+            };
+          });
+        }
+      }
+
       if (msg.messageType === 'image' && msg.content) {
         if (!parsedMetadata || typeof parsedMetadata !== 'object') {
           parsedMetadata = {};
@@ -1194,6 +1226,20 @@ export class ChatService {
           msgItem.imageUrls = parsedMetadata.images.map((i: any) =>
             typeof i === 'string' ? i : i.url || i.imageUrl || ''
           );
+        } else if (Array.isArray(parsedMetadata?.imageUrls) && parsedMetadata.imageUrls.length > 0) {
+          const urls: string[] = parsedMetadata.imageUrls.map((i: any) =>
+            typeof i === 'string' ? i : i.url || i.imageUrl || ''
+          );
+          msgItem.imageUrls = urls;
+          msgItem.images = urls.map((u: string) => {
+            const k = s3Service.extractKey(u);
+            return {
+              url: u,
+              imageUrl: u,
+              thumbnailUrl: s3Service.getThumbnailUrl(k),
+              key: k,
+            };
+          });
         } else {
           msgItem.images = resolvedUrl
             ? [{ url: resolvedUrl, imageUrl: resolvedUrl, thumbnailUrl: resolvedThumb, key: cleanKey }]
@@ -2260,6 +2306,14 @@ export class ChatService {
       allDtos.push(dto);
     }
 
+    // Attach batch references so both individual and multi-message consumers receive the full payload
+    for (const d of allDtos) {
+      d.messages = allDtos.map((item) => ({ ...item }));
+      d.images = uploadedImages.length > 0 ? uploadedImages : d.images;
+      d.imageUrls = uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : d.imageUrls;
+      d.totalCount = allDtos.length;
+    }
+
     // 9. Real-Time Delivery via Socket.IO for every created message
     try {
       const io = getSocketServer();
@@ -2286,6 +2340,33 @@ export class ChatService {
         io.to(senderRoom).emit('chat:message_received' as any, dto);
       }
 
+      // If multiple messages (e.g. multi-image burst), also emit plural batch events so clients listening for batch updates get all messages at once
+      if (allDtos.length > 1) {
+        const batchRecipientPayload = {
+          conversationId,
+          senderId,
+          recipientId,
+          messages: allDtos.map((d) => ({ ...d, isMine: false, isSender: false })),
+          images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
+          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+          totalCount: allDtos.length,
+        };
+        io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
+        io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
+
+        const batchSenderPayload = {
+          conversationId,
+          senderId,
+          recipientId,
+          messages: allDtos.map((d) => ({ ...d })),
+          images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
+          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+          totalCount: allDtos.length,
+        };
+        io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
+        io.to(senderRoom).emit('messages:sent' as any, batchSenderPayload);
+      }
+
       // Real-time conversation list updates for both sender and recipient
       await this.emitConversationUpdate(
         conversationId,
@@ -2301,6 +2382,10 @@ export class ChatService {
     const primaryDto: ChatMessageDTO = {
       ...allDtos[0],
       messages: allDtos.map((d) => ({ ...d })),
+      images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
+      imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+      totalCount: allDtos.length,
+      results: allDtos.map((d) => ({ message: d, status: 'sent' })),
     };
     if (uploadedAudios.length > 0 && !primaryDto.audioUrl) {
       primaryDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -2384,11 +2469,34 @@ export class ChatService {
       }
     }
 
+    let rawImages = (data as any).images || metadataObj.images;
+    if (typeof rawImages === 'string') {
+      try {
+        rawImages = JSON.parse(rawImages);
+      } catch {}
+    }
+
+    let rawImageUrls =
+      (data as any).imageUrls ||
+      (data as any).mediaUrls ||
+      metadataObj.imageUrls ||
+      metadataObj.mediaUrls;
+    if (typeof rawImageUrls === 'string') {
+      try {
+        rawImageUrls = JSON.parse(rawImageUrls);
+      } catch {}
+    }
+
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
     if (!data.messageType && !data.type) {
       if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
         msgType = 'audio';
-      } else if ((data as any).imageUrl || (data as any).image || (data as any).images || (data as any).imageUrls) {
+      } else if (
+        (data as any).imageUrl ||
+        (data as any).image ||
+        (Array.isArray(rawImages) && rawImages.length > 0) ||
+        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0)
+      ) {
         msgType = 'image';
       }
     }
@@ -2406,9 +2514,21 @@ export class ChatService {
       (data as any).fileUrl ||
       ''
     );
-    if (typeof rawContent !== 'string' && Array.isArray((data as any).images) && (data as any).images.length > 0) {
-      const firstImg = (data as any).images[0];
-      rawContent = typeof firstImg === 'string' ? firstImg : firstImg?.url || firstImg?.imageUrl || '';
+    if (!rawContent && Array.isArray(rawImages) && rawImages.length > 0) {
+      const firstImg = rawImages[0];
+      rawContent = typeof firstImg === 'string'
+        ? firstImg
+        : firstImg?.url ||
+          firstImg?.imageUrl ||
+          firstImg?.uri ||
+          firstImg?.path ||
+          firstImg?.mediaUrl ||
+          firstImg?.key ||
+          '';
+    }
+    if (!rawContent && Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
+      const firstUrl = rawImageUrls[0];
+      rawContent = typeof firstUrl === 'string' ? firstUrl : (firstUrl as any)?.url || (firstUrl as any)?.imageUrl || '';
     }
     let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
 
@@ -2541,9 +2661,18 @@ export class ChatService {
     }
 
     // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
-    if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
-      for (const item of (data as any).images) {
-        const raw = typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.key || '';
+    if (Array.isArray(rawImages) && rawImages.length > 0) {
+      for (const item of rawImages) {
+        const raw =
+          typeof item === 'string'
+            ? item
+            : item?.url ||
+              item?.imageUrl ||
+              item?.uri ||
+              item?.path ||
+              item?.mediaUrl ||
+              item?.key ||
+              '';
         if (!raw) continue;
         const cleanKey = s3Service.extractKey(raw);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -2559,8 +2688,9 @@ export class ChatService {
         });
       }
     }
-    if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-      for (const raw of (data as any).imageUrls) {
+    if (Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
+      for (const rawItem of rawImageUrls) {
+        const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
         if (!raw || typeof raw !== 'string') continue;
         const cleanKey = s3Service.extractKey(raw);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -3238,6 +3368,14 @@ export class ChatService {
           recipientDtos.push(dto);
         }
 
+        // Attach batch references so both individual and multi-message consumers receive the full payload
+        for (const d of recipientDtos) {
+          d.messages = recipientDtos.map((item) => ({ ...item }));
+          d.images = uploadedImages.length > 0 ? uploadedImages : d.images;
+          d.imageUrls = uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : d.imageUrls;
+          d.totalCount = recipientDtos.length;
+        }
+
         // Real-Time Delivery via Socket.IO
         try {
           const io = getSocketServer();
@@ -3264,6 +3402,33 @@ export class ChatService {
             io.to(senderRoom).emit('chat:message_received' as any, dto);
           }
 
+          // If multiple messages, emit plural batch events for multi-message listeners
+          if (recipientDtos.length > 1) {
+            const batchRecipientPayload = {
+              conversationId,
+              senderId,
+              recipientId,
+              messages: recipientDtos.map((d) => ({ ...d, isMine: false, isSender: false })),
+              images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
+              imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+              totalCount: recipientDtos.length,
+            };
+            io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
+            io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
+
+            const batchSenderPayload = {
+              conversationId,
+              senderId,
+              recipientId,
+              messages: recipientDtos.map((d) => ({ ...d })),
+              images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
+              imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+              totalCount: recipientDtos.length,
+            };
+            io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
+            io.to(senderRoom).emit('messages:sent' as any, batchSenderPayload);
+          }
+
           if (lastSaved) {
             await this.emitConversationUpdate(
               conversationId,
@@ -3280,6 +3445,10 @@ export class ChatService {
         const primaryRecipientDto: ChatMessageDTO = {
           ...recipientDtos[0],
           messages: recipientDtos.map((d) => ({ ...d })),
+          images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
+          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+          totalCount: recipientDtos.length,
+          results: recipientDtos.map((d) => ({ message: d, status: 'sent' })),
         };
         if (uploadedAudios.length > 0 && !primaryRecipientDto.audioUrl) {
           primaryRecipientDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -4203,9 +4372,7 @@ export class ChatService {
       }
     }
 
-    const message = await ChatMessage.findOne({
-      where: { id: messageId, conversationId },
-    });
+    const message = await this.findMessageByIdOrClientMessageId(conversationId, messageId);
 
     if (!message) {
       throw new ChatServiceError('Message not found in this conversation', 404);
@@ -5192,6 +5359,48 @@ return {
   }
 
   /**
+   * Helper to locate a message within a conversation by primary key (case-insensitive)
+   * or by clientMessageId stored in metadata for clients (e.g. iOS) that track local IDs.
+   */
+  public async findMessageByIdOrClientMessageId(
+    conversationId: string,
+    messageId: string
+  ): Promise<ChatMessage | null> {
+    if (!messageId) return null;
+    const trimmedId = String(messageId).trim();
+
+    // 1. Direct PK lookup
+    let message = await ChatMessage.findByPk(trimmedId);
+    if (message) {
+      return message;
+    }
+
+    // 2. Lowercase PK lookup
+    const lowerId = trimmedId.toLowerCase();
+    if (lowerId !== trimmedId) {
+      message = await ChatMessage.findByPk(lowerId);
+      if (message) {
+        return message;
+      }
+    }
+
+    // 3. Fallback: Lookup by clientMessageId in metadata or id within conversation
+    message = await ChatMessage.findOne({
+      where: {
+        [Op.or]: [
+          { id: trimmedId },
+          { id: lowerId },
+          { metadata: { [Op.like]: `%"clientMessageId":"${trimmedId}"%` } },
+          { metadata: { [Op.like]: `%"clientMessageId":"${lowerId}"%` } },
+          { metadata: { [Op.like]: `%"clientMessageId":"${trimmedId.toUpperCase()}"%` } },
+        ],
+      },
+    });
+
+    return message;
+  }
+
+  /**
    * 10. EDIT MESSAGE
    * Allows original sender to edit their text message within the allowed edit window (15 minutes).
    * Ensures IDOR protection, membership validation, and concurrent transaction safety.
@@ -5227,7 +5436,7 @@ return {
 
     const recipientId = getOtherParticipantId(conversation, userId);
 
-    const message = await ChatMessage.findByPk(messageId);
+    const message = await this.findMessageByIdOrClientMessageId(conversationId, messageId);
     if (!message) {
       throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
     }
@@ -5236,7 +5445,7 @@ return {
       throw new ChatServiceError('Message does not belong to this conversation', 400, 'INVALID_CONVERSATION');
     }
 
-    if (message.senderId !== userId) {
+    if (String(message.senderId || '').trim().toLowerCase() !== normUserId) {
       throw new ChatServiceError('You can only edit your own messages', 403, 'FORBIDDEN');
     }
 
@@ -5294,7 +5503,7 @@ return {
       attempts++;
       const t = await sequelize.transaction();
       try {
-        const lockedMessage = await ChatMessage.findByPk(messageId, {
+        const lockedMessage = await ChatMessage.findByPk(message.id, {
           transaction: t,
           lock: sequelize.getDialect() === 'postgres' ? t.LOCK.UPDATE : undefined,
         });
@@ -5348,7 +5557,7 @@ return {
     });
 
     const pinRecord = await ChatMessagePin.findOne({
-      where: { conversationId, messageId, userId },
+      where: { conversationId, messageId: message.id, userId },
     });
 
     const updatedDto: ChatMessageDTO = {
@@ -5470,7 +5679,7 @@ return {
       throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
     }
 
-    const message = await ChatMessage.findByPk(messageId);
+    const message = await this.findMessageByIdOrClientMessageId(conversationId, messageId);
     if (!message) {
       throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
     }
@@ -5763,7 +5972,7 @@ return {
       throw new ChatServiceError('You cannot interact in this conversation', 403, 'CHAT_FORBIDDEN');
     }
 
-    const message = await ChatMessage.findByPk(messageId);
+    const message = await this.findMessageByIdOrClientMessageId(conversationId, messageId);
     if (!message) {
       throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
     }

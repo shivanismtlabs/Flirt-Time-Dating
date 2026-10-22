@@ -73,10 +73,10 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
   });
 
   beforeEach(async () => {
-    await ChatMessage.destroy({ where: {} });
-    await Conversation.destroy({ where: {} });
-    await UserBlock.destroy({ where: {} });
-    await User.destroy({ where: {} });
+    await ChatMessage.destroy({ where: {}, force: true });
+    await Conversation.destroy({ where: {}, force: true });
+    await UserBlock.destroy({ where: {}, force: true });
+    await User.destroy({ where: {}, force: true });
 
     senderUser = await User.create({
       username: 'sender_sam',
@@ -823,6 +823,58 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
 
       const received = await recipientPromise;
       expect(received.content).toBe('Message sent over WebSocket!');
+    });
+
+    it('should support sending multiple images via Socket.IO chat:send_message and deliver to recipient and sender consistently', async () => {
+      const recipientPromise = new Promise<any>((resolve) => {
+        socketRecipient1.on('chat:message_received', (data) => resolve(data));
+      });
+
+      const ackResponse = await new Promise<any>((resolve) => {
+        socketSender.emit(
+          'chat:send_message',
+          {
+            recipientIds: [recipient1.id],
+            messageType: 'image',
+            images: [
+              { url: 'https://s3.flirttime.test/chat/photo1.jpg' },
+              { url: 'https://s3.flirttime.test/chat/photo2.jpg' },
+              { url: 'https://s3.flirttime.test/chat/photo3.jpg' },
+            ],
+          },
+          (res: any) => resolve(res)
+        );
+      });
+
+      expect(ackResponse.success).toBe(true);
+      expect(Array.isArray(ackResponse.data.images)).toBe(true);
+      expect(ackResponse.data.images.length).toBe(3);
+      expect(Array.isArray(ackResponse.data.messages)).toBe(true);
+      expect(ackResponse.data.messages.length).toBe(3);
+
+      const received = await recipientPromise;
+      expect(received.messageType).toBe('image');
+      expect(Array.isArray(received.images)).toBe(true);
+      expect(received.images.length).toBe(3);
+
+      // Verify both sender and recipient see all 3 images in history
+      const [histSender, histRecipient] = await Promise.all([
+        request(app).get(`/api/v1/chat/messages/${recipient1.id}`).set('Authorization', `Bearer ${senderToken}`),
+        request(app).get(`/api/v1/chat/messages/${senderUser.id}`).set('Authorization', `Bearer ${recipient1Token}`),
+      ]);
+
+      expect(histSender.status).toBe(200);
+      expect(histRecipient.status).toBe(200);
+      expect(histSender.body.data.messages.length).toBe(3);
+      expect(histRecipient.body.data.messages.length).toBe(3);
+      for (const m of histSender.body.data.messages) {
+        expect(m.messageType).toBe('image');
+        expect(m.images.length).toBe(3);
+      }
+      for (const m of histRecipient.body.data.messages) {
+        expect(m.messageType).toBe('image');
+        expect(m.images.length).toBe(3);
+      }
     });
 
     it('should deliver real-time conversation:updated event to both sender and recipient when a message is sent', async () => {

@@ -78,15 +78,17 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
   });
 
   beforeEach(async () => {
-    await ChatMessage.destroy({ where: {} });
-    await ConversationUserState.destroy({ where: {} });
-    await Conversation.destroy({ where: {} });
-    await UserBlock.destroy({ where: {} });
-    await User.destroy({ where: {} });
+    await ChatMessage.destroy({ where: {}, force: true });
+    await ConversationUserState.destroy({ where: {}, force: true });
+    await Conversation.destroy({ where: {}, force: true });
+    await UserBlock.destroy({ where: {}, force: true });
+    await User.destroy({ where: {}, force: true });
+
+    const runId = Math.random().toString(36).substring(2, 8);
 
     senderUser = await User.create({
-      username: 'forwarder_sam',
-      email: 'sam@flirttime.test',
+      username: `sam_${runId}`,
+      email: `sam_${runId}@flirttime.test`,
       fullName: 'Sam Forwarder',
       firstName: 'Sam',
       lastName: 'Forwarder',
@@ -97,8 +99,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     originalAuthor = await User.create({
-      username: 'author_arthur',
-      email: 'arthur@flirttime.test',
+      username: `arthur_${runId}`,
+      email: `arthur_${runId}@flirttime.test`,
       fullName: 'Arthur Author',
       firstName: 'Arthur',
       dateOfBirth: '1997-05-05',
@@ -108,8 +110,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     recipient1 = await User.create({
-      username: 'recipient_alice',
-      email: 'alice@flirttime.test',
+      username: `alice_${runId}`,
+      email: `alice_${runId}@flirttime.test`,
       fullName: 'Alice First',
       firstName: 'Alice',
       dateOfBirth: '1999-02-02',
@@ -119,8 +121,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     recipient2 = await User.create({
-      username: 'recipient_bob',
-      email: 'bob@flirttime.test',
+      username: `bob_${runId}`,
+      email: `bob_${runId}@flirttime.test`,
       fullName: 'Bob Second',
       firstName: 'Bob',
       dateOfBirth: '1996-03-03',
@@ -130,8 +132,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     recipient3 = await User.create({
-      username: 'recipient_carol',
-      email: 'carol@flirttime.test',
+      username: `carol_${runId}`,
+      email: `carol_${runId}@flirttime.test`,
       fullName: 'Carol Third',
       firstName: 'Carol',
       dateOfBirth: '1995-04-04',
@@ -141,8 +143,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     blockedUser = await User.create({
-      username: 'blocked_user',
-      email: 'blocked@flirttime.test',
+      username: `blocked_${runId}`,
+      email: `blocked_${runId}@flirttime.test`,
       fullName: 'Blocked User',
       firstName: 'Blocked',
       dateOfBirth: '1994-06-06',
@@ -151,8 +153,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     inactiveUser = await User.create({
-      username: 'inactive_user',
-      email: 'inactive@flirttime.test',
+      username: `inactive_${runId}`,
+      email: `inactive_${runId}@flirttime.test`,
       fullName: 'Inactive User',
       firstName: 'Inactive',
       dateOfBirth: '1993-07-07',
@@ -161,8 +163,8 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
     });
 
     uninvolvedUser = await User.create({
-      username: 'uninvolved_user',
-      email: 'uninvolved@flirttime.test',
+      username: `uninvolved_${runId}`,
+      email: `uninvolved_${runId}@flirttime.test`,
       fullName: 'Eve Uninvolved',
       firstName: 'Eve',
       dateOfBirth: '1992-08-08',
@@ -534,13 +536,13 @@ describe('Production-Ready Message Forwarding API + Socket.IO Delivery', () => {
       expect(res.body.data.results[0].messages).toHaveLength(3);
 
       const createdIds = res.body.data.results[0].messageIds;
-      const msgs = await ChatMessage.findAll({ where: { id: createdIds } });
-      expect(msgs).toHaveLength(3);
-      expect(msgs.map((m) => m.content)).toEqual([
+      expect(res.body.data.results[0].messages.map((m: any) => m.content)).toEqual([
         'First message in batch',
         'Second message in batch',
         'Third message in batch',
       ]);
+      const msgs = await ChatMessage.findAll({ where: { id: createdIds }, order: [['createdAt', 'ASC']] });
+      expect(msgs).toHaveLength(3);
       expect(msgs.every((m) => m.senderId === senderUser.id)).toBe(true);
       expect(msgs.every((m) => m.recipientId === recipient1.id)).toBe(true);
     });

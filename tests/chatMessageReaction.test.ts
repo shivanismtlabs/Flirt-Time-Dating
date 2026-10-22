@@ -676,14 +676,14 @@ describe('Message Reaction API & Real-Time Socket.IO Synchronization', () => {
           {
             conversationId: convAB.id,
             messageId: msg2.id,
-            emoji: 'invalid_emoji_val',
+            emoji: '   ',
           },
           (ackResponse: any) => resolve(ackResponse)
         );
       });
 
       expect(socketAck.success).toBe(false);
-      expect(socketAck.error).toMatch(/Unsupported reaction emoji/i);
+      expect(socketAck.error).toMatch(/Reaction emoji is required/i);
     });
 
     it('should broadcast chat:message_reaction event to the other user with otherUserReaction and active emoji', async () => {

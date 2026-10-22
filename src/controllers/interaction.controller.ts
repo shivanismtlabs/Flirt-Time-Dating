@@ -29,12 +29,14 @@ export const getInteractionsHandler = async (
     const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 20;
     const cursor = req.query.cursor as string | undefined;
     const sort = req.query.sort as string | undefined;
+    const excludeMatched = String(req.query.excludeMatched) === 'true';
 
     const result = await interactionService.getInteractions(currentUserId, {
       type,
       limit,
       cursor,
       sort,
+      excludeMatched,
     });
 
     return sendSuccess(res, 'Interactions fetched successfully', result, 200);

@@ -29,6 +29,10 @@ export const getInteractionsSchema = z.object({
         message: 'Invalid sort parameter. Supported values: recent',
       })
       .default('recent'),
+    excludeMatched: z
+      .string()
+      .optional()
+      .transform((val) => val === 'true'),
   }),
 });
 

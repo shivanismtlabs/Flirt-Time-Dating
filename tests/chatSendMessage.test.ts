@@ -825,6 +825,64 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(received.content).toBe('Message sent over WebSocket!');
     });
 
+    it('should deliver real-time conversation:updated event to both sender and recipient when a message is sent', async () => {
+      const senderConvUpdateP = new Promise<any>((resolve) => {
+        socketSender.on('conversation:updated', (data) => resolve(data));
+      });
+      const recipientConvUpdateP = new Promise<any>((resolve) => {
+        socketRecipient1.on('conversation:updated', (data) => resolve(data));
+      });
+
+      const res = await request(app)
+        .post('/api/v1/chat/messages')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientIds: [recipient1.id],
+          type: 'text',
+          content: 'Hello conversation list real-time update!',
+        });
+
+      expect(res.status).toBe(201);
+
+      const [senderConv, recipientConv] = await Promise.all([
+        senderConvUpdateP,
+        recipientConvUpdateP,
+      ]);
+
+      // Sender conversation update validation
+      expect(senderConv).toBeDefined();
+      expect(senderConv.lastMessage.content).toBe('Hello conversation list real-time update!');
+      expect(senderConv.participant.userId).toBe(recipient1.id);
+      expect(senderConv.unreadCount).toBe(0);
+
+      // Recipient conversation update validation
+      expect(recipientConv).toBeDefined();
+      expect(recipientConv.lastMessage.content).toBe('Hello conversation list real-time update!');
+      expect(recipientConv.participant.userId).toBe(senderUser.id);
+      expect(recipientConv.unreadCount).toBe(1);
+    });
+
+    it('should support fetching conversation list via socket event conversation:get_list', async () => {
+      // Send a message first so a conversation exists
+      await request(app)
+        .post('/api/v1/chat/messages')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientIds: [recipient1.id],
+          type: 'text',
+          content: 'Socket fetch test',
+        });
+
+      const listResponse = await new Promise<any>((resolve) => {
+        socketSender.emit('conversation:get_list', {}, (res: any) => resolve(res));
+      });
+
+      expect(listResponse.success).toBe(true);
+      expect(listResponse.data.conversations).toBeDefined();
+      expect(listResponse.data.conversations.length).toBeGreaterThan(0);
+      expect(listResponse.data.conversations[0].lastMessage.content).toBe('Socket fetch test');
+    });
+
     it('should reject unauthorized socket connection attempts', async () => {
       const unauthorizedSocket = ioClient(serverUrl, {
         transports: ['websocket'],
@@ -887,4 +945,120 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(historyRes.body.data.messages[0].isMine).toBe(false);
     });
   });
+
+  describe('9. Profile-to-Chat Navigation & Outgoing Message Identification', () => {
+    it('should return enriched conversation data with participant when starting conversation from profile (POST /api/v1/chats)', async () => {
+      const res = await request(app)
+        .post('/api/v1/chats')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientId: recipient2.id,
+        });
+
+      expect([200, 201]).toContain(res.status);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.conversationId).toBeDefined();
+      expect(res.body.data.id).toBe(res.body.data.conversationId);
+      expect(res.body.data.recipientId).toBe(recipient2.id);
+      expect(res.body.data.participant).toBeDefined();
+      expect(res.body.data.participant.id).toBe(recipient2.id);
+    });
+
+    it('should return top-level isMine: true and isSender: true when sending message with recipientId (POST /api/v1/chat/messages)', async () => {
+      const res = await request(app)
+        .post('/api/v1/chat/messages')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientId: recipient2.id,
+          content: 'Hello from profile message button!',
+          type: 'text',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+
+      // Top-level single message DTO fields
+      expect(res.body.data.senderId).toBe(senderUser.id);
+      expect(res.body.data.recipientId).toBe(recipient2.id);
+      expect(res.body.data.isMine).toBe(true);
+      expect(res.body.data.isSender).toBe(true);
+      expect(res.body.data.content).toBe('Hello from profile message button!');
+      expect(res.body.data.conversationId).toBeDefined();
+
+      // Backward compatibility with multi-message envelope
+      expect(res.body.data.results).toBeDefined();
+      expect(res.body.data.results[0].status).toBe('success');
+    });
+
+    it('should return isMine: true and isSender: true when sender fetches history via GET /api/v1/chat/messages/:targetUserId', async () => {
+      await request(app)
+        .post('/api/v1/chat/messages')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientId: recipient2.id,
+          content: 'Hello from profile message button!',
+          type: 'text',
+        });
+
+      const res = await request(app)
+        .get(`/api/v1/chat/messages/${recipient2.id}`)
+        .set('Authorization', `Bearer ${senderToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.messages.length).toBeGreaterThanOrEqual(1);
+
+      const latestMsg = res.body.data.messages.find(
+        (m: any) => m.content === 'Hello from profile message button!'
+      );
+      expect(latestMsg).toBeDefined();
+      expect(latestMsg.senderId).toBe(senderUser.id);
+      expect(latestMsg.isMine).toBe(true);
+      expect(latestMsg.isSender).toBe(true);
+    });
+
+    it('should return isMine: false and isSender: false when recipient fetches history via GET /api/v1/chat/messages/:targetUserId', async () => {
+      await request(app)
+        .post('/api/v1/chat/messages')
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          recipientId: recipient2.id,
+          content: 'Hello from profile message button!',
+          type: 'text',
+        });
+
+      const res = await request(app)
+        .get(`/api/v1/chat/messages/${senderUser.id}`)
+        .set('Authorization', `Bearer ${recipient2Token}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+
+      const incomingMsg = res.body.data.messages.find(
+        (m: any) => m.content === 'Hello from profile message button!'
+      );
+      expect(incomingMsg).toBeDefined();
+      expect(incomingMsg.senderId).toBe(senderUser.id);
+      expect(incomingMsg.isMine).toBe(false);
+      expect(incomingMsg.isSender).toBe(false);
+    });
+
+    it('should support sending message using targetUserId as conversationId fallback parameter (POST /api/v1/chats/:targetUserId/messages)', async () => {
+      const res = await request(app)
+        .post(`/api/v1/chats/${recipient2.id}/messages`)
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          content: 'Direct send via target user param',
+          messageType: 'text',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.senderId).toBe(senderUser.id);
+      expect(res.body.data.isMine).toBe(true);
+      expect(res.body.data.isSender).toBe(true);
+      expect(res.body.data.content).toBe('Direct send via target user param');
+    });
+  });
 });
+

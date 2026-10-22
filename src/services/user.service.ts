@@ -567,6 +567,7 @@ export interface OtherUserProfilePhotoDTO {
 }
 
 export interface OtherUserProfileResponse {
+  id?: string;
   userId: string;
   username: string;
   fullName: string;
@@ -970,6 +971,7 @@ export const getOtherUserProfile = async (
   const otherLocation = parseLocation(targetUser.city, targetUser.latitude, targetUser.longitude);
 
   return {
+    id: targetUser.id,
     userId: targetUser.id,
     username: targetUser.username,
     fullName,

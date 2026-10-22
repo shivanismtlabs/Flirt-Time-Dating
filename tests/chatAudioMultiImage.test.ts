@@ -206,13 +206,101 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.messages.length).toBe(1);
+      // Both images are saved as distinct message records so all images appear in chat UI for both users
+      expect(res.body.data.messages.length).toBe(2);
       const fetchedMsg = res.body.data.messages[0];
       expect(fetchedMsg.status).toBe('sent');
       expect(fetchedMsg.messageType).toBe('image');
       expect(fetchedMsg.imageUrl).toBeDefined();
       expect(Array.isArray(fetchedMsg.images)).toBe(true);
       expect(fetchedMsg.images.length).toBe(2);
+    });
+
+    it('should support sending 3-4 images and have all of them visible in chat history', async () => {
+      // Send 4 images
+      const sendRes = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .attach('images', sampleJpegBuffer, 'img1.jpg')
+        .attach('images', samplePngBuffer, 'img2.png')
+        .attach('images', sampleJpegBuffer, 'img3.jpg')
+        .attach('images', samplePngBuffer, 'img4.png');
+
+      expect(sendRes.status).toBe(201);
+      expect(sendRes.body.success).toBe(true);
+      expect(sendRes.body.data.images.length).toBe(4);
+      expect(sendRes.body.data.imageUrls.length).toBe(4);
+      expect(Array.isArray(sendRes.body.data.messages)).toBe(true);
+      expect(sendRes.body.data.messages.length).toBe(4);
+
+      // Sender fetches history -> should see all 4 images
+      const histSender = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(histSender.status).toBe(200);
+      expect(histSender.body.data.messages.length).toBe(4);
+      for (const msg of histSender.body.data.messages) {
+        expect(msg.messageType).toBe('image');
+        expect(msg.imageUrl).toBeDefined();
+        expect(msg.status).toBe('sent');
+      }
+
+      // Recipient (Bob) generates token and fetches history -> should also see all 4 images
+      const tokenB = generateToken({
+        id: userB.id,
+        email: userB.email,
+        role: userB.role,
+      });
+
+      const histRecipient = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenB}`);
+
+      expect(histRecipient.status).toBe(200);
+      expect(histRecipient.body.data.messages.length).toBe(4);
+      for (const msg of histRecipient.body.data.messages) {
+        expect(msg.messageType).toBe('image');
+        expect(msg.imageUrl).toBeDefined();
+        expect(msg.isMine).toBe(false);
+      }
+    });
+
+    it('should support sending 3-4 images AND audio in the same request without dropping either media', async () => {
+      const sendRes = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .field('duration', '14')
+        .attach('images', sampleJpegBuffer, 'photo1.jpg')
+        .attach('images', samplePngBuffer, 'photo2.png')
+        .attach('images', sampleJpegBuffer, 'photo3.jpg')
+        .attach('audio', sampleAudioBuffer, {
+          filename: 'voice_memo.m4a',
+          contentType: 'audio/m4a',
+        });
+
+      expect(sendRes.status).toBe(201);
+      expect(sendRes.body.success).toBe(true);
+      // Both images and audio messages are created
+      expect(sendRes.body.data.images.length).toBe(3);
+      expect(sendRes.body.data.audioUrl).toBeDefined();
+      expect(sendRes.body.data.messages.length).toBe(4); // 3 images + 1 audio
+
+      // Fetch history -> all 4 messages should be present
+      const histRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(histRes.status).toBe(200);
+      expect(histRes.body.data.messages.length).toBe(4);
+
+      const imageMsgs = histRes.body.data.messages.filter((m: any) => m.messageType === 'image');
+      const audioMsgs = histRes.body.data.messages.filter((m: any) => m.messageType === 'audio');
+
+      expect(imageMsgs.length).toBe(3);
+      expect(audioMsgs.length).toBe(1);
+      expect(audioMsgs[0].audioUrl).toBeDefined();
+      expect(audioMsgs[0].duration).toBe(14);
     });
   });
 

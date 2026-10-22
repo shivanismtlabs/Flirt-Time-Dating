@@ -1,4 +1,4 @@
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { chatService, ChatServiceError } from '../services/chat.service';
@@ -113,8 +113,11 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
       return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
     }
 
-    // If multiple recipients are provided, delegate to multi-message handler
-    if (Array.isArray(req.body?.recipientIds) && req.body.recipientIds.length > 1) {
+    // If recipientIds is provided, delegate to multi-message handler
+    if (
+      (Array.isArray(req.body?.recipientIds) && req.body.recipientIds.length > 0) ||
+      (typeof req.body?.recipientIds === 'string' && req.body.recipientIds.trim())
+    ) {
       return sendMultiMessageHandler(req, res);
     }
 
@@ -131,8 +134,16 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
-    if (req.body?.recipientId) {
-      const result = await chatService.sendMessageToRecipient(currentUserId, messagePayload);
+    const recipientId =
+      (Array.isArray(req.body?.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
+      (typeof req.body?.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
+      req.body?.recipientId;
+
+    if (recipientId) {
+      const result = await chatService.sendMessageToRecipient(currentUserId, {
+        ...messagePayload,
+        recipientId,
+      });
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
@@ -141,7 +152,7 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
-    return sendError(res, 'Conversation ID in URL or recipientId in body is required', 400, 'VALIDATION_ERROR');
+    return sendError(res, 'Conversation ID or recipientIds is required', 400, 'VALIDATION_ERROR');
   } catch (error: any) {
     if (error instanceof ChatServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
@@ -170,7 +181,16 @@ export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Re
         : result.successCount > 0
           ? 'Messages sent with some delivery failures'
           : 'Failed to deliver messages to all recipients';
-    return sendSuccess(res, message, result, 201);
+
+    let responseData: any = result;
+    if (result.results && result.results.length === 1 && result.results[0]?.status === 'success' && result.results[0]?.message) {
+      responseData = {
+        ...result.results[0].message,
+        ...result,
+      };
+    }
+
+    return sendSuccess(res, message, responseData, 201);
   } catch (error: any) {
     if (error instanceof ChatServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);
@@ -187,37 +207,115 @@ export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Re
 export const uploadChatMediaHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const file =
-      req.file ||
-      (req.files && (req.files as any).image?.[0]) ||
-      (req.files && (req.files as any).file?.[0]) ||
-      (req.files && (req.files as any).photo?.[0]) ||
-      (req.files && (req.files as any).media?.[0]);
+    const attachedFiles: Express.Multer.File[] = [];
 
-    if (file) {
-      const mimeType = file.mimetype || 'image/jpeg';
-      const s3Key = await s3Service.uploadMedia(file.buffer, currentUserId, mimeType, 'chat');
-
-      if (mimeType.startsWith('image/')) {
-        s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      attachedFiles.push(...req.files);
+    } else if (req.files && typeof req.files === 'object') {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const list of Object.values(filesObj)) {
+        if (Array.isArray(list)) attachedFiles.push(...list);
       }
+    }
+    if (attachedFiles.length === 0 && req.file) {
+      attachedFiles.push(req.file);
+    }
 
-      const publicUrl = s3Service.getPublicUrl(s3Key);
-      const thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+    if (attachedFiles.length > 0) {
+      const uploadedFiles: Array<{
+        key: string;
+        imageKey: string;
+        url: string;
+        imageUrl: string;
+        audioUrl?: string;
+        voiceUrl?: string;
+        mediaUrl: string;
+        thumbnailUrl?: string;
+        publicUrl: string;
+        mimeType: string;
+        size: number;
+        isAudio: boolean;
+      }> = [];
 
-      return sendSuccess(
-        res,
-        'Chat media uploaded successfully',
-        {
+      const uploadedImages: any[] = [];
+      let firstAudioUrl: string | undefined;
+
+      for (const file of attachedFiles) {
+        const mime = (file.mimetype || '').toLowerCase();
+        const origName = (file.originalname || '').toLowerCase();
+        const field = (file.fieldname || '').toLowerCase();
+        const isAudio =
+          mime.startsWith('audio/') ||
+          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
+          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName);
+
+        let mimeType = file.mimetype || (isAudio ? 'audio/mpeg' : 'image/jpeg');
+        if (isAudio && (!mime || mime === 'application/octet-stream' || mime.startsWith('application/'))) {
+          if (origName.endsWith('.m4a')) mimeType = 'audio/m4a';
+          else if (origName.endsWith('.mp3')) mimeType = 'audio/mpeg';
+          else if (origName.endsWith('.wav')) mimeType = 'audio/wav';
+          else if (origName.endsWith('.aac')) mimeType = 'audio/aac';
+          else if (origName.endsWith('.caf')) mimeType = 'audio/x-caf';
+          else if (origName.endsWith('.ogg')) mimeType = 'audio/ogg';
+          else if (origName.endsWith('.webm')) mimeType = 'audio/webm';
+          else if (origName.endsWith('.3gp') || origName.endsWith('.3gpp')) mimeType = 'audio/3gpp';
+          else if (origName.endsWith('.amr')) mimeType = 'audio/amr';
+          else if (origName.endsWith('.flac')) mimeType = 'audio/flac';
+          else if (origName.endsWith('.opus')) mimeType = 'audio/opus';
+          else mimeType = 'audio/m4a';
+        }
+
+        const s3Key = await s3Service.uploadMedia(file.buffer, currentUserId, mimeType, 'chat');
+        let thumbnailUrl: string | undefined;
+        if (mimeType.startsWith('image/')) {
+          s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
+          thumbnailUrl = s3Service.getThumbnailUrl(s3Key);
+        }
+
+        const publicUrl = s3Service.getPublicUrl(s3Key);
+        const item = {
           key: s3Key,
           imageKey: s3Key,
           url: publicUrl,
           imageUrl: publicUrl,
+          audioUrl: isAudio ? publicUrl : undefined,
+          voiceUrl: isAudio ? publicUrl : undefined,
           mediaUrl: publicUrl,
           thumbnailUrl,
           publicUrl,
           mimeType,
           size: file.size,
+          isAudio,
+        };
+
+        uploadedFiles.push(item);
+        if (!isAudio) {
+          uploadedImages.push(item);
+        } else if (!firstAudioUrl) {
+          firstAudioUrl = publicUrl;
+        }
+      }
+
+      const primary = uploadedFiles[0];
+      return sendSuccess(
+        res,
+        'Chat media uploaded successfully',
+        {
+          key: primary.key,
+          imageKey: primary.key,
+          url: primary.url,
+          imageUrl: primary.imageUrl,
+          audioUrl: primary.audioUrl || firstAudioUrl,
+          voiceUrl: primary.voiceUrl || firstAudioUrl,
+          mediaUrl: primary.mediaUrl,
+          thumbnailUrl: primary.thumbnailUrl,
+          publicUrl: primary.publicUrl,
+          mimeType: primary.mimeType,
+          size: primary.size,
+          files: uploadedFiles,
+          images: uploadedImages,
+          imageUrls: uploadedImages.map((img) => img.url),
+          urls: uploadedFiles.map((f) => f.url),
         },
         201
       );
@@ -411,7 +509,10 @@ export const getPinnedMessagesHandler = async (req: AuthenticatedRequest, res: R
 export const startConversationHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const { recipientId } = req.body;
+    const recipientId =
+      (Array.isArray(req.body.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
+      (typeof req.body.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
+      req.body.recipientId;
     const result = await chatService.startConversation(currentUserId, recipientId);
     const message = result.isNew ? 'Conversation created successfully' : 'Conversation retrieved successfully';
     return sendSuccess(res, message, result, result.isNew ? 201 : 200);
@@ -569,6 +670,53 @@ export const deleteMessageHandler = async (req: AuthenticatedRequest, res: Respo
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Failed to delete message', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+/**
+ * 18. POST /api/v1/chats/:conversationId/messages/:messageId/reactions
+ * Add, change, or remove (toggle) an emoji reaction on a message.
+ */
+export const reactMessageHandler = async (req: AuthenticatedRequest, res: Response): Promise<void> => {
+  try {
+    const currentUserId = (req as any).user?.id || (req as any).userId;
+    if (!currentUserId) {
+      sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+      return;
+    }
+
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const emoji = req.body?.emoji;
+
+    if (!emoji || typeof emoji !== 'string' || !emoji.trim()) {
+      sendError(res, 'Reaction emoji is required', 400, 'VALIDATION_ERROR');
+      return;
+    }
+
+    const result = await chatService.reactToMessage(
+      currentUserId,
+      conversationId,
+      messageId,
+      emoji
+    );
+
+    const message =
+      result.action === 'added'
+        ? 'Reaction added successfully'
+        : result.action === 'updated'
+        ? 'Reaction updated successfully'
+        : 'Reaction removed successfully';
+
+    sendSuccess(res, message, result, 200);
+    return;
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      sendError(res, error.message, error.statusCode, error.errorCode);
+      return;
+    }
+    sendError(res, error.message || 'Failed to update reaction', 500, 'INTERNAL_SERVER_ERROR');
+    return;
   }
 };
 

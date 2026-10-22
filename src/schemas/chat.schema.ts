@@ -4,24 +4,74 @@ export const directSendMessageSchema = z.object({
   recipientId: z
     .string({ required_error: 'recipientId is required' })
     .uuid('recipientId must be a valid UUID'),
-  content: z
-    .string({ required_error: 'Message content is required' })
-    .trim()
-    .min(1, 'Message content cannot be empty')
-    .max(5000, 'Message content cannot exceed 5000 characters'),
-  type: z
-    .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
-    .optional(),
-  messageType: z
-    .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
-    .optional()
-    .default('text'),
-  metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
-  clientMessageId: z.string().trim().max(100).optional(),
-  replyToMessageId: z.string().uuid('replyToMessageId must be a valid UUID').optional(),
-  parentMessageId: z.string().uuid('parentMessageId must be a valid UUID').optional(),
-  replyToId: z.string().uuid('replyToId must be a valid UUID').optional(),
-});
+    content: z
+      .string()
+      .trim()
+      .max(5000000, 'Message content cannot exceed maximum limit')
+      .optional(),
+    imageUrl: z.string().trim().max(5000).optional(),
+    image: z.string().trim().max(5000000).optional(),
+    mediaUrl: z.string().trim().max(5000).optional(),
+    imageKey: z.string().trim().max(5000).optional(),
+    audioUrl: z.string().trim().max(5000).optional(),
+    audio: z.string().trim().max(5000000).optional(),
+    voiceUrl: z.string().trim().max(5000).optional(),
+    url: z.string().trim().max(5000).optional(),
+    fileUrl: z.string().trim().max(5000).optional(),
+    images: z.union([z.array(z.any()), z.string()]).optional(),
+    imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+    duration: z.union([z.number(), z.string()]).optional(),
+    durationMs: z.union([z.number(), z.string()]).optional(),
+    caption: z.string().trim().max(1000).optional(),
+    type: z
+      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'])
+      .optional()
+      .transform((val) => (val === 'voice' ? 'audio' : val)),
+    messageType: z
+      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'])
+      .optional()
+      .transform((val) => (val === 'voice' ? 'audio' : val))
+      .default('text'),
+    metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+    clientMessageId: z.string().trim().max(100).optional(),
+    replyToMessageId: z.string().uuid('replyToMessageId must be a valid UUID').optional(),
+    parentMessageId: z.string().uuid('parentMessageId must be a valid UUID').optional(),
+    replyToId: z.string().uuid('replyToId must be a valid UUID').optional(),
+  })
+  .superRefine((data, ctx) => {
+    let multiImageFirst: string | undefined;
+    if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
+      const first = (data as any).images[0];
+      multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
+    } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
+      multiImageFirst = (data as any).imageUrls[0];
+    }
+
+    const resolvedContent =
+      data.content ||
+      data.imageUrl ||
+      data.image ||
+      data.mediaUrl ||
+      data.imageKey ||
+      (data as any).audioUrl ||
+      (data as any).audio ||
+      (data as any).voiceUrl ||
+      (data as any).url ||
+      (data as any).fileUrl ||
+      multiImageFirst;
+
+    if (resolvedContent && !data.content) {
+      data.content = resolvedContent;
+    }
+
+    if (!data.content || data.content.trim().length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['content'],
+        message: 'Message content cannot be empty',
+      });
+    }
+  });
 
 export type DirectSendMessageInput = z.infer<typeof directSendMessageSchema>;
 
@@ -186,18 +236,21 @@ export const sendMessageSchema = z.object({
       images: z.union([z.array(z.any()), z.string()]).optional(),
       imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
+      durationMs: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
       type: z
-        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
-        .optional(),
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'])
+        .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
       messageType: z
-        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
           errorMap: () => ({
             message:
               'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
           }),
         })
         .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val))
         .default('text'),
       clientMessageId: z.string().trim().max(100, { message: 'Invalid clientMessageId format' }).optional(),
       replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
@@ -381,70 +434,87 @@ export const sendMultiMessageSchema = z.object({
   body: z
     .object({
       recipientIds: z
-        .array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' }))
-        .min(1, { message: 'recipientIds array cannot be empty' })
-        .max(50, { message: 'Cannot send message to more than 50 recipients at once' })
+        .preprocess((val) => {
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (!trimmed) return [];
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {
+              // Not JSON
+            }
+            if (trimmed.includes(',')) {
+              return trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+            }
+            return [trimmed];
+          }
+          return val;
+        }, z.array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' })).min(1, { message: 'recipientIds array cannot be empty' }).max(50, { message: 'Cannot send message to more than 50 recipients at once' }))
         .optional(),
       recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
       conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }).optional(),
-      content: z
-        .string()
-        .trim()
-        .max(5000000, { message: 'Message content cannot exceed maximum limit' })
-        .optional(),
-      imageUrl: z.string().trim().max(5000).optional(),
-      image: z.string().trim().max(5000000).optional(),
-      mediaUrl: z.string().trim().max(5000).optional(),
-      imageKey: z.string().trim().max(5000).optional(),
-      audioUrl: z.string().trim().max(5000).optional(),
-      audio: z.string().trim().max(5000000).optional(),
-      voiceUrl: z.string().trim().max(5000).optional(),
-      url: z.string().trim().max(5000).optional(),
-      fileUrl: z.string().trim().max(5000).optional(),
-      images: z.union([z.array(z.any()), z.string()]).optional(),
-      imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
-      duration: z.union([z.number(), z.string()]).optional(),
-      caption: z.string().trim().max(1000).optional(),
-      type: z
-        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
-          errorMap: () => ({
-            message:
-              'Invalid message type. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
-          }),
+          content: z
+            .string()
+            .trim()
+            .max(5000000, { message: 'Message content cannot exceed maximum limit' })
+            .optional(),
+          imageUrl: z.string().trim().max(5000).optional(),
+          image: z.string().trim().max(5000000).optional(),
+          mediaUrl: z.string().trim().max(5000).optional(),
+          imageKey: z.string().trim().max(5000).optional(),
+          audioUrl: z.string().trim().max(5000).optional(),
+          audio: z.string().trim().max(5000000).optional(),
+          voiceUrl: z.string().trim().max(5000).optional(),
+          url: z.string().trim().max(5000).optional(),
+          fileUrl: z.string().trim().max(5000).optional(),
+          images: z.union([z.array(z.any()), z.string()]).optional(),
+          imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+          duration: z.union([z.number(), z.string()]).optional(),
+          durationMs: z.union([z.number(), z.string()]).optional(),
+          caption: z.string().trim().max(1000).optional(),
+          type: z
+            .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
+              errorMap: () => ({
+                message:
+                  'Invalid message type. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+              }),
+            })
+            .optional()
+            .transform((val) => (val === 'voice' ? 'audio' : val)),
+          messageType: z
+            .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
+              errorMap: () => ({
+                message:
+                  'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+              }),
+            })
+            .optional()
+            .transform((val) => (val === 'voice' ? 'audio' : val)),
+          clientMessageId: z
+            .string()
+            .trim()
+            .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
+            .optional(),
+          clientMessageIds: z.record(z.string().trim().max(100)).optional(),
+          replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+          parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+          replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
+          metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
         })
-        .optional(),
-      messageType: z
-        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
-          errorMap: () => ({
-            message:
-              'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
-          }),
-        })
-        .optional(),
-      clientMessageId: z
-        .string()
-        .trim()
-        .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
-        .optional(),
-      clientMessageIds: z.record(z.string().trim().max(100)).optional(),
-      replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
-      parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
-      replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
-      metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
-    })
-    .superRefine((data, ctx) => {
-      const hasRecipients =
-        (data.recipientIds && data.recipientIds.length > 0) ||
-        !!data.recipientId ||
-        !!data.conversationId;
+        .superRefine((data, ctx) => {
+          const hasRecipients =
+            (data.recipientIds && data.recipientIds.length > 0) ||
+            !!data.recipientId ||
+            !!data.conversationId;
 
-      if (!hasRecipients) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ['recipientIds'],
-          message: 'At least one recipientId or recipientIds or conversationId must be provided',
-        });
-      }
+          if (!hasRecipients) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['recipientIds'],
+              message: 'At least one recipientId or recipientIds or conversationId must be provided',
+            });
+          }
 
       let multiImageFirst: string | undefined;
       if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
@@ -741,9 +811,25 @@ export const getPinnedMessagesSchema = z.object({
 });
 
 export const startConversationSchema = z.object({
-  body: z.object({
-    recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }),
-  }),
+  body: z
+    .object({
+      recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
+      recipientIds: z
+        .union([
+          z.array(z.string().uuid({ message: 'Every recipientId in recipientIds must be a valid UUID' })),
+          z.string().uuid({ message: 'Invalid recipientIds UUID format' }).transform((val) => [val]),
+        ])
+        .optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (!data.recipientId && (!data.recipientIds || data.recipientIds.length === 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['recipientIds'],
+          message: 'recipientIds is required',
+        });
+      }
+    }),
 });
 
 export const archiveConversationSchema = z.object({
@@ -863,4 +949,85 @@ export type DeleteConversationInput = z.infer<typeof deleteConversationSchema>['
 export type DeleteMessageInput = z.infer<typeof deleteMessageSchema>;
 export type EditMessageInput = z.infer<typeof editMessageSchema>['body'];
 export type ReplyMessageInput = z.infer<typeof replyMessageSchema>['body'];
+
+export const ALLOWED_CHAT_REACTION_EMOJIS = [
+  '❤️',
+  '👍',
+  '🔥',
+  '😂',
+  '😮',
+  '😢',
+  '👏',
+  '😍',
+  '🙏',
+] as const;
+
+export type AllowedChatReactionEmoji = (typeof ALLOWED_CHAT_REACTION_EMOJIS)[number];
+
+const EMOJI_ALIAS_MAP: Record<string, string> = {
+  heart: '❤️',
+  love: '❤️',
+  like: '👍',
+  thumbs_up: '👍',
+  thumbsup: '👍',
+  fire: '🔥',
+  lit: '🔥',
+  laugh: '😂',
+  joy: '😂',
+  surprised: '😮',
+  wow: '😮',
+  sad: '😢',
+  cry: '😢',
+  clap: '👏',
+  applause: '👏',
+  love_eyes: '😍',
+  heart_eyes: '😍',
+  pray: '🙏',
+  thanks: '🙏',
+};
+
+export const normalizeReactionEmoji = (input?: string | null): string | null => {
+  if (!input || typeof input !== 'string') return null;
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const lower = trimmed.toLowerCase();
+  if (EMOJI_ALIAS_MAP[lower]) {
+    return EMOJI_ALIAS_MAP[lower];
+  }
+
+  // Handle standard unicode variants: bare heart U+2764 to ❤️ (U+2764 U+FE0F)
+  let normalized = trimmed.normalize('NFC');
+  if (normalized === '\u2764') {
+    normalized = '❤️';
+  }
+
+  if ((ALLOWED_CHAT_REACTION_EMOJIS as readonly string[]).includes(normalized)) {
+    return normalized;
+  }
+
+  return null;
+};
+
+export const reactMessageSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
+  }),
+  body: z.object({
+    emoji: z
+      .string({ required_error: 'Reaction emoji is required' })
+      .trim()
+      .min(1, { message: 'Reaction emoji cannot be empty' })
+      .max(32, { message: 'Reaction emoji cannot exceed 32 characters' })
+      .refine(
+        (val) => normalizeReactionEmoji(val) !== null,
+        {
+          message: `Invalid reaction emoji. Supported emojis: ${ALLOWED_CHAT_REACTION_EMOJIS.join(', ')}`,
+        }
+      ),
+  }),
+});
+
+export type ReactMessageInput = z.infer<typeof reactMessageSchema>;
 

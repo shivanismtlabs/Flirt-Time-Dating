@@ -57,15 +57,22 @@ export const registerChatSocketHandlers = (
         content = typeof payload.images[0] === 'string' ? payload.images[0] : payload.images[0]?.url || '';
       }
 
-      const hasRecipients =
-        (Array.isArray(payload.recipientIds) && payload.recipientIds.length > 0) ||
-        !!payload.recipientId;
+      let normalizedRecipientIds: string[] = [];
+      if (Array.isArray(payload.recipientIds)) {
+        normalizedRecipientIds = payload.recipientIds;
+      } else if (typeof payload.recipientIds === 'string' && payload.recipientIds.trim()) {
+        const trimmed = payload.recipientIds.trim();
+        normalizedRecipientIds = trimmed.includes(',')
+          ? trimmed.split(',').map((s: string) => s.trim()).filter(Boolean)
+          : [trimmed];
+      } else if (payload.recipientId) {
+        normalizedRecipientIds = [payload.recipientId];
+      }
 
-      if (hasRecipients) {
+      if (normalizedRecipientIds.length > 0) {
         // Multi / Selected recipients send
         const result = await chatService.sendMultiMessage(currentUserId, {
-          recipientIds: payload.recipientIds,
-          recipientId: payload.recipientId,
+          recipientIds: normalizedRecipientIds,
           conversationId: payload.conversationId,
           content,
           type: msgType,
@@ -80,7 +87,19 @@ export const registerChatSocketHandlers = (
         } as any);
 
         if (typeof callback === 'function') {
-          callback({ success: true, data: result });
+          let callbackData: any = result;
+          if (
+            result.results &&
+            result.results.length === 1 &&
+            result.results[0]?.status === 'success' &&
+            result.results[0]?.message
+          ) {
+            callbackData = {
+              ...result.results[0].message,
+              ...result,
+            };
+          }
+          callback({ success: true, data: callbackData });
         }
         return;
       }
@@ -89,7 +108,7 @@ export const registerChatSocketHandlers = (
         if (typeof callback === 'function') {
           return callback({
             success: false,
-            error: 'conversationId, recipientId, or recipientIds is required',
+            error: 'conversationId or recipientIds is required',
           });
         }
         return;
@@ -581,5 +600,92 @@ export const registerChatSocketHandlers = (
 
   socket.on('chat:delete_message', handleDeleteMessage);
   socket.on('message:delete' as any, handleDeleteMessage);
+
+  // 10. Event: conversation:get_list / chat:get_conversations / conversations:get
+  const handleGetConversations = async (payload: any, callback?: Function) => {
+    try {
+      const query = (payload && typeof payload === 'object') ? payload : {};
+      const result = await chatService.getChatList(currentUserId, query);
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      } else {
+        socket.emit('conversation:list' as any, result);
+        socket.emit('conversations:list' as any, result);
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling conversation:get_list event', err, {
+        userId: currentUserId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to fetch conversations';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('conversation:get_list' as any, handleGetConversations);
+  socket.on('chat:get_conversations' as any, handleGetConversations);
+  socket.on('conversations:get' as any, handleGetConversations);
+  socket.on('chat:list' as any, handleGetConversations);
+
+  // 11. Event: message:reaction & chat:message_reaction
+  const handleMessageReaction = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'Payload must be an object',
+          });
+        }
+        return;
+      }
+
+      if (!payload.conversationId || !payload.messageId || !payload.emoji) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId, messageId, and emoji are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.reactToMessage(
+        currentUserId,
+        payload.conversationId,
+        payload.messageId,
+        payload.emoji
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling message:reaction event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+        messageId: payload?.messageId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to react to message over socket';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('message:reaction', handleMessageReaction);
+  socket.on('chat:message_reaction' as any, handleMessageReaction);
 };
 

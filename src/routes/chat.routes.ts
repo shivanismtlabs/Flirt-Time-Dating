@@ -23,6 +23,7 @@ import {
   editMessageHandler,
   replyMessageHandler,
   deleteMessageHandler,
+  reactMessageHandler,
 } from '../controllers/chat.controller';
 import {
   getChatListSchema,
@@ -43,6 +44,7 @@ import {
   deleteMessageSchema,
   editMessageSchema,
   replyMessageSchema,
+  reactMessageSchema,
 } from '../schemas/chat.schema';
 
 const router = Router();
@@ -124,6 +126,13 @@ router.post(
 
 // 8d. DELETE /api/v1/chats/:conversationId/messages/:messageId - Delete for Me or Delete for Everyone
 router.delete('/:conversationId/messages/:messageId', validate(deleteMessageSchema), deleteMessageHandler);
+
+// 8e. POST /api/v1/chats/:conversationId/messages/:messageId/reactions - Add, change, or remove (toggle) emoji reaction
+router.post(
+  '/:conversationId/messages/:messageId/reactions',
+  validate(reactMessageSchema),
+  reactMessageHandler
+);
 
 // 9. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);

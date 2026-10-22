@@ -575,18 +575,44 @@ export const handleUploadChatMedia = (
       attachedFiles.push(req.file);
     }
 
-    // Auto-detect message type if direct file is attached
+    // Auto-detect message type and normalize fields if direct file is attached
     if (attachedFiles.length > 0) {
       req.file = attachedFiles[0];
-      const mime = (attachedFiles[0].mimetype || '').toLowerCase();
-      const origName = attachedFiles[0].originalname || '';
-      const isAudio =
-        mime.startsWith('audio/') ||
-        /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr)$/i.test(origName);
+      const hasAudioFile = attachedFiles.some((f) => {
+        const mime = (f.mimetype || '').toLowerCase();
+        const origName = (f.originalname || '').toLowerCase();
+        const field = (f.fieldname || '').toLowerCase();
+        return (
+          mime.startsWith('audio/') ||
+          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
+          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName)
+        );
+      });
+
+      const hasImageFile = attachedFiles.some((f) => {
+        const mime = (f.mimetype || '').toLowerCase();
+        const origName = (f.originalname || '').toLowerCase();
+        const field = (f.fieldname || '').toLowerCase();
+        return (
+          mime.startsWith('image/') ||
+          ['image', 'images', 'photo', 'photos', 'picture', 'pictures'].includes(field) ||
+          /\.(jpe?g|png|webp|gif|avif|heic|heif)$/i.test(origName)
+        );
+      });
+
+      if (req.body.messageType === 'voice') req.body.messageType = 'audio';
+      if (req.body.type === 'voice') req.body.type = 'audio';
 
       if (!req.body.messageType && !req.body.type) {
-        req.body.messageType = isAudio ? 'audio' : 'image';
+        if (hasAudioFile && !hasImageFile) {
+          req.body.messageType = 'audio';
+        } else if (hasImageFile) {
+          req.body.messageType = 'image';
+        } else if (hasAudioFile) {
+          req.body.messageType = 'audio';
+        }
       }
+
       if (
         !req.body.content &&
         !req.body.imageUrl &&
@@ -601,6 +627,9 @@ export const handleUploadChatMedia = (
         req.body.content = '__FILE_ATTACHMENT__';
       }
     }
+
+    if (req.body.messageType === 'voice') req.body.messageType = 'audio';
+    if (req.body.type === 'voice') req.body.type = 'audio';
 
     // Parse JSON strings from multipart fields
     if (typeof req.body.metadata === 'string') {
@@ -623,6 +652,10 @@ export const handleUploadChatMedia = (
 
     if (req.body.duration && !isNaN(Number(req.body.duration))) {
       req.body.duration = Number(req.body.duration);
+    } else if (req.body.durationMs && !isNaN(Number(req.body.durationMs))) {
+      req.body.duration = Math.round(Number(req.body.durationMs) / 1000);
+    } else if (req.body.metadata?.duration && !isNaN(Number(req.body.metadata.duration))) {
+      req.body.duration = Number(req.body.metadata.duration);
     }
 
     if (typeof req.body.recipientIds === 'string') {

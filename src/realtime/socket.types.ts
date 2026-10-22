@@ -102,6 +102,17 @@ export interface ServerToClientEvents {
   }) => void;
 
   /**
+   * Real-time Conversation List Update Events
+   * Emitted to both sender and recipient user rooms whenever a message is sent,
+   * edited, deleted, or unread status changes so the conversation list updates in real-time.
+   */
+  'conversation:updated': (data: any) => void;
+  'chat:conversation_updated': (data: any) => void;
+  'conversation_updated': (data: any) => void;
+  'conversation:update': (data: any) => void;
+  'conversations:update': (data: any) => void;
+
+  /**
    * Emitted to participant notifying typing status change.
    */
   'chat:typing': (data: { conversationId: string; userId: string; isTyping: boolean }) => void;
@@ -173,6 +184,31 @@ export interface ServerToClientEvents {
     messageId: string;
     deleteType: 'me' | 'everyone';
   }) => void;
+
+  /**
+   * Emitted to authorized conversation participants when a reaction is added, updated, or removed on a message.
+   */
+  'message:reaction:updated': (data: {
+    action: 'added' | 'updated' | 'removed';
+    messageId: string;
+    conversationId: string;
+    emoji: string | null;
+    reaction: {
+      id: string;
+      messageId: string;
+      conversationId: string;
+      userId: string;
+      emoji: string;
+      createdAt: string;
+    } | null;
+    user: {
+      id: string;
+      fullName: string;
+      nickName: string | null;
+      profilePicture: string | null;
+    };
+    reactionCounts: Record<string, number>;
+  }) => void;
 }
 
 /**
@@ -182,8 +218,7 @@ export interface ClientToServerEvents {
   'chat:send_message': (
     data: {
       conversationId?: string;
-      recipientId?: string;
-      recipientIds?: string[];
+      recipientIds?: string[] | string;
       content?: string;
       type?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
@@ -200,8 +235,7 @@ export interface ClientToServerEvents {
   'message:send': (
     data: {
       conversationId?: string;
-      recipientId?: string;
-      recipientIds?: string[];
+      recipientIds?: string[] | string;
       content?: string;
       type?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
@@ -318,6 +352,50 @@ export interface ClientToServerEvents {
       messageId: string;
       deleteType: 'me' | 'everyone';
     },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  /**
+   * Message Reaction via WebSocket
+   */
+  'message:reaction': (
+    data: {
+      conversationId: string;
+      messageId: string;
+      emoji: string;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:message_reaction': (
+    data: {
+      conversationId: string;
+      messageId: string;
+      emoji: string;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  /**
+   * Conversation List Retrieval over WebSocket
+   */
+  'conversation:get_list': (
+    data?: any,
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:get_conversations': (
+    data?: any,
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'conversations:get': (
+    data?: any,
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:list': (
+    data?: any,
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 }

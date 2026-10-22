@@ -44,6 +44,7 @@ import { NotificationSetting } from './notificationSetting.model';
 import { VideoCall } from './videoCall.model';
 import { ConversationUserState } from './conversationUserState.model';
 import { ChatMessagePin } from './chatMessagePin.model';
+import { ChatMessageReaction } from './chatMessageReaction.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -451,6 +452,40 @@ ChatMessagePin.belongsTo(ChatMessage, {
   as: 'message',
 });
 
+// ChatMessageReaction associations
+ChatMessage.hasMany(ChatMessageReaction, {
+  foreignKey: 'messageId',
+  as: 'reactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(ChatMessage, {
+  foreignKey: 'messageId',
+  as: 'message',
+});
+
+Conversation.hasMany(ChatMessageReaction, {
+  foreignKey: 'conversationId',
+  as: 'messageReactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+User.hasMany(ChatMessageReaction, {
+  foreignKey: 'userId',
+  as: 'chatMessageReactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 User.hasMany(ChatMessage, {
   foreignKey: 'senderId',
   as: 'sentMessages',
@@ -833,6 +868,7 @@ export {
   VideoCall,
   ConversationUserState,
   ChatMessagePin,
+  ChatMessageReaction,
   DEFAULT_NOTIFY_SETTINGS,
   NotificationSettings,
 };
@@ -1350,6 +1386,7 @@ export const initDb = async (force = false): Promise<void> => {
     await VideoCall.sync();
     await ConversationUserState.sync();
     await ChatMessagePin.sync();
+    await ChatMessageReaction.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -1592,6 +1629,7 @@ export const ensureChatTables = async (): Promise<void> => {
     await ConversationUserState.sync();
     await ConversationPin.sync();
     await ChatMessagePin.sync();
+    await ChatMessageReaction.sync();
     await VideoCall.sync();
   } catch (err: any) {
     console.warn('⚠️ Could not sync chat tables:', err.message);

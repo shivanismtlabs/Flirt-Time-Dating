@@ -12,7 +12,8 @@
     "seed:discovery": "ts-node src/scripts/seedDiscovery.ts",
     "seed:coin-packages": "ts-node src/scripts/seedCoinPackages.ts",
     "seed:subscriptions": "ts-node src/scripts/seedSubscriptions.ts",
-    "migrate:chat": "ts-node src/scripts/migrateChatTables.ts"
+    "migrate:chat": "ts-node src/scripts/migrateChatTables.ts",
+    "grant:subscription": "ts-node src/scripts/grantSubscription.ts"
   },
   "keywords": [
     "nodejs",

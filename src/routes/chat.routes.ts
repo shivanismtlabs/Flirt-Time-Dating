@@ -77,7 +77,7 @@ router.post('/', validate(startConversationSchema), startConversationHandler);
 
 // 4. Send Message Endpoints
 // Single or multi-recipient send with multipart/form-data S3 upload support:
-router.post('/messages', handleUploadChatMedia, sendMessageHandler);
+router.post('/messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
 router.post('/send', handleUploadChatMedia, sendMessageHandler);
 router.post('/bulk-messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
 

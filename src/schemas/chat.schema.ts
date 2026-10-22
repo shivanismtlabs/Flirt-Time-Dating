@@ -1047,19 +1047,23 @@ export const reactMessageSchema = z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
     messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
   }),
-  body: z.object({
-    emoji: z
-      .string({ required_error: 'Reaction emoji is required' })
-      .trim()
-      .min(1, { message: 'Reaction emoji cannot be empty' })
-      .max(32, { message: 'Reaction emoji cannot exceed 32 characters' })
-      .refine(
-        (val) => normalizeReactionEmoji(val) !== null,
-        {
-          message: `Invalid reaction emoji. Supported emojis: ${ALLOWED_CHAT_REACTION_EMOJIS.join(', ')}`,
-        }
-      ),
-  }),
+  body: z
+    .object({
+      emoji: z.string().trim().min(1).max(32).optional(),
+      reaction: z.string().trim().min(1).max(32).optional(),
+      reactionEmoji: z.string().trim().min(1).max(32).optional(),
+    })
+    .refine(
+      (data) => {
+        const val = data.emoji || data.reaction || data.reactionEmoji;
+        if (!val || typeof val !== 'string' || !val.trim()) return false;
+        return normalizeReactionEmoji(val) !== null;
+      },
+      {
+        message: `Invalid reaction emoji. Supported emojis: ${ALLOWED_CHAT_REACTION_EMOJIS.join(', ')}`,
+        path: ['emoji'],
+      }
+    ),
 });
 
 export type ReactMessageInput = z.infer<typeof reactMessageSchema>;

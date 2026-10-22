@@ -30,11 +30,42 @@ export const registerChatSocketHandlers = (
         return;
       }
 
+      let normalizedImages: any[] = [];
+      let rawImages = payload.images || payload.metadata?.images;
+      if (typeof rawImages === 'string') {
+        try {
+          rawImages = JSON.parse(rawImages);
+        } catch {}
+      }
+      if (Array.isArray(rawImages)) {
+        normalizedImages = rawImages;
+      }
+
+      let normalizedImageUrls: string[] = [];
+      let rawImageUrls =
+        payload.imageUrls ||
+        payload.mediaUrls ||
+        payload.metadata?.imageUrls ||
+        payload.metadata?.mediaUrls;
+      if (typeof rawImageUrls === 'string') {
+        try {
+          rawImageUrls = JSON.parse(rawImageUrls);
+        } catch {}
+      }
+      if (Array.isArray(rawImageUrls)) {
+        normalizedImageUrls = rawImageUrls.filter((u: any) => typeof u === 'string' && u.trim());
+      }
+
       let msgType = payload.messageType || payload.type;
       if (!msgType) {
         if (payload.audioUrl || payload.audio || payload.voiceUrl) {
           msgType = 'audio';
-        } else if (payload.imageUrl || payload.image || payload.images || payload.imageUrls) {
+        } else if (
+          payload.imageUrl ||
+          payload.image ||
+          normalizedImages.length > 0 ||
+          normalizedImageUrls.length > 0
+        ) {
           msgType = 'image';
         } else {
           msgType = 'text';
@@ -53,8 +84,21 @@ export const registerChatSocketHandlers = (
         payload.url ||
         payload.fileUrl;
 
-      if (!content && Array.isArray(payload.images) && payload.images.length > 0) {
-        content = typeof payload.images[0] === 'string' ? payload.images[0] : payload.images[0]?.url || '';
+      if (!content && normalizedImages.length > 0) {
+        const firstImg = normalizedImages[0];
+        content =
+          typeof firstImg === 'string'
+            ? firstImg
+            : firstImg?.url ||
+              firstImg?.imageUrl ||
+              firstImg?.uri ||
+              firstImg?.path ||
+              firstImg?.mediaUrl ||
+              firstImg?.key ||
+              '';
+      }
+      if (!content && normalizedImageUrls.length > 0) {
+        content = normalizedImageUrls[0];
       }
 
       let normalizedRecipientIds: string[] = [];
@@ -80,10 +124,14 @@ export const registerChatSocketHandlers = (
           clientMessageId: payload.clientMessageId,
           clientMessageIds: payload.clientMessageIds,
           metadata: payload.metadata,
-          images: payload.images,
+          images: normalizedImages.length > 0 ? normalizedImages : undefined,
+          imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+          mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+          caption: payload.caption,
           duration: payload.duration,
           audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
           imageUrl: payload.imageUrl || payload.image,
+          mediaUrl: payload.mediaUrl,
         } as any);
 
         if (typeof callback === 'function') {
@@ -114,7 +162,12 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      if ((msgType === 'text' || msgType === 'image' || msgType === 'audio') && !content) {
+      if (
+        (msgType === 'text' || msgType === 'image' || msgType === 'audio') &&
+        !content &&
+        normalizedImages.length === 0 &&
+        normalizedImageUrls.length === 0
+      ) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
@@ -138,10 +191,14 @@ export const registerChatSocketHandlers = (
           clientMessageId: payload.clientMessageId,
           replyToMessageId,
           metadata: payload.metadata,
-          images: payload.images,
+          images: normalizedImages.length > 0 ? normalizedImages : undefined,
+          imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+          mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+          caption: payload.caption,
           duration: payload.duration,
           audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
           imageUrl: payload.imageUrl || payload.image,
+          mediaUrl: payload.mediaUrl,
         } as any
       );
 
@@ -647,7 +704,11 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      if (!payload.conversationId || !payload.messageId || !payload.emoji) {
+      const conversationId = payload.conversationId || payload.conversation_id;
+      const messageId = payload.messageId || payload.message_id;
+      const emoji = payload.emoji || payload.reaction || payload.reactionEmoji;
+
+      if (!conversationId || !messageId || !emoji) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
@@ -659,19 +720,22 @@ export const registerChatSocketHandlers = (
 
       const result = await chatService.reactToMessage(
         currentUserId,
-        payload.conversationId,
-        payload.messageId,
-        payload.emoji
+        conversationId,
+        messageId,
+        emoji
       );
 
       if (typeof callback === 'function') {
         callback({ success: true, data: result });
       }
     } catch (err: any) {
+      const convId = payload?.conversationId || payload?.conversation_id;
+      const msgId = payload?.messageId || payload?.message_id;
+
       socketLogger.error('Error handling message:reaction event', err, {
         userId: currentUserId,
-        conversationId: payload?.conversationId,
-        messageId: payload?.messageId,
+        conversationId: convId,
+        messageId: msgId,
       });
 
       const errorMessage =
@@ -687,5 +751,26 @@ export const registerChatSocketHandlers = (
 
   socket.on('message:reaction', handleMessageReaction);
   socket.on('chat:message_reaction' as any, handleMessageReaction);
+  socket.on('chat:reaction' as any, handleMessageReaction);
+  socket.on('message:react' as any, handleMessageReaction);
+  socket.on('chat:react' as any, handleMessageReaction);
+  socket.on('reaction:send' as any, handleMessageReaction);
+
+  // 12. Event: conversation:join / chat:join / join_conversation
+  const handleJoinConversation = (payload: any) => {
+    const convId =
+      payload?.conversationId ||
+      payload?.conversation_id ||
+      payload?.chatId ||
+      (typeof payload === 'string' ? payload : null);
+    if (convId) {
+      socket.join(`conversation:${convId}`);
+      socket.join(`chat:${convId}`);
+    }
+  };
+
+  socket.on('conversation:join' as any, handleJoinConversation);
+  socket.on('chat:join' as any, handleJoinConversation);
+  socket.on('join_conversation' as any, handleJoinConversation);
 };
 

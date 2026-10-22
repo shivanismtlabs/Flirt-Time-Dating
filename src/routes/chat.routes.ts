@@ -134,6 +134,26 @@ router.post(
   validate(reactMessageSchema),
   reactMessageHandler
 );
+router.post(
+  '/:conversationId/messages/:messageId/react',
+  validate(reactMessageSchema),
+  reactMessageHandler
+);
+router.post(
+  '/:conversationId/messages/:messageId/reaction',
+  validate(reactMessageSchema),
+  reactMessageHandler
+);
+router.put(
+  '/:conversationId/messages/:messageId/reactions',
+  validate(reactMessageSchema),
+  reactMessageHandler
+);
+router.patch(
+  '/:conversationId/messages/:messageId/reactions',
+  validate(reactMessageSchema),
+  reactMessageHandler
+);
 
 // 9. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);

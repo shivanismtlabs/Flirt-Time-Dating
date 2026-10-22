@@ -209,6 +209,12 @@ export interface ServerToClientEvents {
     };
     reactionCounts: Record<string, number>;
   }) => void;
+  'chat:message_reaction': (data: any) => void;
+  'message:reaction': (data: any) => void;
+  'chat:reaction': (data: any) => void;
+  'chat:message_reaction_updated': (data: any) => void;
+  'chat:reaction:updated': (data: any) => void;
+  'reaction:updated': (data: any) => void;
 }
 
 /**
@@ -360,18 +366,39 @@ export interface ClientToServerEvents {
    */
   'message:reaction': (
     data: {
-      conversationId: string;
-      messageId: string;
-      emoji: string;
+      conversationId?: string;
+      conversation_id?: string;
+      messageId?: string;
+      message_id?: string;
+      emoji?: string;
+      reaction?: string;
+      reactionEmoji?: string;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 
   'chat:message_reaction': (
     data: {
-      conversationId: string;
-      messageId: string;
-      emoji: string;
+      conversationId?: string;
+      conversation_id?: string;
+      messageId?: string;
+      message_id?: string;
+      emoji?: string;
+      reaction?: string;
+      reactionEmoji?: string;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:reaction': (
+    data: {
+      conversationId?: string;
+      conversation_id?: string;
+      messageId?: string;
+      message_id?: string;
+      emoji?: string;
+      reaction?: string;
+      reactionEmoji?: string;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;

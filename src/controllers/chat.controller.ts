@@ -717,7 +717,7 @@ export const reactMessageHandler = async (req: AuthenticatedRequest, res: Respon
 
     const conversationId = req.params.conversationId as string;
     const messageId = req.params.messageId as string;
-    const emoji = req.body?.emoji;
+    const emoji = req.body?.emoji || req.body?.reaction || req.body?.reactionEmoji;
 
     if (!emoji || typeof emoji !== 'string' || !emoji.trim()) {
       sendError(res, 'Reaction emoji is required', 400, 'VALIDATION_ERROR');

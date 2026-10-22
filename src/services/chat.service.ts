@@ -172,6 +172,11 @@ export interface ChatMessageDTO {
   reactions?: MessageReactionDTO[];
   reactionCounts?: Record<string, number>;
   myReaction?: string | null;
+  userReaction?: string | null;
+  otherUserReaction?: string | null;
+  reaction?: string | null;
+  emoji?: string | null;
+  hasReacted?: boolean;
 }
 
 export interface MessageReactionDTO {
@@ -193,8 +198,16 @@ export interface MessageReactionResultDTO {
   action: 'added' | 'updated' | 'removed';
   messageId: string;
   conversationId: string;
+  userId?: string;
+  reactorId?: string;
+  senderId?: string;
   emoji: string | null;
+  reactionEmoji?: string | null;
   reaction: MessageReactionDTO | null;
+  reactions?: MessageReactionDTO[];
+  reactionsCount?: number;
+  myReaction?: string | null;
+  otherUserReaction?: string | null;
   user: {
     id: string;
     fullName: string;
@@ -1090,10 +1103,17 @@ export class ChatService {
       const msgReactions = reactionsMap.get(msg.id) || [];
       const reactionCounts: Record<string, number> = { total: msgReactions.length };
       let myReaction: string | null = null;
+      let otherUserReaction: string | null = null;
+      let lastReaction: string | null = null;
+
       const reactionsList: MessageReactionDTO[] = msgReactions.map((r: any) => {
-        if (r.userId === currentUserId) {
+        const isCurrent = String(r.userId || '').trim().toLowerCase() === normCurrentUserId;
+        if (isCurrent) {
           myReaction = r.emoji;
+        } else {
+          otherUserReaction = r.emoji;
         }
+        lastReaction = r.emoji;
         reactionCounts[r.emoji] = (reactionCounts[r.emoji] || 0) + 1;
         return {
           id: r.id,
@@ -1113,9 +1133,16 @@ export class ChatService {
         };
       });
 
+      const activeReactionEmoji = myReaction || otherUserReaction || lastReaction || null;
+
       msgItem.reactions = reactionsList;
       msgItem.reactionCounts = reactionCounts.total > 0 ? reactionCounts : { total: 0 };
       msgItem.myReaction = myReaction;
+      msgItem.userReaction = myReaction;
+      msgItem.otherUserReaction = otherUserReaction;
+      msgItem.reaction = activeReactionEmoji;
+      msgItem.emoji = activeReactionEmoji;
+      msgItem.hasReacted = !!myReaction;
 
       if (msg.messageType === 'image') {
         const cleanKey = s3Service.extractKey(msg.content);
@@ -1412,11 +1439,34 @@ export class ChatService {
       metadataObj.replyTo = replyToRef;
     }
 
+    let rawImages = (data as any).images || metadataObj.images;
+    if (typeof rawImages === 'string') {
+      try {
+        rawImages = JSON.parse(rawImages);
+      } catch {}
+    }
+
+    let rawImageUrls =
+      (data as any).imageUrls ||
+      (data as any).mediaUrls ||
+      metadataObj.imageUrls ||
+      metadataObj.mediaUrls;
+    if (typeof rawImageUrls === 'string') {
+      try {
+        rawImageUrls = JSON.parse(rawImageUrls);
+      } catch {}
+    }
+
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
     if (!data.messageType && !data.type) {
       if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
         msgType = 'audio';
-      } else if ((data as any).imageUrl || (data as any).image || (data as any).images || (data as any).imageUrls) {
+      } else if (
+        (data as any).imageUrl ||
+        (data as any).image ||
+        (Array.isArray(rawImages) && rawImages.length > 0) ||
+        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0)
+      ) {
         msgType = 'image';
       }
     }
@@ -1434,9 +1484,21 @@ export class ChatService {
       (data as any).fileUrl ||
       ''
     );
-    if (typeof rawContent !== 'string' && Array.isArray((data as any).images) && (data as any).images.length > 0) {
-      const firstImg = (data as any).images[0];
-      rawContent = typeof firstImg === 'string' ? firstImg : firstImg?.url || firstImg?.imageUrl || '';
+    if (!rawContent && Array.isArray(rawImages) && rawImages.length > 0) {
+      const firstImg = rawImages[0];
+      rawContent = typeof firstImg === 'string'
+        ? firstImg
+        : firstImg?.url ||
+          firstImg?.imageUrl ||
+          firstImg?.uri ||
+          firstImg?.path ||
+          firstImg?.mediaUrl ||
+          firstImg?.key ||
+          '';
+    }
+    if (!rawContent && Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
+      const firstUrl = rawImageUrls[0];
+      rawContent = typeof firstUrl === 'string' ? firstUrl : (firstUrl as any)?.url || (firstUrl as any)?.imageUrl || '';
     }
     let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
 
@@ -1569,9 +1631,18 @@ export class ChatService {
     }
 
     // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
-    if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
-      for (const item of (data as any).images) {
-        const raw = typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.key || '';
+    if (Array.isArray(rawImages) && rawImages.length > 0) {
+      for (const item of rawImages) {
+        const raw =
+          typeof item === 'string'
+            ? item
+            : item?.url ||
+              item?.imageUrl ||
+              item?.uri ||
+              item?.path ||
+              item?.mediaUrl ||
+              item?.key ||
+              '';
         if (!raw) continue;
         const cleanKey = s3Service.extractKey(raw);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -1587,8 +1658,9 @@ export class ChatService {
         });
       }
     }
-    if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-      for (const raw of (data as any).imageUrls) {
+    if (Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
+      for (const rawItem of rawImageUrls) {
+        const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
         if (!raw || typeof raw !== 'string') continue;
         const cleanKey = s3Service.extractKey(raw);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -1602,6 +1674,13 @@ export class ChatService {
           mimeType: 'image/jpeg',
           fileSize: 0,
         });
+      }
+    }
+
+    if (uploadedImages.length > 0) {
+      msgType = 'image';
+      if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+        messageContent = uploadedImages[0].key;
       }
     }
 
@@ -5716,11 +5795,37 @@ return {
       }
     }
 
-    // Query aggregated reaction counts for the message
+    // Query aggregated reaction counts and full reactions list for the message
     const allReactions = await ChatMessageReaction.findAll({
       where: { messageId },
-      attributes: ['emoji'],
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture'],
+        },
+      ],
+      order: [['createdAt', 'ASC']],
     });
+
+    const allReactionsList: MessageReactionDTO[] = allReactions.map((r: any) => ({
+      id: r.id,
+      messageId: r.messageId,
+      conversationId: r.conversationId,
+      userId: r.userId,
+      emoji: r.emoji,
+      createdAt: r.createdAt
+        ? new Date(r.createdAt).toISOString()
+        : new Date().toISOString(),
+      user: r.user
+        ? {
+            id: r.user.id,
+            fullName: r.user.fullName || r.user.nickName || 'User',
+            nickName: r.user.nickName || null,
+            profilePicture: formatMediaUrl(r.user.profilePicture),
+          }
+        : null,
+    }));
 
     const reactionCounts: Record<string, number> = {
       total: allReactions.length,
@@ -5745,7 +5850,11 @@ return {
       action,
       messageId,
       conversationId,
+      userId,
+      reactorId: userId,
+      senderId: userId,
       emoji: action === 'removed' ? null : normalizedEmoji,
+      reactionEmoji: action === 'removed' ? null : normalizedEmoji,
       reaction: activeReaction
         ? {
             id: activeReaction.id,
@@ -5760,17 +5869,65 @@ return {
         : null,
       user: userDto,
       reactionCounts,
+      reactions: allReactionsList,
+      reactionsCount: reactionCounts.total,
     };
 
-    // Emit Socket.IO event to all conversation participants
+    // Emit Socket.IO event to all conversation participants across multiple room and event aliases
     try {
       const io = getSocketServer();
-      const participantRooms = new Set<string>();
-      participantRooms.add(getUserRoomName(conversation.user1Id));
-      participantRooms.add(getUserRoomName(conversation.user2Id));
+      const normUser1 = String(conversation.user1Id || '').trim();
+      const normUser2 = String(conversation.user2Id || '').trim();
 
-      for (const room of participantRooms) {
-        io.to(room).emit('message:reaction:updated', resultPayload as any);
+      const user1Reaction = allReactionsList.find(
+        (r) => String(r.userId || '').trim().toLowerCase() === normUser1.toLowerCase()
+      )?.emoji || null;
+      const user2Reaction = allReactionsList.find(
+        (r) => String(r.userId || '').trim().toLowerCase() === normUser2.toLowerCase()
+      )?.emoji || null;
+
+      const eventNames = [
+        'message:reaction:updated',
+        'chat:message_reaction',
+        'message:reaction',
+        'chat:reaction',
+        'chat:message_reaction_updated',
+        'chat:reaction:updated',
+        'reaction:updated',
+      ];
+
+      // Emit to user1 private multi-device rooms
+      const user1Payload = {
+        ...resultPayload,
+        myReaction: user1Reaction,
+        otherUserReaction: user2Reaction,
+      };
+      const user1Rooms = [getUserRoomName(normUser1), getUserRoomName(normUser1.toLowerCase())];
+      for (const room of new Set(user1Rooms)) {
+        for (const ev of eventNames) {
+          io.to(room).emit(ev as any, user1Payload as any);
+        }
+      }
+
+      // Emit to user2 private multi-device rooms
+      const user2Payload = {
+        ...resultPayload,
+        myReaction: user2Reaction,
+        otherUserReaction: user1Reaction,
+      };
+      const user2Rooms = [getUserRoomName(normUser2), getUserRoomName(normUser2.toLowerCase())];
+      for (const room of new Set(user2Rooms)) {
+        for (const ev of eventNames) {
+          io.to(room).emit(ev as any, user2Payload as any);
+        }
+      }
+
+      // Emit to conversation/chat rooms if any clients joined them
+      const convRooms = [`conversation:${conversationId}`, `chat:${conversationId}`];
+      for (const room of convRooms) {
+        for (const ev of eventNames) {
+          io.to(room).emit(ev as any, resultPayload as any);
+        }
       }
     } catch (_socketErr: any) {
       // Non-fatal if socket server is uninitialized or in test runner

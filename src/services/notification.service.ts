@@ -361,13 +361,13 @@ export class NotificationService {
     const resolvedNotifyType = resolveNotifyType(input.data?.notify_type || type);
     const actorUserId = String(input.data?.user_id || senderId || '');
 
-    // 1. Idempotency / deduplication check
-    if (idempotencyKey || entityId) {
+    // 1. Idempotency / deduplication check (only when explicit idempotencyKey is provided)
+    if (idempotencyKey) {
       const existing = await Notification.findOne({
         where: {
           recipientId,
           type: resolvedNotifyType,
-          ...(entityId && { entityId }),
+          entityId: idempotencyKey,
         },
       });
 

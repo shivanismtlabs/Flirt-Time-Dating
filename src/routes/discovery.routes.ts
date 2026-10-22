@@ -67,6 +67,7 @@ router.post('/seed-dummy-data', seedDummyUsersHandler);
 
 // GET /api/v1/discovery/limits (Convenience alias for /api/v1/users/limits)
 router.get('/limits', authenticate, getUserLimitsHandler);
+router.get('/:userId/limits', authenticate, getUserLimitsHandler);
 
 // GET /api/v1/discovery/people (and /api/discovery/people)
 router.get('/people', authenticate, getDiscoveryPeople);

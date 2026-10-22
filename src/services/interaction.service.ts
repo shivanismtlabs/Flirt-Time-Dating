@@ -191,9 +191,10 @@ export class InteractionService {
       limit?: number;
       cursor?: string;
       sort?: string;
+      excludeMatched?: boolean;
     }
   ): Promise<InteractionsListResponse> {
-    const { type, limit = 20, cursor } = options;
+    const { type, limit = 20, cursor, excludeMatched } = options;
     const validatedLimit = Math.min(50, Math.max(1, limit));
     const decodedCursor = this.decodeCursor(cursor);
 
@@ -207,7 +208,7 @@ export class InteractionService {
 
     switch (type) {
       case 'likes':
-        return this.getLikesInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds);
+        return this.getLikesInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds, excludeMatched);
       case 'you_liked':
         return this.getYouLikedInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds);
       case 'matches':
@@ -221,39 +222,50 @@ export class InteractionService {
 
   /**
    * Tab 1: Likes (Incoming likes where targetUserId = currentUserId)
-   * Excludes mutual matches and users already swiped on by current user
+   * Shows users who liked currentUser. Excludes blocked and noped users.
+   * Matches can be optionally excluded via excludeMatched flag.
    */
   private async getLikesInteractions(
     currentUser: User,
     limit: number,
     cursor: DecodedCursor | null,
-    excludedUserIds: Set<string>
+    excludedUserIds: Set<string>,
+    excludeMatched?: boolean
   ): Promise<InteractionsListResponse> {
-    // 1. Identify users current user has already swiped on or already matched with
-    const [outgoingSwipes, matches] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUser.id },
-        attributes: ['targetUserId'],
-      }),
-      Match.findAll({
+    // 1. Identify nope actions to exclude rejected users
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUser.id, action: 'nope' },
+          { targetUserId: currentUser.id, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const finalExcludedUserIds = new Set<string>(excludedUserIds);
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUser.id) finalExcludedUserIds.add(s.targetUserId);
+      if (s.targetUserId === currentUser.id) finalExcludedUserIds.add(s.userId);
+    });
+
+    if (excludeMatched) {
+      const matches = await Match.findAll({
         where: {
           [Op.or]: [{ user1Id: currentUser.id }, { user2Id: currentUser.id }],
           isActive: true,
         },
         attributes: ['user1Id', 'user2Id'],
-      }),
-    ]);
-
-    const alreadyResolvedUserIds = new Set<string>(excludedUserIds);
-    outgoingSwipes.forEach((s) => alreadyResolvedUserIds.add(s.targetUserId));
-    matches.forEach((m) => {
-      alreadyResolvedUserIds.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
-    });
+      });
+      matches.forEach((m) => {
+        finalExcludedUserIds.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
+      });
+    }
 
     const whereClause: any = {
       targetUserId: currentUser.id,
       action: { [Op.in]: ['like', 'super_like'] },
-      userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+      userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
     };
 
     if (cursor) {
@@ -298,12 +310,32 @@ export class InteractionService {
     const hasMore = rows.length > limit;
     const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
 
+    // Check match status for returned users in batch
+    const senderIds = itemsToReturn.map((s) => s.userId);
+    const matchMap = new Set<string>();
+
+    if (senderIds.length > 0) {
+      const activeMatches = await Match.findAll({
+        where: {
+          [Op.or]: [
+            { user1Id: currentUser.id, user2Id: { [Op.in]: senderIds } },
+            { user2Id: currentUser.id, user1Id: { [Op.in]: senderIds } },
+          ],
+          isActive: true,
+        },
+        attributes: ['user1Id', 'user2Id'],
+      });
+      activeMatches.forEach((m) => {
+        matchMap.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
+      });
+    }
+
     const isLocked = !Boolean(currentUser.isSubscribed);
     const totalCount = await SwipeAction.count({
       where: {
         targetUserId: currentUser.id,
         action: { [Op.in]: ['like', 'super_like'] },
-        userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+        userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
       },
     });
 
@@ -329,6 +361,7 @@ export class InteractionService {
           type: 'likes',
           createdAt: swipe.createdAt.toISOString(),
           action: swipe.action as 'like' | 'super_like',
+          isMatched: matchMap.has(swipe.userId),
         },
       };
     });
@@ -727,12 +760,8 @@ export class InteractionService {
     const blockedUserIds = await this.getBlockedUserIds(currentUserId);
     const excludedUserIds = new Set<string>([currentUserId, ...blockedUserIds]);
 
-    // 1. Swipes & matches already resolved by current user (for Likes tab exclusion)
-    const [outgoingSwipes, allMatches] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUserId },
-        attributes: ['targetUserId'],
-      }),
+    // 1. Fetch active matches and noped swipes
+    const [allMatches, nopedSwipes] = await Promise.all([
       Match.findAll({
         where: {
           [Op.or]: [{ user1Id: currentUserId }, { user2Id: currentUserId }],
@@ -740,12 +769,29 @@ export class InteractionService {
         },
         attributes: ['user1Id', 'user2Id'],
       }),
+      SwipeAction.findAll({
+        where: {
+          [Op.or]: [
+            { userId: currentUserId, action: 'nope' },
+            { targetUserId: currentUserId, action: 'nope' },
+          ],
+        },
+        attributes: ['userId', 'targetUserId'],
+        raw: true,
+      }),
     ]);
 
-    const alreadyResolvedUserIds = new Set<string>(excludedUserIds);
-    outgoingSwipes.forEach((s) => alreadyResolvedUserIds.add(s.targetUserId));
-    allMatches.forEach((m) => {
-      alreadyResolvedUserIds.add(m.user1Id === currentUserId ? m.user2Id : m.user1Id);
+    const finalExcludedUserIds = new Set<string>(excludedUserIds);
+    const nopedUserIds = new Set<string>();
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUserId) {
+        finalExcludedUserIds.add(s.targetUserId);
+        nopedUserIds.add(s.targetUserId);
+      }
+      if (s.targetUserId === currentUserId) {
+        finalExcludedUserIds.add(s.userId);
+        nopedUserIds.add(s.userId);
+      }
     });
 
     // 2. Run aggregate counts concurrently
@@ -754,7 +800,7 @@ export class InteractionService {
         where: {
           targetUserId: currentUserId,
           action: { [Op.in]: ['like', 'super_like'] },
-          userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+          userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
         },
         include: [
           {
@@ -795,23 +841,6 @@ export class InteractionService {
         ],
       }),
     ]);
-
-    // Fetch users marked as nope by or against current user
-    const nopedSwipes = await SwipeAction.findAll({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, action: 'nope' },
-          { targetUserId: currentUserId, action: 'nope' },
-        ],
-      },
-      attributes: ['userId', 'targetUserId'],
-      raw: true,
-    });
-    const nopedUserIds = new Set<string>();
-    nopedSwipes.forEach((s) => {
-      if (s.userId === currentUserId) nopedUserIds.add(s.targetUserId);
-      if (s.targetUserId === currentUserId) nopedUserIds.add(s.userId);
-    });
 
     // Filter active matches whose counterpart is active, not blocked, and not noped
     const matchesCount = allMatches.filter((m) => {

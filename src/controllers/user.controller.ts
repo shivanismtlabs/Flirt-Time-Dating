@@ -1176,7 +1176,8 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
  */
 export const getUserLimitsHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const currentUserId = req.user?.id;
+    const rawParam = req.params?.userId;
+    const currentUserId = (typeof rawParam === 'string' ? rawParam : undefined) || req.user?.id;
     if (!currentUserId) {
       return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
     }

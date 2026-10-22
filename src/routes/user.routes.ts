@@ -123,8 +123,9 @@ router.get('/more-about-me', getMoreAboutMeHandler);
 router.patch('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
 router.put('/more-about-me', validate(updateMoreAboutMeSchema), updateMoreAboutMeHandler);
 
-// User Limits & Free Tier Quotas (/api/v1/users/limits)
+// User Limits & Free Tier Quotas (/api/v1/users/limits & /api/v1/users/:userId/limits)
 router.get('/limits', getUserLimitsHandler);
+router.get('/:userId/limits', getUserLimitsHandler);
 // Notification Preferences Endpoints
 router.get('/notification-settings', getNotificationSettingsHandler);
 router.patch('/notification-settings', validate(notificationSettingsSchema), updateNotificationSettingsHandler);

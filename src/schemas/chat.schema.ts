@@ -24,7 +24,15 @@ export const normalizeRecipientIdentifier = (raw: unknown): string | undefined =
   if (typeof raw === 'object') {
     const obj = raw as Record<string, unknown>;
     return normalizeRecipientIdentifier(
-      obj.id ?? obj.userId ?? obj.targetUserId ?? obj.recipientId ?? obj.participantId
+      obj.id ??
+        obj.userId ??
+        obj.targetUserId ??
+        obj.recipientId ??
+        obj.participantId ??
+        obj.toUserId ??
+        obj.otherUserId ??
+        obj.profileUserId ??
+        obj.profileId
     );
   }
   if (typeof raw !== 'string') {
@@ -53,6 +61,37 @@ export const normalizeRecipientIdentifier = (raw: unknown): string | undefined =
 
 export const isUuidIdentifier = (value: string): boolean => UUID_RE.test(value);
 
+export const pickRecipientIdentifier = (body: Record<string, unknown> | null | undefined): string | undefined => {
+  if (!body) {
+    return undefined;
+  }
+  return normalizeRecipientIdentifier(
+    (Array.isArray(body.recipientIds) && body.recipientIds.length > 0
+      ? body.recipientIds[0]
+      : undefined) ||
+      body.recipientIds ||
+      body.recipientId ||
+      body.userId ||
+      body.targetUserId ||
+      body.participantId ||
+      body.toUserId ||
+      body.otherUserId ||
+      body.profileUserId ||
+      body.profileId
+  );
+};
+
+const normalizeRecipientList = (val: unknown): string[] | undefined => {
+  if (val === null || val === undefined || val === '') {
+    return undefined;
+  }
+  const asArray = Array.isArray(val) ? val : [val];
+  const out = asArray
+    .map((item) => normalizeRecipientIdentifier(item))
+    .filter((item): item is string => !!item);
+  return out.length > 0 ? out : undefined;
+};
+
 const optionalRecipientRef = z.preprocess(
   (val) => normalizeRecipientIdentifier(val),
   z
@@ -64,9 +103,14 @@ const optionalRecipientRef = z.preprocess(
 );
 
 export const directSendMessageSchema = z.object({
-  recipientId: z
-    .string({ required_error: 'recipientId is required' })
-    .uuid('recipientId must be a valid UUID'),
+  recipientId: z.preprocess(
+    (val) => normalizeRecipientIdentifier(val),
+    z
+      .string({ required_error: 'recipientId is required' })
+      .trim()
+      .min(1, { message: 'recipientId cannot be empty' })
+      .max(80, { message: 'recipientId is too long' })
+  ),
     content: z
       .string()
       .trim()
@@ -497,28 +541,20 @@ export const sendMultiMessageSchema = z.object({
   body: z
     .object({
       recipientIds: z
-        .preprocess((val) => {
-          if (typeof val === 'string') {
-            const trimmed = val.trim();
-            if (!trimmed) return [];
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (Array.isArray(parsed)) return parsed;
-            } catch {
-              // Not JSON
-            }
-            if (trimmed.includes(',')) {
-              return trimmed.split(',').map((s) => s.trim()).filter(Boolean);
-            }
-            return [trimmed];
-          }
-          return val;
-        }, z.array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' })).min(1, { message: 'recipientIds array cannot be empty' }).max(50, { message: 'Cannot send message to more than 50 recipients at once' }))
+        .preprocess(
+          (val) => normalizeRecipientList(val),
+          z
+            .array(z.string().min(1).max(80))
+            .min(1, { message: 'recipientIds array cannot be empty' })
+            .max(50, { message: 'Cannot send message to more than 50 recipients at once' })
+        )
         .optional(),
-      recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
-      userId: z.string().uuid({ message: 'Invalid userId UUID format' }).optional(),
-      targetUserId: z.string().uuid({ message: 'Invalid targetUserId UUID format' }).optional(),
-      participantId: z.string().uuid({ message: 'Invalid participantId UUID format' }).optional(),
+      recipientId: optionalRecipientRef,
+      userId: optionalRecipientRef,
+      targetUserId: optionalRecipientRef,
+      participantId: optionalRecipientRef,
+      toUserId: optionalRecipientRef,
+      otherUserId: optionalRecipientRef,
       conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }).optional(),
           content: z
             .string()
@@ -575,6 +611,8 @@ export const sendMultiMessageSchema = z.object({
             !!data.userId ||
             !!data.targetUserId ||
             !!data.participantId ||
+            !!(data as any).toUserId ||
+            !!(data as any).otherUserId ||
             !!data.conversationId;
 
           if (!hasRecipients) {
@@ -925,7 +963,7 @@ export const pinMessageSchema = z.object({
   body: z
     .object({
       isPinned: z.boolean().default(true),
-      scope: z.enum(['user', 'conversation']).optional().default('user'),
+      scope: z.enum(['user', 'conversation']).optional().default('conversation'),
     })
     .optional()
     .default({ isPinned: true, scope: 'user' }),
@@ -961,24 +999,29 @@ export const startConversationSchema = z.object({
       userId: optionalRecipientRef,
       targetUserId: optionalRecipientRef,
       participantId: optionalRecipientRef,
+      toUserId: optionalRecipientRef,
+      otherUserId: optionalRecipientRef,
+      profileUserId: optionalRecipientRef,
+      profileId: optionalRecipientRef,
       recipientIds: z.preprocess(
-        (val) => {
-          const normalized = normalizeRecipientIdentifier(val);
-          if (normalized) return [normalized];
-          if (Array.isArray(val)) {
-            return val.map((item) => normalizeRecipientIdentifier(item)).filter(Boolean);
-          }
-          return val;
-        },
+        (val) => normalizeRecipientList(val),
         z.array(z.string().min(1).max(80)).optional()
       ),
+      content: z.string().optional(),
+      messageType: z.string().optional(),
+      type: z.string().optional(),
     })
+    .passthrough()
     .superRefine((data, ctx) => {
       const target =
         data.recipientId ||
         data.userId ||
         data.targetUserId ||
         data.participantId ||
+        data.toUserId ||
+        data.otherUserId ||
+        data.profileUserId ||
+        data.profileId ||
         (data.recipientIds && data.recipientIds.length > 0);
       if (!target) {
         ctx.addIssue({

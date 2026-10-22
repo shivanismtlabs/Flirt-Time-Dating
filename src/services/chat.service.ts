@@ -24,6 +24,7 @@ import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
 import { isUserConnected, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
+import { socketLogger } from '../realtime/socket.errors';
 import {
   GetChatListQuery,
   GetMessagesQuery,
@@ -2550,9 +2551,32 @@ export class ChatService {
         rawIds.push(...(s.includes(',') ? s.split(',').map((x: string) => x.trim()).filter(Boolean) : [s]));
       } else if ((data as any).recipientId) {
         rawIds.push((data as any).recipientId);
+      } else if ((data as any).userId) {
+        rawIds.push((data as any).userId);
+      } else if ((data as any).targetUserId) {
+        rawIds.push((data as any).targetUserId);
+      } else if ((data as any).participantId) {
+        rawIds.push((data as any).participantId);
+      } else if ((data as any).toUserId) {
+        rawIds.push((data as any).toUserId);
+      } else if ((data as any).otherUserId) {
+        rawIds.push((data as any).otherUserId);
       }
-      // Deduplicate preserving order
-      targetRecipientIds = Array.from(new Set(rawIds));
+      // Deduplicate preserving order, then resolve compact UUIDs / usernames
+      const uniqueRaw = Array.from(new Set(rawIds.map((id) => normalizeRecipientIdentifier(id)).filter(Boolean))) as string[];
+      const uuidIds = uniqueRaw.filter((id) => isUuidIdentifier(id));
+      const otherIds = uniqueRaw.filter((id) => !isUuidIdentifier(id));
+      if (otherIds.length > 0) {
+        const namedUsers = await User.findAll({
+          where: { username: { [Op.in]: otherIds } },
+          attributes: ['id', 'username'],
+        });
+        const byUsername = new Map(namedUsers.map((u) => [u.username, u.id]));
+        targetRecipientIds = uniqueRaw.map((id) => (isUuidIdentifier(id) ? id : byUsername.get(id) || id));
+      } else {
+        targetRecipientIds = uuidIds;
+      }
+      targetRecipientIds = Array.from(new Set(targetRecipientIds));
     }
 
     if (targetRecipientIds.length === 0) {
@@ -4519,6 +4543,162 @@ export class ChatService {
   }
 
   /**
+   * Pushes pin state to every open chat for this conversation.
+   * The mobile client listens for `chat:message:pin:updated` on the conversation
+   * room and on the user room. Legacy event names stay so older clients keep working.
+   */
+  private async broadcastMessagePinUpdate(options: {
+    conversation: { user1Id: string; user2Id: string };
+    conversationId: string;
+    message: ChatMessage;
+    actorId: string;
+    isPinned: boolean;
+    scope: 'user' | 'conversation';
+    pinnedAt: Date | string | null;
+    pinnedBy: string | null;
+    metadata: any;
+  }): Promise<ChatMessageDTO | null> {
+    const {
+      conversation,
+      conversationId,
+      message,
+      actorId,
+      isPinned,
+      scope,
+      pinnedAt,
+      pinnedBy,
+      metadata,
+    } = options;
+
+    let parsedMetadata = metadata;
+    if (message.messageType === 'image' && message.content) {
+      if (!parsedMetadata || typeof parsedMetadata !== 'object') {
+        parsedMetadata = {};
+      }
+      const cleanKey = s3Service.extractKey(message.content);
+      if (!parsedMetadata.thumbnailUrl) {
+        parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
+      }
+      if (!parsedMetadata.imageUrl) {
+        parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+      }
+      if (!parsedMetadata.mediaUrl) {
+        parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+      }
+    }
+
+    const senderUser = await User.findByPk(message.senderId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+    });
+    const sender: ChatMessageSenderDTO = senderUser
+      ? {
+          id: senderUser.id,
+          displayName: resolveChatDisplayName(senderUser),
+          profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+        }
+      : {
+          id: message.senderId,
+          displayName: 'Participant',
+          profileImageUrl: null,
+        };
+
+    const pinnedAtIso =
+      pinnedAt instanceof Date ? pinnedAt.toISOString() : pinnedAt ? String(pinnedAt) : null;
+
+    const status: 'sent' | 'delivered' | 'read' = message.isRead
+      ? 'read'
+      : message.isDelivered
+        ? 'delivered'
+        : 'sent';
+
+    const buildMessage = (viewerId: string): ChatMessageDTO => {
+      const isMine =
+        String(message.senderId || '').trim().toLowerCase() ===
+        String(viewerId || '').trim().toLowerCase();
+      return {
+        id: message.id,
+        conversationId,
+        senderId: message.senderId,
+        recipientId: message.recipientId,
+        content: message.content,
+        messageType: (message.messageType as any) || 'text',
+        metadata: parsedMetadata,
+        status,
+        isDelivered: !!message.isDelivered,
+        deliveredAt: message.deliveredAt || null,
+        isRead: !!message.isRead,
+        readAt: message.readAt || null,
+        sentAt: message.createdAt,
+        createdAt: message.createdAt,
+        isMine,
+        isSender: isMine,
+        isPinned,
+        pinnedAt: isPinned ? pinnedAtIso : null,
+        pinnedBy: isPinned ? pinnedBy : null,
+        isEdited: !!parsedMetadata?.isEdited,
+        editedAt: parsedMetadata?.editedAt || null,
+        replyToMessageId: parsedMetadata?.replyToMessageId || null,
+        replyTo: parsedMetadata?.replyTo || null,
+        sender,
+      };
+    };
+
+    const actorMessage = isPinned ? buildMessage(actorId) : null;
+
+    try {
+      const io = getSocketServer();
+      const legacyEvent = isPinned ? 'chat:message_pinned' : 'chat:message_unpinned';
+      const aliasEvent = isPinned ? 'message:pinned' : 'message:unpinned';
+      const eventNames = ['chat:message:pin:updated', legacyEvent, aliasEvent];
+
+      const notifyUserIds =
+        scope === 'conversation' ? [conversation.user1Id, conversation.user2Id] : [actorId];
+
+      const buildPayload = (viewerId: string) => ({
+        conversationId,
+        messageId: message.id,
+        isPinned,
+        pinned: isPinned,
+        pinnedBy: isPinned ? pinnedBy || actorId : null,
+        pinnedAt: isPinned ? pinnedAtIso : null,
+        scope,
+        message: isPinned ? buildMessage(viewerId) : null,
+      });
+
+      // Open chat screens join these rooms and apply pin updates without a refetch.
+      if (scope === 'conversation') {
+        const sharedPayload = buildPayload(actorId);
+        for (const room of [`conversation:${conversationId}`, `chat:${conversationId}`]) {
+          for (const eventName of eventNames) {
+            io.to(room).emit(eventName as any, sharedPayload);
+          }
+        }
+      }
+
+      for (const userId of notifyUserIds) {
+        if (!userId) continue;
+        const payload = buildPayload(userId);
+        const rooms = new Set([
+          getUserRoomName(userId),
+          getUserRoomName(String(userId).toLowerCase()),
+        ]);
+        for (const room of rooms) {
+          for (const eventName of eventNames) {
+            io.to(room).emit(eventName as any, payload);
+          }
+        }
+      }
+    } catch (err) {
+      socketLogger.error('Failed to emit message pin update', err, {
+        conversationId,
+        messageId: message.id,
+      });
+    }
+
+    return actorMessage;
+  }
+
+  /**
    * 7. PIN / UNPIN MESSAGE
    * Pins or unpins a message inside a conversation with authorization, bounds, and real-time sync.
    */
@@ -4527,13 +4707,14 @@ export class ChatService {
     conversationId: string,
     messageId: string,
     isPinned: boolean,
-    scope: 'user' | 'conversation' = 'user'
+    scope: 'user' | 'conversation' = 'conversation'
   ): Promise<{
     conversationId: string;
     messageId: string;
     isPinned: boolean;
     pinnedAt: Date | string | null;
     pinnedBy: string | null;
+    message: ChatMessageDTO | null;
   }> {
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone', 'lastMessageAt'],
@@ -4577,9 +4758,11 @@ export class ChatService {
 
     const message = await this.findMessageByIdOrClientMessageId(conversationId, messageId);
 
-    if (!message) {
+    if (!message || message.conversationId !== conversationId) {
       throw new ChatServiceError('Message not found in this conversation', 404);
     }
+
+    const canonicalMessageId = message.id;
 
     // If message was created prior to user's history deletion, it is inaccessible to them
     if (userState?.clearedAt && new Date(message.createdAt) <= new Date(userState.clearedAt)) {
@@ -4614,7 +4797,7 @@ export class ChatService {
       let existingPin = await ChatMessagePin.findOne({
         where: {
           conversationId,
-          messageId,
+          messageId: canonicalMessageId,
           userId: currentUserId,
         },
       });
@@ -4638,7 +4821,7 @@ export class ChatService {
         try {
           existingPin = await ChatMessagePin.create({
             conversationId,
-            messageId,
+            messageId: canonicalMessageId,
             userId: currentUserId,
             pinnedBy: currentUserId,
           });
@@ -4647,7 +4830,7 @@ export class ChatService {
           existingPin = await ChatMessagePin.findOne({
             where: {
               conversationId,
-              messageId,
+              messageId: canonicalMessageId,
               userId: currentUserId,
             },
           });
@@ -5105,6 +5288,40 @@ export class ChatService {
     return executeOperation();
   }
 
+  private async resolveRecipientUser(rawRecipientId: string): Promise<User> {
+    const resolvedRecipientId = normalizeRecipientIdentifier(rawRecipientId);
+    if (!resolvedRecipientId) {
+      throw new ChatServiceError('recipientId is required', 400);
+    }
+
+    const userLookupAttributes = [
+      'id',
+      'username',
+      'firstName',
+      'lastName',
+      'fullName',
+      'profilePicture',
+      'isActive',
+    ] as const;
+
+    let recipient = isUuidIdentifier(resolvedRecipientId)
+      ? await User.findByPk(resolvedRecipientId, { attributes: [...userLookupAttributes] })
+      : null;
+
+    if (!recipient) {
+      recipient = await User.findOne({
+        where: { username: resolvedRecipientId },
+        attributes: [...userLookupAttributes],
+      });
+    }
+
+    if (!recipient || recipient.isActive === false) {
+      throw new ChatServiceError('User profile is unavailable', 404);
+    }
+
+    return recipient;
+  }
+
   /**
    * 7. START OR GET CONVERSATION BY PARTICIPANT ID
    */
@@ -5121,27 +5338,7 @@ export class ChatService {
     participant?: ChatMessageSenderDTO;
     targetUser?: any;
   }> {
-    const resolvedRecipientId = normalizeRecipientIdentifier(recipientId);
-    if (!resolvedRecipientId) {
-      throw new ChatServiceError('recipientId is required', 400);
-    }
-
-    const userLookupAttributes = ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture', 'isActive'] as const;
-    let recipient = isUuidIdentifier(resolvedRecipientId)
-      ? await User.findByPk(resolvedRecipientId, { attributes: [...userLookupAttributes] })
-      : null;
-
-    if (!recipient) {
-      recipient = await User.findOne({
-        where: { username: resolvedRecipientId },
-        attributes: [...userLookupAttributes],
-      });
-    }
-
-    if (!recipient || recipient.isActive === false) {
-      throw new ChatServiceError('User profile is unavailable', 404);
-    }
-
+    const recipient = await this.resolveRecipientUser(recipientId);
     recipientId = recipient.id;
 
     if (currentUserId === recipientId) {
@@ -5200,7 +5397,9 @@ export class ChatService {
     senderId: string,
     input: DirectSendMessageInput
   ): Promise<ChatMessageDTO> {
-    const { recipientId, content, messageType = 'text', metadata = null } = input;
+    const { content, messageType = 'text', metadata = null } = input;
+    const resolvedRecipient = await this.resolveRecipientUser(input.recipientId);
+    const recipientId = resolvedRecipient.id;
 
     if (senderId === recipientId) {
       throw new ChatServiceError('You cannot send a message to yourself', 400, 'SELF_CHAT_NOT_ALLOWED');

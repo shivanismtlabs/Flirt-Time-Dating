@@ -8,7 +8,8 @@ export type ChatMessageType =
   | 'location'
   | 'contact'
   | 'moment_reply'
-  | 'moment_gift';
+  | 'moment_gift'
+  | 'call';
 
 export interface ChatMessageAttributes {
   id: string;

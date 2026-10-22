@@ -3,7 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { chatService, ChatServiceError } from '../services/chat.service';
 import { s3Service } from '../services/s3.service';
-import { normalizeRecipientIdentifier } from '../schemas/chat.schema';
+import { pickRecipientIdentifier } from '../schemas/chat.schema';
 
 /**
  * 1. GET /api/v1/chats
@@ -135,13 +135,7 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
       return sendSuccess(res, 'Message sent successfully', result, 201);
     }
 
-    const recipientId =
-      (Array.isArray(req.body?.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
-      (typeof req.body?.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
-      req.body?.recipientId ||
-      req.body?.userId ||
-      req.body?.targetUserId ||
-      req.body?.participantId;
+    const recipientId = pickRecipientIdentifier(req.body);
 
     if (recipientId) {
       const result = await chatService.sendMessageToRecipient(currentUserId, {
@@ -557,7 +551,8 @@ export const pinConversationHandler = async (req: AuthenticatedRequest, res: Res
     const { isPinned, messageId, scope } = req.body;
 
     if (messageId) {
-      const result = await chatService.pinMessage(currentUserId, conversationId, messageId, isPinned, scope);
+      const pinScope = scope === 'user' ? 'user' : 'conversation';
+      const result = await chatService.pinMessage(currentUserId, conversationId, messageId, isPinned, pinScope);
       const message = isPinned ? 'Message pinned successfully' : 'Message unpinned successfully';
       return sendSuccess(res, message, result, 200);
     }
@@ -583,7 +578,7 @@ export const pinMessageHandler = async (req: AuthenticatedRequest, res: Response
     const conversationId = req.params.conversationId as string;
     const messageId = req.params.messageId as string;
     const isPinned = req.body?.isPinned !== undefined ? req.body.isPinned : true;
-    const scope = req.body?.scope || 'user';
+    const scope = req.body?.scope === 'user' ? 'user' : 'conversation';
     const result = await chatService.pinMessage(currentUserId, conversationId, messageId, isPinned, scope);
     const message = isPinned ? 'Message pinned successfully' : 'Message unpinned successfully';
     return sendSuccess(res, message, result, 200);
@@ -620,21 +615,32 @@ export const getPinnedMessagesHandler = async (req: AuthenticatedRequest, res: R
 export const startConversationHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
-    const recipientId =
-      normalizeRecipientIdentifier(
-        (Array.isArray(req.body.recipientIds) && req.body.recipientIds.length > 0
-          ? req.body.recipientIds[0]
-          : undefined) ||
-          req.body.recipientIds ||
-          req.body.recipientId ||
-          req.body.userId ||
-          req.body.targetUserId ||
-          req.body.participantId
-      );
+    const recipientId = pickRecipientIdentifier(req.body);
     if (!recipientId) {
       return sendError(res, 'recipientId is required', 400, 'VALIDATION_ERROR');
     }
     const result = await chatService.startConversation(currentUserId, recipientId);
+
+    const body = req.body || {};
+    const hasFirstMessage = Boolean(
+      (typeof body.content === 'string' && body.content.trim()) ||
+        body.imageUrl ||
+        body.image ||
+        body.mediaUrl ||
+        body.imageKey ||
+        body.audioUrl ||
+        body.audio ||
+        body.voiceUrl ||
+        (Array.isArray(body.images) && body.images.length > 0) ||
+        (Array.isArray(body.imageUrls) && body.imageUrls.length > 0)
+    );
+
+    if (hasFirstMessage) {
+      const sentMessage = await chatService.sendMessage(currentUserId, result.id, body);
+      const payload = { ...result, message: sentMessage };
+      return sendSuccess(res, 'Conversation created successfully', payload, result.isNew ? 201 : 200);
+    }
+
     const message = result.isNew ? 'Conversation created successfully' : 'Conversation retrieved successfully';
     return sendSuccess(res, message, result, result.isNew ? 201 : 200);
   } catch (error: any) {

@@ -457,4 +457,52 @@ describe('Critical Bug Fix: Profile-to-Chat Flow and Conversation Persistence', 
     expect(found).toBeDefined();
     expect(found.lastMessage.content).toBe('Direct send message test');
   });
+
+  it('12. Profile Message tap POST /api/v1/chats accepts non-UUID recipient shapes and first message appears in list', async () => {
+    const invalidUuidRes = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ recipientId: userB.username, content: 'Hi from profile', messageType: 'text' });
+
+    expect(invalidUuidRes.status).toBe(201);
+    expect(invalidUuidRes.body.success).toBe(true);
+    expect(invalidUuidRes.body.data.conversationId).toBeDefined();
+    expect(invalidUuidRes.body.data.recipientId).toBe(userB.id);
+    expect(invalidUuidRes.body.data.message.content).toBe('Hi from profile');
+
+    const conversationId = invalidUuidRes.body.data.conversationId;
+
+    const historyRes = await request(app)
+      .get(`/api/v1/chats/${conversationId}/messages`)
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    expect(historyRes.status).toBe(200);
+    expect(historyRes.body.data.messages).toHaveLength(1);
+    expect(historyRes.body.data.messages[0].content).toBe('Hi from profile');
+
+    const listRes = await request(app)
+      .get('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`);
+
+    const chats = listRes.body.data.conversations || [];
+    const found = chats.find((c: any) => c.conversationId === conversationId || c.id === conversationId);
+    expect(found).toBeDefined();
+    expect(found.lastMessage.content).toBe('Hi from profile');
+
+    const aliasRes = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ toUserId: userB.id });
+
+    expect(aliasRes.status).toBe(200);
+    expect(aliasRes.body.data.conversationId).toBe(conversationId);
+
+    const wrappedRes = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ recipientId: { id: userC.id } });
+
+    expect(wrappedRes.status).toBe(201);
+    expect(wrappedRes.body.data.recipientId).toBe(userC.id);
+  });
 });

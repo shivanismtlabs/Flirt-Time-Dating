@@ -137,7 +137,10 @@ export const sendMessageHandler = async (req: AuthenticatedRequest, res: Respons
     const recipientId =
       (Array.isArray(req.body?.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
       (typeof req.body?.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
-      req.body?.recipientId;
+      req.body?.recipientId ||
+      req.body?.userId ||
+      req.body?.targetUserId ||
+      req.body?.participantId;
 
     if (recipientId) {
       const result = await chatService.sendMessageToRecipient(currentUserId, {
@@ -388,7 +391,18 @@ export const markReadHandler = async (req: AuthenticatedRequest, res: Response) 
   try {
     const currentUserId = req.user!.id;
     const conversationId = req.params.conversationId as string;
-    const lastReadMessageId = req.body?.lastReadMessageId;
+    const body = req.body || {};
+    const query = req.query || {};
+
+    const lastReadMessageId =
+      body.lastReadMessageId ||
+      body.messageId ||
+      body.last_read_message_id ||
+      body.message_id ||
+      (body.id && body.id !== conversationId ? body.id : undefined) ||
+      (query.messageId as string) ||
+      (query.lastReadMessageId as string);
+
     const result = await chatService.markMessagesAsRead(currentUserId, conversationId, lastReadMessageId);
     return sendSuccess(res, 'Messages marked as read', result, 200);
   } catch (error: any) {
@@ -417,8 +431,12 @@ export const deliveryReceiptHandler = async (req: AuthenticatedRequest, res: Res
       messageIds = body.deliveredMessageIds;
     } else if (typeof body.messageId === 'string' && body.messageId.trim()) {
       messageIds = [body.messageId.trim()];
+    } else if (typeof body.message_id === 'string' && body.message_id.trim()) {
+      messageIds = [body.message_id.trim()];
     } else if (typeof query.messageId === 'string' && query.messageId.trim()) {
       messageIds = [query.messageId.trim()];
+    } else if (typeof query.message_id === 'string' && query.message_id.trim()) {
+      messageIds = [query.message_id.trim()];
     }
 
     if (messageIds && messageIds.length > 0) {
@@ -586,7 +604,10 @@ export const startConversationHandler = async (req: AuthenticatedRequest, res: R
     const recipientId =
       (Array.isArray(req.body.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
       (typeof req.body.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
-      req.body.recipientId;
+      req.body.recipientId ||
+      req.body.userId ||
+      req.body.targetUserId ||
+      req.body.participantId;
     const result = await chatService.startConversation(currentUserId, recipientId);
     const message = result.isNew ? 'Conversation created successfully' : 'Conversation retrieved successfully';
     return sendSuccess(res, message, result, result.isNew ? 201 : 200);

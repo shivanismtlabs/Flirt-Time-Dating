@@ -453,6 +453,9 @@ export const sendMultiMessageSchema = z.object({
         }, z.array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' })).min(1, { message: 'recipientIds array cannot be empty' }).max(50, { message: 'Cannot send message to more than 50 recipients at once' }))
         .optional(),
       recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
+      userId: z.string().uuid({ message: 'Invalid userId UUID format' }).optional(),
+      targetUserId: z.string().uuid({ message: 'Invalid targetUserId UUID format' }).optional(),
+      participantId: z.string().uuid({ message: 'Invalid participantId UUID format' }).optional(),
       conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }).optional(),
           content: z
             .string()
@@ -506,6 +509,9 @@ export const sendMultiMessageSchema = z.object({
           const hasRecipients =
             (data.recipientIds && data.recipientIds.length > 0) ||
             !!data.recipientId ||
+            !!data.userId ||
+            !!data.targetUserId ||
+            !!data.participantId ||
             !!data.conversationId;
 
           if (!hasRecipients) {
@@ -698,6 +704,26 @@ export const markReadSchema = z.object({
         .uuid({ message: 'Invalid lastReadMessageId UUID format' })
         .optional()
         .nullable(),
+      messageId: z
+        .string()
+        .uuid({ message: 'Invalid messageId UUID format' })
+        .optional()
+        .nullable(),
+      message_id: z
+        .string()
+        .uuid({ message: 'Invalid message_id UUID format' })
+        .optional()
+        .nullable(),
+      last_read_message_id: z
+        .string()
+        .uuid({ message: 'Invalid last_read_message_id UUID format' })
+        .optional()
+        .nullable(),
+      id: z
+        .string()
+        .uuid({ message: 'Invalid id UUID format' })
+        .optional()
+        .nullable(),
     })
     .optional(),
 });
@@ -706,15 +732,32 @@ export const deliveryReceiptSchema = z.object({
   params: z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
   }),
-  body: z.object({
-    messageIds: z
-      .array(
-        z.string().uuid({ message: 'Every messageId must be a valid UUID' }),
-        { required_error: 'messageIds array is required' }
-      )
-      .min(1, { message: 'messageIds array cannot be empty' })
-      .max(100, { message: 'Cannot acknowledge more than 100 messages at once' }),
-  }),
+  body: z
+    .object({
+      messageIds: z
+        .array(
+          z.string().uuid({ message: 'Every messageId must be a valid UUID' }),
+          { required_error: 'messageIds array is required' }
+        )
+        .min(1, { message: 'messageIds array cannot be empty' })
+        .max(100, { message: 'Cannot acknowledge more than 100 messages at once' })
+        .optional(),
+      deliveredMessageIds: z
+        .array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+        .min(1)
+        .max(100)
+        .optional(),
+      messageId: z
+        .string()
+        .uuid({ message: 'Invalid messageId UUID format' })
+        .optional(),
+      message_id: z
+        .string()
+        .uuid({ message: 'Invalid message_id UUID format' })
+        .optional(),
+    })
+    .optional()
+    .default({}),
 });
 
 export const conversationDeliveredSchema = z.object({
@@ -725,15 +768,21 @@ export const conversationDeliveredSchema = z.object({
     .object({
       messageIds: z
         .array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+        .min(1, { message: 'messageIds array cannot be empty' })
         .max(500, { message: 'Cannot acknowledge more than 500 messages at once' })
         .optional(),
       deliveredMessageIds: z
         .array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+        .min(1)
         .max(500)
         .optional(),
       messageId: z
         .string()
         .uuid({ message: 'Invalid messageId UUID format' })
+        .optional(),
+      message_id: z
+        .string()
+        .uuid({ message: 'Invalid message_id UUID format' })
         .optional(),
     })
     .optional()
@@ -846,6 +895,9 @@ export const startConversationSchema = z.object({
   body: z
     .object({
       recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
+      userId: z.string().uuid({ message: 'Invalid userId UUID format' }).optional(),
+      targetUserId: z.string().uuid({ message: 'Invalid targetUserId UUID format' }).optional(),
+      participantId: z.string().uuid({ message: 'Invalid participantId UUID format' }).optional(),
       recipientIds: z
         .union([
           z.array(z.string().uuid({ message: 'Every recipientId in recipientIds must be a valid UUID' })),
@@ -854,11 +906,17 @@ export const startConversationSchema = z.object({
         .optional(),
     })
     .superRefine((data, ctx) => {
-      if (!data.recipientId && (!data.recipientIds || data.recipientIds.length === 0)) {
+      const target =
+        data.recipientId ||
+        data.userId ||
+        data.targetUserId ||
+        data.participantId ||
+        (data.recipientIds && data.recipientIds.length > 0);
+      if (!target) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: ['recipientIds'],
-          message: 'recipientIds is required',
+          message: 'recipientIds or recipientId is required',
         });
       }
     }),

@@ -141,6 +141,9 @@ export const handleSocketConnection = (
   // 4. Automatically join user's private multi-device room (e.g. 'user:<uuid>')
   const userRoom = getUserRoomName(user.userId);
   socket.join(userRoom);
+  if (user.userId && user.userId.toLowerCase() !== user.userId) {
+    socket.join(getUserRoomName(user.userId.toLowerCase()));
+  }
 
   socketLogger.info('Socket connection established and authenticated', {
     socketId: socket.id,

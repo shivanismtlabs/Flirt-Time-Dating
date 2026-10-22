@@ -117,6 +117,7 @@ router.patch('/:conversationId/messages/:messageId/pin', validate(pinMessageSche
 // 8. POST /api/v1/chats/:conversationId/messages - Send message (text, audio, image)
 // Supports JSON payload, base64 payload, and direct multipart/form-data media file upload to AWS S3
 router.post('/:conversationId/messages', handleUploadChatMedia, validate(sendMessageSchema), sendMessageHandler);
+router.post('/conversations/:conversationId/messages', handleUploadChatMedia, validate(sendMessageSchema), sendMessageHandler);
 
 // 8b. PATCH & PUT /api/v1/chats/:conversationId/messages/:messageId - Edit message
 router.patch('/:conversationId/messages/:messageId', validate(editMessageSchema), editMessageHandler);
@@ -163,18 +164,28 @@ router.patch(
 // 9. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);
 router.patch('/:conversationId/read', validate(markReadSchema), markReadHandler);
+router.post('/conversations/:conversationId/read', validate(markReadSchema), markReadHandler);
+router.patch('/conversations/:conversationId/read', validate(markReadSchema), markReadHandler);
 
 // 9b. POST, PATCH, PUT, GET /api/v1/chats/:conversationId/delivery - Acknowledge delivery receipts
 router.post('/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
 router.patch('/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
 router.put('/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 router.get('/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.post('/conversations/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
+router.patch('/conversations/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
+router.put('/conversations/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.get('/conversations/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 
 // 9c. POST, PATCH, PUT, GET /api/v1/chats/:conversationId/delivered - Acknowledge delivery receipts (canonical alias)
 router.post('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 router.patch('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 router.put('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 router.get('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.post('/conversations/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.patch('/conversations/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.put('/conversations/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.get('/conversations/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 
 // 10. PATCH & POST /api/v1/chat/conversations/:conversationId/pin & /api/v1/chats/:conversationId/pin - Pin or unpin conversation
 router.patch('/conversations/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);

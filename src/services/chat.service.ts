@@ -1303,25 +1303,25 @@ export class ChatService {
     let conversation = await Conversation.findByPk(conversationId);
     if (!conversation) {
       // Check if conversationId is actually a participant/target user ID
-      const [u1, u2] = [senderId, conversationId].sort();
-      conversation = await Conversation.findOne({
-        where: { user1Id: u1, user2Id: u2 },
-      });
-      if (!conversation) {
-        // Auto-create if target user exists and is active
-        const targetUser = await User.findByPk(conversationId);
-        if (targetUser && targetUser.isActive) {
-          conversation = await Conversation.create({
-            user1Id: u1,
-            user2Id: u2,
-            isDeletedForEveryone: false,
-          });
-        }
+      const targetUser = await User.findByPk(conversationId);
+      if (targetUser && targetUser.isActive) {
+        const res = await this.getOrCreateOneToOneConversation(senderId, targetUser.id, {
+          unhideForUser: senderId,
+        });
+        conversation = res.conversation;
+      } else {
+        const [u1, u2] = [senderId, conversationId].sort();
+        conversation = await Conversation.findOne({
+          where: { user1Id: u1, user2Id: u2 },
+        });
       }
     }
 
     if (!conversation || conversation.isDeletedForEveryone) {
-      throw new ChatServiceError('Conversation not found or has been deleted', conversation?.isDeletedForEveryone ? 400 : 404);
+      throw new ChatServiceError(
+        'Conversation not found or has been deleted',
+        conversation?.isDeletedForEveryone ? 400 : 404
+      );
     }
 
     conversationId = conversation.id;
@@ -2214,6 +2214,33 @@ export class ChatService {
         }
       );
 
+      // Unarchive for sender so the conversation is immediately visible in sender's active chat list
+      await ConversationUserState.update(
+        { isArchived: false, archivedAt: null },
+        {
+          where: {
+            conversationId,
+            userId: senderId,
+            isArchived: true,
+          },
+          transaction: t,
+        }
+      );
+
+      // Ensure per-user ConversationUserState records exist for both participants
+      for (const uid of [senderId, recipientId]) {
+        await ConversationUserState.findOrCreate({
+          where: { conversationId, userId: uid },
+          defaults: {
+            conversationId,
+            userId: uid,
+            isDeleted: false,
+            isArchived: false,
+          },
+          transaction: t,
+        });
+      }
+
       await t.commit();
     } catch (err) {
       await t.rollback();
@@ -2331,13 +2358,27 @@ export class ChatService {
         io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
         io.to(recipientRoom).emit('message:received' as any, recipientPayload);
         io.to(recipientRoom).emit('new_message' as any, recipientPayload);
+        if (recipientId && recipientId.toLowerCase() !== recipientId) {
+          io.to(getUserRoomName(recipientId.toLowerCase())).emit('chat:message_received' as any, recipientPayload);
+          io.to(getUserRoomName(recipientId.toLowerCase())).emit('message:received' as any, recipientPayload);
+        }
 
         // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
         io.to(senderRoom).emit('chat:message_sent' as any, dto);
         io.to(senderRoom).emit('message:sent' as any, dto);
         io.to(senderRoom).emit('new_message' as any, dto);
-        io.to(senderRoom).emit('message:received' as any, dto);
-        io.to(senderRoom).emit('chat:message_received' as any, dto);
+        if (senderId && senderId.toLowerCase() !== senderId) {
+          io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, dto);
+          io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, dto);
+        }
+
+        // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
+        io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
+        io.to(`conversation:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
+        io.to(`conversation:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
+        io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
+        io.to(`chat:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
+        io.to(`chat:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
       }
 
       // If multiple messages (e.g. multi-image burst), also emit plural batch events so clients listening for batch updates get all messages at once
@@ -2353,6 +2394,10 @@ export class ChatService {
         };
         io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
         io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
+        io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
+        io.to(`conversation:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
+        io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
+        io.to(`chat:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
 
         const batchSenderPayload = {
           conversationId,
@@ -3049,15 +3094,12 @@ export class ChatService {
       try {
         let conv = conversationMap.get(recipientId);
         if (!conv) {
-          const [u1, u2] = [senderId, recipientId].sort();
-          conv = await Conversation.create(
-            {
-              user1Id: u1,
-              user2Id: u2,
-              isDeletedForEveryone: false,
-            },
-            { transaction: t }
+          const { conversation } = await this.getOrCreateOneToOneConversation(
+            senderId,
+            recipientId,
+            { transaction: t, unhideForUser: senderId }
           );
+          conv = conversation;
           conversationMap.set(recipientId, conv);
         } else if (conv.isDeletedForEveryone) {
           conv.isDeletedForEveryone = false;
@@ -3276,7 +3318,7 @@ export class ChatService {
         conv.lastMessageAt = lastSaved.createdAt;
         await conv.save({ transaction: t });
 
-        // Unhide conversation if previously deleted for me
+        // Unhide conversation if previously deleted for participants
         await ConversationUserState.update(
           { isDeleted: false },
           {
@@ -3288,6 +3330,33 @@ export class ChatService {
             transaction: t,
           }
         );
+
+        // Unarchive for sender so conversation is visible in sender's active chat list
+        await ConversationUserState.update(
+          { isArchived: false, archivedAt: null },
+          {
+            where: {
+              conversationId,
+              userId: senderId,
+              isArchived: true,
+            },
+            transaction: t,
+          }
+        );
+
+        // Ensure per-user ConversationUserState records exist for both participants
+        for (const uid of [senderId, recipientId]) {
+          await ConversationUserState.findOrCreate({
+            where: { conversationId, userId: uid },
+            defaults: {
+              conversationId,
+              userId: uid,
+              isDeleted: false,
+              isArchived: false,
+            },
+            transaction: t,
+          });
+        }
 
         await t.commit();
 
@@ -3393,13 +3462,27 @@ export class ChatService {
             io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
             io.to(recipientRoom).emit('message:received' as any, recipientPayload);
             io.to(recipientRoom).emit('new_message' as any, recipientPayload);
+            if (recipientId && recipientId.toLowerCase() !== recipientId) {
+              io.to(getUserRoomName(recipientId.toLowerCase())).emit('chat:message_received' as any, recipientPayload);
+              io.to(getUserRoomName(recipientId.toLowerCase())).emit('message:received' as any, recipientPayload);
+            }
 
             // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
             io.to(senderRoom).emit('chat:message_sent' as any, dto);
             io.to(senderRoom).emit('message:sent' as any, dto);
             io.to(senderRoom).emit('new_message' as any, dto);
-            io.to(senderRoom).emit('message:received' as any, dto);
-            io.to(senderRoom).emit('chat:message_received' as any, dto);
+            if (senderId && senderId.toLowerCase() !== senderId) {
+              io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, dto);
+              io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, dto);
+            }
+
+            // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
+            io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
+            io.to(`conversation:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
+            io.to(`conversation:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
+            io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
+            io.to(`chat:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
+            io.to(`chat:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
           }
 
           // If multiple messages, emit plural batch events for multi-message listeners
@@ -3415,6 +3498,10 @@ export class ChatService {
             };
             io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
             io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
+            io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
+            io.to(`conversation:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
+            io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
+            io.to(`chat:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
 
             const batchSenderPayload = {
               conversationId,
@@ -3595,20 +3682,40 @@ export class ChatService {
     const unreadCount = await this.getConversationUnreadCount(currentUserId, conversationId);
 
     // Notify other user via real-time read receipt and sync unread count to reader's devices
-    if (markedCount > 0) {
+    if (markedCount > 0 || lastReadMessageId) {
       try {
         const io = getSocketServer();
+        const resolvedLastReadId = lastReadMessageId || boundaryMessage?.id || null;
         const readReceiptPayload = {
           conversationId,
           readerId: currentUserId,
-          lastReadMessageId: lastReadMessageId || boundaryMessage?.id || null,
+          userId: currentUserId,
+          readBy: currentUserId,
+          lastReadMessageId: resolvedLastReadId,
+          messageId: resolvedLastReadId,
           markedCount,
           readAt: now.toISOString(),
+          status: 'read',
+          isRead: true,
         };
 
         // Emit to sender's active room
         io.to(getUserRoomName(otherUserId)).emit('chat:read_receipt' as any, readReceiptPayload);
         io.to(getUserRoomName(otherUserId)).emit('message:read_receipt' as any, readReceiptPayload);
+        if (otherUserId && otherUserId.toLowerCase() !== otherUserId) {
+          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('chat:read_receipt' as any, readReceiptPayload);
+          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('message:read_receipt' as any, readReceiptPayload);
+        }
+
+        // Broadcast to conversation room subscribers
+        io.to(`conversation:${conversationId}`).emit('chat:read_receipt' as any, readReceiptPayload);
+        io.to(`conversation:${conversationId}`).emit('message:read_receipt' as any, readReceiptPayload);
+        io.to(`chat:${conversationId}`).emit('chat:read_receipt' as any, readReceiptPayload);
+        io.to(`chat:${conversationId}`).emit('message:read_receipt' as any, readReceiptPayload);
+
+        // Also emit to reader's room for multi-device sync
+        io.to(getUserRoomName(currentUserId)).emit('chat:read_receipt' as any, readReceiptPayload);
+        io.to(getUserRoomName(currentUserId)).emit('message:read_receipt' as any, readReceiptPayload);
 
         // Synchronize updated unread badge to reader's own active sessions
         io.to(getUserRoomName(currentUserId)).emit('conversation:unread_updated' as any, {
@@ -3781,18 +3888,36 @@ export class ChatService {
     }
 
     // Dispatch delivery receipt to sender's active sessions
-    if (deliveredCount > 0) {
+    if (deliveredCount > 0 || eligibleMessages.length > 0) {
       try {
         const io = getSocketServer();
+        const deliveredMessageIds = undeliveredIds.length > 0 ? undeliveredIds : eligibleMessages.map((m) => m.id);
         const deliveryPayload = {
           conversationId,
           recipientId: currentUserId,
-          messageIds: undeliveredIds,
+          userId: currentUserId,
+          messageIds: deliveredMessageIds,
+          messageId: deliveredMessageIds[0] || null,
           deliveredAt: now.toISOString(),
+          status: 'delivered',
+          isDelivered: true,
+          deliveredCount: deliveredCount > 0 ? deliveredCount : eligibleMessages.length,
         };
 
         io.to(getUserRoomName(otherUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
         io.to(getUserRoomName(otherUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
+        if (otherUserId && otherUserId.toLowerCase() !== otherUserId) {
+          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('message:delivery_receipt' as any, deliveryPayload);
+        }
+
+        io.to(`conversation:${conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
+        io.to(`conversation:${conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
+        io.to(`chat:${conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
+        io.to(`chat:${conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
+
+        io.to(getUserRoomName(currentUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
+        io.to(getUserRoomName(currentUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
       } catch { }
     }
 
@@ -3914,11 +4039,26 @@ export class ChatService {
           const deliveryPayload = {
             conversationId: group.conversationId,
             recipientId: currentUserId,
+            userId: currentUserId,
             messageIds: group.messageIds,
+            messageId: group.messageIds[0] || null,
             deliveredAt: now.toISOString(),
+            status: 'delivered',
+            isDelivered: true,
           };
           io.to(getUserRoomName(senderId)).emit('chat:delivery_receipt' as any, deliveryPayload);
           io.to(getUserRoomName(senderId)).emit('message:delivery_receipt' as any, deliveryPayload);
+          if (senderId && senderId.toLowerCase() !== senderId) {
+            io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:delivery_receipt' as any, deliveryPayload);
+            io.to(getUserRoomName(senderId.toLowerCase())).emit('message:delivery_receipt' as any, deliveryPayload);
+          }
+          io.to(`conversation:${group.conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(`conversation:${group.conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
+          io.to(`chat:${group.conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(`chat:${group.conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
+
+          io.to(getUserRoomName(currentUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
+          io.to(getUserRoomName(currentUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
         }
       } catch {}
     }
@@ -4755,6 +4895,154 @@ export class ChatService {
   }
 
   /**
+   * Authoritative helper to get or create a 1-to-1 conversation between two users.
+   * - Validates user IDs and ensures both user-order permutations resolve to the exact same conversation.
+   * - Enforces database transaction and concurrency safety (handling unique constraint races).
+   * - Revives conversations that were previously isDeletedForEveryone if needed.
+   * - Initializes or un-hides ConversationUserState records for both participants.
+   */
+  public async getOrCreateOneToOneConversation(
+    userAId: string,
+    userBId: string,
+    options: {
+      transaction?: any;
+      unhideForUser?: string;
+      validateAccountStatus?: boolean;
+    } = {}
+  ): Promise<{ conversation: Conversation; isNew: boolean }> {
+    const normA = String(userAId || '').trim();
+    const normB = String(userBId || '').trim();
+
+    if (!normA || !normB) {
+      throw new ChatServiceError('Both user IDs are required to resolve a conversation', 400);
+    }
+
+    if (normA.toLowerCase() === normB.toLowerCase()) {
+      throw new ChatServiceError('You cannot start a conversation with yourself', 400);
+    }
+
+    if (options.validateAccountStatus) {
+      const targetUser = await User.findByPk(normB, {
+        attributes: ['id', 'isActive'],
+      });
+      if (!targetUser || targetUser.isActive === false) {
+        throw new ChatServiceError('User profile is unavailable', 404);
+      }
+
+      const isBlocked = await UserBlock.findOne({
+        where: {
+          [Op.or]: [
+            { userId: normA, blockedUserId: normB },
+            { userId: normB, blockedUserId: normA },
+          ],
+        },
+      });
+      if (isBlocked) {
+        throw new ChatServiceError('You cannot chat with this user', 403);
+      }
+    }
+
+    const [u1, u2] = [normA, normB].sort();
+
+    const executeOperation = async (t?: any) => {
+      let conv = await Conversation.findOne({
+        where: { user1Id: u1, user2Id: u2 },
+        transaction: t,
+      });
+
+      let isNew = false;
+      if (!conv) {
+        try {
+          conv = await Conversation.create(
+            {
+              user1Id: u1,
+              user2Id: u2,
+              isDeletedForEveryone: false,
+            },
+            { transaction: t }
+          );
+          isNew = true;
+        } catch (err: any) {
+          // Handle concurrent creation race condition across PostgreSQL, SQLite, etc.
+          const isUnique =
+            err.name === 'SequelizeUniqueConstraintError' ||
+            err.code === '23505' ||
+            err.code === 'SQLITE_CONSTRAINT' ||
+            (err.message && /unique/i.test(err.message)) ||
+            (err.original && /unique/i.test(err.original.message));
+
+          if (isUnique) {
+            for (let retry = 0; retry < 5; retry++) {
+              conv = await Conversation.findOne({
+                where: { user1Id: u1, user2Id: u2 },
+                transaction: t,
+              });
+              if (conv) break;
+              await new Promise((r) => setTimeout(r, 25));
+            }
+            if (!conv) {
+              throw err;
+            }
+            isNew = false;
+          } else {
+            throw err;
+          }
+        }
+      }
+
+      // If conversation existed but was deleted for everyone, revive it
+      if (conv.isDeletedForEveryone) {
+        conv.isDeletedForEveryone = false;
+        conv.deletedForEveryoneAt = null;
+        conv.deletedForEveryoneBy = null;
+        await conv.save({ transaction: t });
+      }
+
+      // Ensure per-user ConversationUserState records exist for both users
+      for (const uid of [u1, u2]) {
+        const isUnhideTarget =
+          options.unhideForUser && uid.toLowerCase() === options.unhideForUser.toLowerCase();
+        let uState: ConversationUserState | null = null;
+        let stateCreated = false;
+        try {
+          const res = await ConversationUserState.findOrCreate({
+            where: { conversationId: conv.id, userId: uid },
+            defaults: {
+              conversationId: conv.id,
+              userId: uid,
+              isDeleted: false,
+              isArchived: false,
+            },
+            transaction: t,
+          });
+          uState = res[0];
+          stateCreated = res[1];
+        } catch {
+          uState = await ConversationUserState.findOne({
+            where: { conversationId: conv.id, userId: uid },
+            transaction: t,
+          });
+        }
+
+        if (uState && !stateCreated && isUnhideTarget && (uState.isDeleted || uState.isArchived)) {
+          uState.isDeleted = false;
+          uState.isArchived = false;
+          uState.archivedAt = null;
+          await uState.save({ transaction: t });
+        }
+      }
+
+      return { conversation: conv, isNew };
+    };
+
+    if (options.transaction) {
+      return executeOperation(options.transaction);
+    }
+
+    return executeOperation();
+  }
+
+  /**
    * 7. START OR GET CONVERSATION BY PARTICIPANT ID
    */
   public async startConversation(
@@ -4796,18 +5084,11 @@ export class ChatService {
       throw new ChatServiceError('You cannot chat with this user', 403);
     }
 
-    const [u1, u2] = [currentUserId, recipientId].sort();
-
-    const [conversation, isNew] = await Conversation.findOrCreate({
-      where: {
-        user1Id: u1,
-        user2Id: u2,
-      },
-      defaults: {
-        user1Id: u1,
-        user2Id: u2,
-      },
-    });
+    const { conversation, isNew } = await this.getOrCreateOneToOneConversation(
+      currentUserId,
+      recipientId,
+      { unhideForUser: currentUserId }
+    );
 
     const participantDto: ChatMessageSenderDTO = {
       id: recipient.id,
@@ -6457,15 +6738,12 @@ return {
       try {
         let conv = destConvMap.get(recipientId);
         if (!conv) {
-          const [u1, u2] = [senderId, recipientId].sort();
-          conv = await Conversation.create(
-            {
-              user1Id: u1,
-              user2Id: u2,
-              isDeletedForEveryone: false,
-            },
-            { transaction: t }
+          const { conversation } = await this.getOrCreateOneToOneConversation(
+            senderId,
+            recipientId,
+            { transaction: t, unhideForUser: senderId }
           );
+          conv = conversation;
           destConvMap.set(recipientId, conv);
         } else if (conv.isDeletedForEveryone) {
           conv.isDeletedForEveryone = false;
@@ -6601,6 +6879,33 @@ return {
           }
         );
 
+        // Unarchive for sender so conversation is visible in sender's active chat list
+        await ConversationUserState.update(
+          { isArchived: false, archivedAt: null },
+          {
+            where: {
+              conversationId,
+              userId: senderId,
+              isArchived: true,
+            },
+            transaction: t,
+          }
+        );
+
+        // Ensure per-user ConversationUserState records exist for both participants
+        for (const uid of [senderId, recipientId]) {
+          await ConversationUserState.findOrCreate({
+            where: { conversationId, userId: uid },
+            defaults: {
+              conversationId,
+              userId: uid,
+              isDeleted: false,
+              isArchived: false,
+            },
+            transaction: t,
+          });
+        }
+
         await t.commit();
 
         // Build response DTOs for successfully committed messages
@@ -6709,6 +7014,16 @@ return {
               io.to(senderRoom).emit('message:sent' as any, dto);
               io.to(senderRoom).emit('new_message' as any, dto);
               io.to(senderRoom).emit('chat:message_forwarded' as any, dto);
+
+              // Broadcast to conversation room subscribers
+              io.to(`conversation:${conversationId}`).emit('chat:message_received' as any, recipientPayload);
+              io.to(`conversation:${conversationId}`).emit('message:received' as any, recipientPayload);
+              io.to(`conversation:${conversationId}`).emit('new_message' as any, recipientPayload);
+              io.to(`conversation:${conversationId}`).emit('chat:message_forwarded' as any, recipientPayload);
+              io.to(`chat:${conversationId}`).emit('chat:message_received' as any, recipientPayload);
+              io.to(`chat:${conversationId}`).emit('message:received' as any, recipientPayload);
+              io.to(`chat:${conversationId}`).emit('new_message' as any, recipientPayload);
+              io.to(`chat:${conversationId}`).emit('chat:message_forwarded' as any, recipientPayload);
             }
 
             if (lastSaved) {

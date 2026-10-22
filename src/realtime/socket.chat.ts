@@ -111,13 +111,33 @@ export const registerChatSocketHandlers = (
           : [trimmed];
       } else if (payload.recipientId) {
         normalizedRecipientIds = [payload.recipientId];
+      } else if (payload.targetUserId) {
+        normalizedRecipientIds = [payload.targetUserId];
+      } else if (payload.userId) {
+        normalizedRecipientIds = [payload.userId];
+      } else if (payload.participantId) {
+        normalizedRecipientIds = [payload.participantId];
+      } else if (payload.receiverId) {
+        normalizedRecipientIds = [payload.receiverId];
+      } else if (payload.recipient_id) {
+        normalizedRecipientIds = [payload.recipient_id];
       }
 
-      if (normalizedRecipientIds.length > 0) {
-        // Multi / Selected recipients send
+      const conversationId =
+        payload.conversationId ||
+        payload.conversation_id ||
+        payload.chatId;
+
+      if (conversationId) {
+        socket.join(`conversation:${conversationId}`);
+        socket.join(`chat:${conversationId}`);
+      }
+
+      // 1. If explicit multi-recipient array, delegate to sendMultiMessage
+      if (Array.isArray(payload.recipientIds) && payload.recipientIds.length > 0) {
         const result = await chatService.sendMultiMessage(currentUserId, {
           recipientIds: normalizedRecipientIds,
-          conversationId: payload.conversationId,
+          conversationId,
           content,
           type: msgType,
           messageType: msgType,
@@ -133,6 +153,15 @@ export const registerChatSocketHandlers = (
           imageUrl: payload.imageUrl || payload.image,
           mediaUrl: payload.mediaUrl,
         } as any);
+
+        if (result.results && result.results.length > 0) {
+          for (const item of result.results) {
+            if (item.conversationId) {
+              socket.join(`conversation:${item.conversationId}`);
+              socket.join(`chat:${item.conversationId}`);
+            }
+          }
+        }
 
         if (typeof callback === 'function') {
           let callbackData: any = result;
@@ -152,44 +181,68 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      if (!payload.conversationId) {
+      // 2. If conversationId is provided, authoritative single conversation path
+      if (conversationId) {
+        if (
+          (msgType === 'text' || msgType === 'image' || msgType === 'audio') &&
+          !content &&
+          normalizedImages.length === 0 &&
+          normalizedImageUrls.length === 0
+        ) {
+          if (typeof callback === 'function') {
+            return callback({
+              success: false,
+              error: `content or media URL is required for ${msgType} messages`,
+            });
+          }
+          return;
+        }
+
+        const replyToMessageId =
+          payload.replyToMessageId ||
+          payload.parentMessageId ||
+          payload.replyToId;
+
+        const messageDto = await chatService.sendMessage(
+          currentUserId,
+          conversationId,
+          {
+            content,
+            messageType: msgType,
+            clientMessageId: payload.clientMessageId,
+            replyToMessageId,
+            metadata: payload.metadata,
+            images: normalizedImages.length > 0 ? normalizedImages : undefined,
+            imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+            mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
+            caption: payload.caption,
+            duration: payload.duration,
+            audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
+            imageUrl: payload.imageUrl || payload.image,
+            mediaUrl: payload.mediaUrl,
+          } as any
+        );
+
+        if (messageDto.conversationId) {
+          socket.join(`conversation:${messageDto.conversationId}`);
+          socket.join(`chat:${messageDto.conversationId}`);
+        }
+
         if (typeof callback === 'function') {
-          return callback({
-            success: false,
-            error: 'conversationId or recipientIds is required',
-          });
+          callback({ success: true, data: messageDto });
         }
         return;
       }
 
-      if (
-        (msgType === 'text' || msgType === 'image' || msgType === 'audio') &&
-        !content &&
-        normalizedImages.length === 0 &&
-        normalizedImageUrls.length === 0
-      ) {
-        if (typeof callback === 'function') {
-          return callback({
-            success: false,
-            error: `content or media URL is required for ${msgType} messages`,
-          });
-        }
-        return;
-      }
-
-      const replyToMessageId =
-        payload.replyToMessageId ||
-        payload.parentMessageId ||
-        payload.replyToId;
-
-      const messageDto = await chatService.sendMessage(
-        currentUserId,
-        payload.conversationId,
-        {
+      // 3. If single recipientId is provided without conversationId
+      if (normalizedRecipientIds.length === 1) {
+        const singleRecipientId = normalizedRecipientIds[0];
+        const result = await chatService.sendMessageToRecipient(currentUserId, {
+          recipientId: singleRecipientId,
           content,
+          type: msgType,
           messageType: msgType,
           clientMessageId: payload.clientMessageId,
-          replyToMessageId,
           metadata: payload.metadata,
           images: normalizedImages.length > 0 ? normalizedImages : undefined,
           imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
@@ -199,11 +252,24 @@ export const registerChatSocketHandlers = (
           audioUrl: payload.audioUrl || payload.audio || payload.voiceUrl,
           imageUrl: payload.imageUrl || payload.image,
           mediaUrl: payload.mediaUrl,
-        } as any
-      );
+        } as any);
+
+        if (result.conversationId) {
+          socket.join(`conversation:${result.conversationId}`);
+          socket.join(`chat:${result.conversationId}`);
+        }
+
+        if (typeof callback === 'function') {
+          callback({ success: true, data: result });
+        }
+        return;
+      }
 
       if (typeof callback === 'function') {
-        callback({ success: true, data: messageDto });
+        return callback({
+          success: false,
+          error: 'conversationId or recipientIds is required',
+        });
       }
     } catch (err: any) {
       socketLogger.error('Error handling chat:send_message event', err, {
@@ -264,17 +330,29 @@ export const registerChatSocketHandlers = (
   // 2. Event: chat:mark_read & message:read (Read Acknowledgement)
   const handleMarkRead = async (payload: any, callback?: Function) => {
     try {
-      if (!payload?.conversationId) {
+      const conversationId =
+        payload?.conversationId ||
+        payload?.conversation_id ||
+        payload?.chatId;
+
+      if (!conversationId) {
         if (typeof callback === 'function') {
           return callback({ success: false, error: 'conversationId is required' });
         }
         return;
       }
 
+      const lastReadMessageId =
+        payload?.lastReadMessageId ||
+        payload?.messageId ||
+        payload?.last_read_message_id ||
+        payload?.message_id ||
+        (payload?.id && payload?.id !== conversationId ? payload?.id : undefined);
+
       const result = await chatService.markMessagesAsRead(
         currentUserId,
-        payload.conversationId,
-        payload.lastReadMessageId
+        conversationId,
+        lastReadMessageId
       );
 
       if (typeof callback === 'function') {
@@ -293,7 +371,26 @@ export const registerChatSocketHandlers = (
   // 2b. Event: chat:message_delivered & message:delivered (Delivery Acknowledgement)
   const handleMessageDelivered = async (payload: any, callback?: Function) => {
     try {
-      if (!payload?.conversationId || !Array.isArray(payload.messageIds)) {
+      const conversationId =
+        payload?.conversationId ||
+        payload?.conversation_id ||
+        payload?.chatId;
+
+      let messageIds: string[] = [];
+      if (Array.isArray(payload?.messageIds)) {
+        messageIds = payload.messageIds;
+      } else if (Array.isArray(payload?.deliveredMessageIds)) {
+        messageIds = payload.deliveredMessageIds;
+      } else if (typeof payload?.messageId === 'string' && payload.messageId.trim()) {
+        messageIds = [payload.messageId.trim()];
+      } else if (typeof payload?.messageIds === 'string' && payload.messageIds.trim()) {
+        const trimmed = payload.messageIds.trim();
+        messageIds = trimmed.includes(',')
+          ? trimmed.split(',').map((s: string) => s.trim()).filter(Boolean)
+          : [trimmed];
+      }
+
+      if (!conversationId || messageIds.length === 0) {
         if (typeof callback === 'function') {
           return callback({
             success: false,
@@ -305,8 +402,8 @@ export const registerChatSocketHandlers = (
 
       const result = await chatService.acknowledgeDelivery(
         currentUserId,
-        payload.conversationId,
-        payload.messageIds
+        conversationId,
+        messageIds
       );
 
       if (typeof callback === 'function') {

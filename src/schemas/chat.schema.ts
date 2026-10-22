@@ -717,6 +717,38 @@ export const deliveryReceiptSchema = z.object({
   }),
 });
 
+export const conversationDeliveredSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+  }),
+  body: z
+    .object({
+      messageIds: z
+        .array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+        .max(500, { message: 'Cannot acknowledge more than 500 messages at once' })
+        .optional(),
+      deliveredMessageIds: z
+        .array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+        .max(500)
+        .optional(),
+      messageId: z
+        .string()
+        .uuid({ message: 'Invalid messageId UUID format' })
+        .optional(),
+    })
+    .optional()
+    .default({}),
+  query: z
+    .object({
+      messageId: z
+        .string()
+        .uuid({ message: 'Invalid messageId UUID format' })
+        .optional(),
+    })
+    .optional()
+    .default({}),
+});
+
 export const syncDeliveredMessagesSchema = z.object({
   body: z
     .object({
@@ -938,6 +970,7 @@ export type SendMessageInput = z.infer<typeof sendMessageSchema>['body'];
 export type SendMultiMessageInput = z.infer<typeof sendMultiMessageSchema>['body'];
 export type MarkReadInput = z.infer<typeof markReadSchema>['body'];
 export type DeliveryReceiptInput = z.infer<typeof deliveryReceiptSchema>['body'];
+export type ConversationDeliveredInput = z.infer<typeof conversationDeliveredSchema>['body'];
 export type SyncDeliveredMessagesInput = z.infer<typeof syncDeliveredMessagesSchema>['body'];
 export type GetUnreadCountQuery = z.infer<typeof getUnreadCountSchema>['query'];
 export type PinConversationInput = z.infer<typeof pinConversationSchema>['body'];

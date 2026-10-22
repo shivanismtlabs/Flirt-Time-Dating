@@ -356,16 +356,46 @@ export const markReadHandler = async (req: AuthenticatedRequest, res: Response) 
 };
 
 /**
- * 5b. POST / PATCH /api/v1/chats/:conversationId/delivery
+ * 5b. POST / PATCH / PUT / GET /api/v1/chats/:conversationId/delivery & /api/v1/chats/:conversationId/delivered
  * Acknowledges receipt of delivered messages for the recipient.
  */
 export const deliveryReceiptHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {
     const currentUserId = req.user!.id;
     const conversationId = req.params.conversationId as string;
-    const { messageIds } = req.body;
-    const result = await chatService.acknowledgeDelivery(currentUserId, conversationId, messageIds);
-    return sendSuccess(res, 'Delivery receipts updated successfully', result, 200);
+    const body = req.body || {};
+    const query = req.query || {};
+
+    let messageIds: string[] | undefined;
+    if (Array.isArray(body.messageIds) && body.messageIds.length > 0) {
+      messageIds = body.messageIds;
+    } else if (Array.isArray(body.deliveredMessageIds) && body.deliveredMessageIds.length > 0) {
+      messageIds = body.deliveredMessageIds;
+    } else if (typeof body.messageId === 'string' && body.messageId.trim()) {
+      messageIds = [body.messageId.trim()];
+    } else if (typeof query.messageId === 'string' && query.messageId.trim()) {
+      messageIds = [query.messageId.trim()];
+    }
+
+    if (messageIds && messageIds.length > 0) {
+      const result = await chatService.acknowledgeDelivery(currentUserId, conversationId, messageIds);
+      return sendSuccess(res, 'Delivery receipts updated successfully', result, 200);
+    } else {
+      // If messageIds not specified (e.g. empty body or delivered conversation sync), sync all pending messages in this conversation
+      const result = await chatService.syncDeliveredMessages(currentUserId, {
+        conversationId,
+      });
+      return sendSuccess(
+        res,
+        'Delivery receipts updated successfully',
+        {
+          conversationId,
+          messageIds: result.messageIds,
+          deliveredCount: result.deliveredCount,
+        },
+        200
+      );
+    }
   } catch (error: any) {
     if (error instanceof ChatServiceError) {
       return sendError(res, error.message, error.statusCode, error.errorCode);

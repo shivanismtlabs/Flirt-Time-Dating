@@ -292,6 +292,86 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
       expect(res.body.data.deliveredCount).toBe(1);
     });
 
+    it('should support POST /api/v1/chats/:conversationId/delivered with messageIds', async () => {
+      // Create a new undelivered message
+      const newMsg = await ChatMessage.create({
+        conversationId: convAB.id,
+        senderId: userA.id,
+        recipientId: userB.id,
+        content: 'Delivered test message',
+        messageType: 'text',
+        isDelivered: false,
+        deliveredAt: null,
+        isRead: false,
+        readAt: null,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/delivered`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ messageIds: [newMsg.id] });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.conversationId).toBe(convAB.id);
+      expect(res.body.data.deliveredCount).toBe(1);
+      expect(res.body.data.messageIds).toContain(newMsg.id);
+
+      const reloaded = await ChatMessage.findByPk(newMsg.id);
+      expect(reloaded?.isDelivered).toBe(true);
+      expect(reloaded?.deliveredAt).not.toBeNull();
+    });
+
+    it('should support POST /api/v1/chats/:conversationId/delivered with empty body to sync all undelivered', async () => {
+      const unMsg1 = await ChatMessage.create({
+        conversationId: convAB.id,
+        senderId: userA.id,
+        recipientId: userB.id,
+        content: 'Batch sync message 1',
+        messageType: 'text',
+        isDelivered: false,
+        deliveredAt: null,
+        isRead: false,
+        readAt: null,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/delivered`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({});
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.conversationId).toBe(convAB.id);
+      expect(res.body.data.deliveredCount).toBeGreaterThanOrEqual(1);
+      expect(res.body.data.messageIds).toContain(unMsg1.id);
+
+      const reloaded = await ChatMessage.findByPk(unMsg1.id);
+      expect(reloaded?.isDelivered).toBe(true);
+    });
+
+    it('should support PATCH, PUT, and GET /api/v1/chats/:conversationId/delivered', async () => {
+      const patchRes = await request(app)
+        .patch(`/api/v1/chats/${convAB.id}/delivered`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({});
+      expect(patchRes.status).toBe(200);
+      expect(patchRes.body.success).toBe(true);
+
+      const putRes = await request(app)
+        .put(`/api/v1/chats/${convAB.id}/delivered`)
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({});
+      expect(putRes.status).toBe(200);
+      expect(putRes.body.success).toBe(true);
+
+      const getRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/delivered`)
+        .set('Authorization', `Bearer ${tokenB}`);
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.success).toBe(true);
+    });
+
     it('should prevent sender from acknowledging delivery of their own messages', async () => {
       // User A sent the messages to User B
       const res = await request(app)

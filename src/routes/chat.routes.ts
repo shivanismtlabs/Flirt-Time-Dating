@@ -33,6 +33,7 @@ import {
   sendMultiMessageSchema,
   markReadSchema,
   deliveryReceiptSchema,
+  conversationDeliveredSchema,
   syncDeliveredMessagesSchema,
   getUnreadCountSchema,
   pinConversationSchema,
@@ -138,9 +139,17 @@ router.post(
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);
 router.patch('/:conversationId/read', validate(markReadSchema), markReadHandler);
 
-// 9b. POST & PATCH /api/v1/chats/:conversationId/delivery - Acknowledge delivery receipts
+// 9b. POST, PATCH, PUT, GET /api/v1/chats/:conversationId/delivery - Acknowledge delivery receipts
 router.post('/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
 router.patch('/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);
+router.put('/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.get('/:conversationId/delivery', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+
+// 9c. POST, PATCH, PUT, GET /api/v1/chats/:conversationId/delivered - Acknowledge delivery receipts (canonical alias)
+router.post('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.patch('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.put('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
+router.get('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 
 // 10. POST /api/v1/chats/:conversationId/pin - Pin or unpin conversation (or message if messageId provided)
 router.post('/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);

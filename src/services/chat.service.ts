@@ -35,6 +35,8 @@ import {
   ForwardMessagesInput,
   GetForwardRecipientsQuery,
   normalizeReactionEmoji,
+  normalizeRecipientIdentifier,
+  isUuidIdentifier,
 } from '../schemas/chat.schema';
 
 export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes window for editing sent messages
@@ -1947,7 +1949,7 @@ export class ChatService {
 
         uploadedAudios.push({
           url: audioPublicUrl,
-          audioUrl: audioPubUrl,
+          audioUrl: audioPublicUrl,
           voiceUrl: audioPublicUrl,
           mediaUrl: audioPublicUrl,
           key: s3Key,
@@ -2756,7 +2758,11 @@ export class ChatService {
             mimeType: imgMime,
             fileSize: file.size,
           });
-      // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
+        }
+      }
+    }
+
+    // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
     if (Array.isArray(rawImages) && rawImages.length > 0) {
       for (const item of rawImages) {
         const raw =
@@ -2924,7 +2930,7 @@ export class ChatService {
 
         uploadedAudios.push({
           url: audioPublicUrl,
-          audioUrl: audioPubUrl,
+          audioUrl: audioPublicUrl,
           voiceUrl: audioPublicUrl,
           mediaUrl: audioPublicUrl,
           key: s3Key,
@@ -5095,16 +5101,31 @@ export class ChatService {
     participant?: ChatMessageSenderDTO;
     targetUser?: any;
   }> {
-    if (currentUserId === recipientId) {
-      throw new ChatServiceError('You cannot start a conversation with yourself', 400);
+    const resolvedRecipientId = normalizeRecipientIdentifier(recipientId);
+    if (!resolvedRecipientId) {
+      throw new ChatServiceError('recipientId is required', 400);
     }
 
-    const recipient = await User.findByPk(recipientId, {
-      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture', 'isActive'],
-    });
+    const userLookupAttributes = ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture', 'isActive'] as const;
+    let recipient = isUuidIdentifier(resolvedRecipientId)
+      ? await User.findByPk(resolvedRecipientId, { attributes: [...userLookupAttributes] })
+      : null;
+
+    if (!recipient) {
+      recipient = await User.findOne({
+        where: { username: resolvedRecipientId },
+        attributes: [...userLookupAttributes],
+      });
+    }
 
     if (!recipient || recipient.isActive === false) {
       throw new ChatServiceError('User profile is unavailable', 404);
+    }
+
+    recipientId = recipient.id;
+
+    if (currentUserId === recipientId) {
+      throw new ChatServiceError('You cannot start a conversation with yourself', 400);
     }
 
     // Check if blocked

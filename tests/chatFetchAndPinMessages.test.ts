@@ -615,7 +615,11 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(pinEventData.conversationId).toBe(convAB.id);
       expect(pinEventData.messageId).toBe(msg1.id);
       expect(pinEventData.isPinned).toBe(true);
+      expect(pinEventData.pinned).toBe(true);
       expect(pinEventData.pinnedBy).toBe(userA.id);
+      expect(pinEventData.message.id).toBe(msg1.id);
+      expect(pinEventData.message.content).toBe('Hey Bob, let us catch up!');
+      expect(pinEventData.message.isPinned).toBe(true);
 
       const unpinnedPromise = new Promise<any>((resolve) => {
         clientSocketA.on('chat:message_unpinned', (data) => resolve(data));
@@ -631,6 +635,91 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(unpinEventData.conversationId).toBe(convAB.id);
       expect(unpinEventData.messageId).toBe(msg1.id);
       expect(unpinEventData.isPinned).toBe(false);
+      expect(unpinEventData.pinned).toBe(false);
+    });
+
+    it('should push chat:message:pin:updated to both participants while the chat stays open', async () => {
+      const clientSocketA = createClientSocket({ auth: { token: tokenA } });
+      const clientSocketB = createClientSocket({ auth: { token: tokenB } });
+
+      await Promise.all([
+        new Promise<void>((resolve, reject) => {
+          clientSocketA.on('connect', () => resolve());
+          clientSocketA.on('connect_error', reject);
+        }),
+        new Promise<void>((resolve, reject) => {
+          clientSocketB.on('connect', () => resolve());
+          clientSocketB.on('connect_error', reject);
+        }),
+      ]);
+
+      await new Promise<void>((resolve) => {
+        clientSocketA.emit('conversation:join', { conversationId: convAB.id }, () => resolve());
+      });
+      await new Promise<void>((resolve) => {
+        clientSocketB.emit('conversation:join', { conversationId: convAB.id }, () => resolve());
+      });
+
+      const waitForPinState = (socket: ClientSocket, pinned: boolean) =>
+        new Promise<any>((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(new Error(`Timed out waiting for chat:message:pin:updated pinned=${pinned}`)),
+            8000
+          );
+          const handler = (data: any) => {
+            if (!data || data.pinned !== pinned || data.messageId !== msg2.id) return;
+            clearTimeout(timer);
+            socket.off('chat:message:pin:updated', handler);
+            resolve(data);
+          };
+          socket.on('chat:message:pin:updated', handler);
+        });
+
+      const pinA = waitForPinState(clientSocketA, true);
+      const pinB = waitForPinState(clientSocketB, true);
+
+      const pinRes = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg2.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+
+      expect(pinRes.status).toBe(200);
+      expect(pinRes.body.data.message.id).toBe(msg2.id);
+      expect(pinRes.body.data.message.content).toBe('Sure, how about 6pm at Central Perk?');
+
+      const [eventA, eventB] = await Promise.all([pinA, pinB]);
+
+      for (const event of [eventA, eventB]) {
+        expect(event.conversationId).toBe(convAB.id);
+        expect(event.messageId).toBe(msg2.id);
+        expect(event.pinned).toBe(true);
+        expect(event.isPinned).toBe(true);
+        expect(event.pinnedBy).toBe(userA.id);
+        expect(event.message.id).toBe(msg2.id);
+        expect(event.message.content).toBe('Sure, how about 6pm at Central Perk?');
+        expect(event.message.isPinned).toBe(true);
+      }
+
+      const historyB = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenB}`);
+      const msg2ForB = historyB.body.data.messages.find((m: any) => m.id === msg2.id);
+      expect(msg2ForB.isPinned).toBe(true);
+
+      const unpinA = waitForPinState(clientSocketA, false);
+      const unpinB = waitForPinState(clientSocketB, false);
+
+      const unpinRes = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg2.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: false });
+      expect(unpinRes.status).toBe(200);
+
+      const [unpinEventA, unpinEventB] = await Promise.all([unpinA, unpinB]);
+      expect(unpinEventA.pinned).toBe(false);
+      expect(unpinEventA.messageId).toBe(msg2.id);
+      expect(unpinEventB.pinned).toBe(false);
+      expect(unpinEventB.message).toBeNull();
     });
 
     it('should support pin action over Socket.IO via chat:pin_message event', async () => {

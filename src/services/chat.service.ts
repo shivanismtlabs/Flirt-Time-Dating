@@ -4845,44 +4845,25 @@ export class ChatService {
 
       if (scope === 'conversation') {
         const otherPin = await ChatMessagePin.findOne({
-          where: { conversationId, messageId, userId: otherUserId },
+          where: { conversationId, messageId: canonicalMessageId, userId: otherUserId },
         });
         if (!otherPin) {
           try {
             await ChatMessagePin.create({
               conversationId,
-              messageId,
+              messageId: canonicalMessageId,
               userId: otherUserId,
               pinnedBy: currentUserId,
             });
           } catch { }
         }
       }
-
-      // Socket.IO emission to authorized participants according to pin scope
-      try {
-        const io = getSocketServer();
-        const payload = {
-          conversationId,
-          messageId,
-          isPinned: true,
-          pinnedBy: currentUserId,
-          pinnedAt: (pinnedAt instanceof Date ? pinnedAt.toISOString() : pinnedAt) || now.toISOString(),
-        };
-
-        if (scope === 'conversation') {
-          io.to(getUserRoomName(conversation.user1Id)).emit('chat:message_pinned' as any, payload);
-          io.to(getUserRoomName(conversation.user2Id)).emit('chat:message_pinned' as any, payload);
-        } else {
-          io.to(getUserRoomName(currentUserId)).emit('chat:message_pinned' as any, payload);
-        }
-      } catch { }
     } else {
       // Unpinning
       await ChatMessagePin.destroy({
         where: {
           conversationId,
-          messageId,
+          messageId: canonicalMessageId,
           userId: currentUserId,
         },
       });
@@ -4891,36 +4872,34 @@ export class ChatService {
         await ChatMessagePin.destroy({
           where: {
             conversationId,
-            messageId,
+            messageId: canonicalMessageId,
             userId: otherUserId,
           },
         });
       }
-
-      // Socket.IO emission to authorized participants according to pin scope
-      try {
-        const io = getSocketServer();
-        const payload = {
-          conversationId,
-          messageId,
-          isPinned: false,
-        };
-
-        if (scope === 'conversation') {
-          io.to(getUserRoomName(conversation.user1Id)).emit('chat:message_unpinned' as any, payload);
-          io.to(getUserRoomName(conversation.user2Id)).emit('chat:message_unpinned' as any, payload);
-        } else {
-          io.to(getUserRoomName(currentUserId)).emit('chat:message_unpinned' as any, payload);
-        }
-      } catch { }
     }
+
+    const messageSnapshot = await this.broadcastMessagePinUpdate({
+      conversation,
+      conversationId,
+      message,
+      actorId: currentUserId,
+      isPinned,
+      scope,
+      pinnedAt: isPinned
+        ? pinnedAt || now
+        : null,
+      pinnedBy: isPinned ? pinnedBy || currentUserId : null,
+      metadata: msgMeta,
+    });
 
     return {
       conversationId,
-      messageId,
+      messageId: canonicalMessageId,
       isPinned,
       pinnedAt,
       pinnedBy,
+      message: messageSnapshot,
     };
   }
 

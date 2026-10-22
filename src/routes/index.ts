@@ -68,8 +68,14 @@ router.all(
   validate(syncDeliveredMessagesSchema),
   syncDeliveredMessagesHandler
 );
-router.use('/chat', chatRoutes);
+router.use('/calls', videoCallRoutes);
+router.use('/call', videoCallRoutes);
 router.use('/calls/video', videoCallRoutes);
+router.use('/call/video', videoCallRoutes);
+router.use('/video-call', videoCallRoutes);
+router.use('/video-calls', videoCallRoutes);
+router.use('/videocall', videoCallRoutes);
+router.use('/videocalls', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);

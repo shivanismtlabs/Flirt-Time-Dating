@@ -105,6 +105,11 @@ export const registerChatSocketHandlers = (
         return;
       }
 
+      const replyToMessageId =
+        payload.replyToMessageId ||
+        payload.parentMessageId ||
+        payload.replyToId;
+
       const messageDto = await chatService.sendMessage(
         currentUserId,
         payload.conversationId,
@@ -112,6 +117,7 @@ export const registerChatSocketHandlers = (
           content,
           messageType: msgType,
           clientMessageId: payload.clientMessageId,
+          replyToMessageId,
           metadata: payload.metadata,
           images: payload.images,
           duration: payload.duration,
@@ -403,5 +409,177 @@ export const registerChatSocketHandlers = (
       }
     }
   });
+
+  // 7. Event: chat:edit_message & message:edit
+  const handleEditMessage = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'Payload must be an object',
+          });
+        }
+        return;
+      }
+
+      if (!payload.conversationId || !payload.messageId || typeof payload.content !== 'string') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId, messageId, and content are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.editMessage(
+        currentUserId,
+        payload.conversationId,
+        payload.messageId,
+        payload.content
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling chat:edit_message event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+        messageId: payload?.messageId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to edit message over socket';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('chat:edit_message', handleEditMessage);
+  socket.on('message:edit' as any, handleEditMessage);
+
+  // 8. Event: chat:reply_message & message:reply
+  const handleReplyMessage = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'Payload must be an object',
+          });
+        }
+        return;
+      }
+
+      const replyToMessageId =
+        payload.replyToMessageId ||
+        payload.parentMessageId ||
+        payload.replyToId ||
+        payload.messageId;
+
+      if (!payload.conversationId || !replyToMessageId) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and replyToMessageId are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.replyMessage(
+        currentUserId,
+        payload.conversationId,
+        replyToMessageId,
+        payload
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling chat:reply_message event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+        replyToMessageId: payload?.replyToMessageId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to reply to message over socket';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('chat:reply_message', handleReplyMessage);
+  socket.on('message:reply' as any, handleReplyMessage);
+
+  // 9. Event: chat:delete_message & message:delete
+  const handleDeleteMessage = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'Payload must be an object',
+          });
+        }
+        return;
+      }
+
+      if (
+        !payload.conversationId ||
+        !payload.messageId ||
+        (payload.deleteType !== 'me' && payload.deleteType !== 'everyone')
+      ) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId, messageId, and deleteType ("me" or "everyone") are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.deleteMessage(
+        currentUserId,
+        payload.conversationId,
+        payload.messageId,
+        payload.deleteType
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling chat:delete_message event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+        messageId: payload?.messageId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to delete message over socket';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('chat:delete_message', handleDeleteMessage);
+  socket.on('message:delete' as any, handleDeleteMessage);
 };
 

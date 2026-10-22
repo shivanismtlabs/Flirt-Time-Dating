@@ -462,3 +462,113 @@ export const deleteConversationHandler = async (req: AuthenticatedRequest, res: 
     return sendError(res, error.message || 'Failed to delete conversation', 500);
   }
 };
+
+/**
+ * 10. PATCH & PUT /api/v1/chats/:conversationId/messages/:messageId
+ * Edits a previously sent text message within the allowed 15-minute window.
+ */
+export const editMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const { content } = req.body;
+
+    const result = await chatService.editMessage(
+      currentUserId,
+      conversationId,
+      messageId,
+      content
+    );
+
+    return sendSuccess(res, 'Message edited successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to edit message', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+/**
+ * 11. POST /api/v1/chats/:conversationId/messages/:messageId/reply
+ * Sends a reply to an existing message in the conversation.
+ */
+export const replyMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const conversationId = req.params.conversationId as string;
+    const replyToMessageId =
+      req.params.messageId ||
+      req.body?.replyToMessageId ||
+      req.body?.parentMessageId ||
+      req.body?.replyToId;
+
+    if (!replyToMessageId) {
+      return sendError(res, 'Original message ID is required in URL or body', 400, 'VALIDATION_ERROR');
+    }
+
+    const messagePayload = {
+      ...req.body,
+      file: req.file,
+      files: req.files,
+      replyToMessageId,
+    };
+
+    const result = await chatService.replyMessage(
+      currentUserId,
+      conversationId,
+      replyToMessageId,
+      messagePayload
+    );
+
+    return sendSuccess(res, 'Reply sent successfully', result, 201);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to send reply', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+/**
+ * 12. DELETE /api/v1/chats/:conversationId/messages/:messageId
+ * Deletes an individual message for requesting user ('me') or recalls it for all participants ('everyone').
+ */
+export const deleteMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const conversationId = req.params.conversationId as string;
+    const messageId = req.params.messageId as string;
+    const rawDeleteType = req.body?.deleteType || req.query?.deleteType;
+    if (!rawDeleteType || (rawDeleteType !== 'me' && rawDeleteType !== 'everyone')) {
+      return sendError(res, 'deleteType must be either "me" or "everyone"', 400, 'VALIDATION_ERROR');
+    }
+    const deleteType = rawDeleteType as 'me' | 'everyone';
+
+    const result = await chatService.deleteMessage(currentUserId, conversationId, messageId, deleteType);
+    const message =
+      deleteType === 'everyone'
+        ? 'Message deleted for everyone successfully'
+        : 'Message deleted successfully';
+    return sendSuccess(res, message, result, 200);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to delete message', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+

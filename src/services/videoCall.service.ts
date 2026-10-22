@@ -23,7 +23,7 @@ import {
   emitVideoCallBusy,
   emitVideoCallMissed,
 } from '../realtime/socket.videoCall';
-import { InitiateVideoCallInput } from '../schemas/videoCall.schema';
+import { InitiateVideoCallInput, GetCallHistoryQuery } from '../schemas/videoCall.schema';
 import { env } from '../config/env';
 
 export class VideoCallServiceError extends Error {
@@ -42,8 +42,11 @@ export class VideoCallServiceError extends Error {
 export interface InitiateVideoCallResponseDTO {
   callId: string;
   channelName: string;
+  channel?: string;
   rtcToken: string;
+  token?: string;
   appId: string;
+  agoraAppId?: string;
   uid: number;
   callee: {
     id: string;
@@ -57,8 +60,11 @@ export interface InitiateVideoCallResponseDTO {
 export interface AcceptVideoCallResponseDTO {
   callId: string;
   channelName: string;
+  channel?: string;
   rtcToken: string;
+  token?: string;
   appId: string;
+  agoraAppId?: string;
   uid: number;
   status: string;
   startedAt: string;
@@ -78,8 +84,11 @@ export interface EndVideoCallResponseDTO {
 export interface ActiveVideoCallResponseDTO {
   callId: string;
   channelName: string;
+  channel?: string;
   rtcToken: string;
+  token?: string;
   appId: string;
+  agoraAppId?: string;
   uid: number;
   status: string;
   role: 'caller' | 'callee';
@@ -89,6 +98,33 @@ export interface ActiveVideoCallResponseDTO {
     avatarUrl: string | null;
   };
   startedAt: string | null;
+}
+
+export interface CallHistoryUserDTO {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface CallHistoryItemDTO {
+  id: string;
+  user: CallHistoryUserDTO;
+  callType: 'video' | 'audio';
+  direction: 'incoming' | 'outgoing' | 'missed';
+  status: string;
+  duration: number;
+  createdAt: string;
+}
+
+export interface CallHistoryResponseDTO {
+  calls: CallHistoryItemDTO[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasMore: boolean;
+  };
 }
 
 export class VideoCallService {
@@ -104,10 +140,11 @@ export class VideoCallService {
   }
 
   /**
-   * Cleans up stale ringing calls whose timeout has expired.
+   * Cleans up stale ringing calls whose timeout has expired and abandoned calls.
    */
   private async cleanupStaleRingingCalls(userId: string): Promise<void> {
     const now = new Date();
+    // 1. Mark expired ringing calls as missed
     await VideoCall.update(
       { status: 'missed' },
       {
@@ -115,6 +152,19 @@ export class VideoCallService {
           [Op.or]: [{ callerId: userId }, { calleeId: userId }],
           status: 'ringing',
           expiresAt: { [Op.lt]: now },
+        },
+      }
+    );
+
+    // 2. Mark abandoned calls (> 30 min in accepted state) as ended so user is never permanently stuck
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
+    await VideoCall.update(
+      { status: 'ended', endedAt: now },
+      {
+        where: {
+          [Op.or]: [{ callerId: userId }, { calleeId: userId }],
+          status: 'accepted',
+          startedAt: { [Op.lt]: thirtyMinutesAgo },
         },
       }
     );
@@ -128,7 +178,13 @@ export class VideoCallService {
     callerId: string,
     input: InitiateVideoCallInput
   ): Promise<InitiateVideoCallResponseDTO> {
-    const { calleeId, conversationId } = input;
+    const calleeId =
+      input.calleeId ||
+      (input as any).userId ||
+      (input as any).receiverId ||
+      (input as any).callee_id ||
+      (input as any).recipientId;
+    const conversationId = input.conversationId;
 
     // 1. Prevent self-call
     if (callerId === calleeId) {
@@ -273,6 +329,7 @@ export class VideoCallService {
     const expiresAt = new Date(Date.now() + ringingSeconds * 1000);
 
     // Create call record to obtain canonical call ID
+    const callType = (input as any)?.callType === 'audio' ? 'audio' : 'video';
     const call = await VideoCall.create({
       callerId,
       calleeId,
@@ -280,6 +337,7 @@ export class VideoCallService {
       channelName: 'pending', // replaced immediately with deterministic channel name
       callerUid,
       calleeUid,
+      callType,
       status: 'ringing',
       expiresAt,
     });
@@ -289,11 +347,13 @@ export class VideoCallService {
     await call.save();
 
     // 9. Generate Caller's Agora RTC token
+    // Using uid 0 creates a wildcard token so mobile clients that join with uid 0 (standard Flutter default)
+    // or with callerUid can both join successfully without token rejection.
     let rtcToken: string;
     try {
       rtcToken = agoraService.generateRtcToken({
         channelName,
-        uid: callerUid,
+        uid: 0,
       });
     } catch (tokenErr) {
       // If token generation fails (e.g. unconfigured Agora secrets), cleanup DB record & fail safely
@@ -321,8 +381,11 @@ export class VideoCallService {
     return {
       callId: call.id,
       channelName: call.channelName,
+      channel: call.channelName,
       rtcToken,
+      token: rtcToken,
       appId: agoraService.getAppId(),
+      agoraAppId: agoraService.getAppId(),
       uid: callerUid,
       callee: {
         id: callee.id,
@@ -410,10 +473,10 @@ export class VideoCallService {
 
     await call.reload();
 
-    // Generate Callee's Agora RTC token
+    // Generate Callee's Agora RTC token (wildcard uid 0 so mobile callee can join with 0 or calleeUid)
     const rtcToken = agoraService.generateRtcToken({
       channelName: call.channelName,
-      uid: call.calleeUid,
+      uid: 0,
     });
 
     // Notify caller through Socket.IO
@@ -428,8 +491,11 @@ export class VideoCallService {
     return {
       callId: call.id,
       channelName: call.channelName,
+      channel: call.channelName,
       rtcToken,
+      token: rtcToken,
       appId: agoraService.getAppId(),
+      agoraAppId: agoraService.getAppId(),
       uid: call.calleeUid,
       status: 'accepted',
       startedAt: call.startedAt!.toISOString(),
@@ -606,17 +672,20 @@ export class VideoCallService {
     const myUid = isCaller ? call.callerUid : call.calleeUid;
     const otherUser = isCaller ? call.callee : call.caller;
 
-    // Generate refreshed RTC token for participant
+    // Generate refreshed RTC token for participant (wildcard uid 0 for reliable connection)
     const rtcToken = agoraService.generateRtcToken({
       channelName: call.channelName,
-      uid: myUid,
+      uid: 0,
     });
 
     return {
       callId: call.id,
       channelName: call.channelName,
+      channel: call.channelName,
       rtcToken,
+      token: rtcToken,
       appId: agoraService.getAppId(),
+      agoraAppId: agoraService.getAppId(),
       uid: myUid,
       status: call.status,
       role: isCaller ? 'caller' : 'callee',
@@ -628,6 +697,222 @@ export class VideoCallService {
       startedAt: call.startedAt ? call.startedAt.toISOString() : null,
     };
   }
+
+  /**
+   * Helper to retrieve all user IDs currently blocked by or blocking the given user.
+   */
+  private async getBlockedUserIds(userId: string): Promise<string[]> {
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [{ userId }, { blockedUserId: userId }],
+      },
+      attributes: ['userId', 'blockedUserId'],
+      raw: true,
+    });
+
+    const blockedSet = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === userId) {
+        blockedSet.add(b.blockedUserId);
+      } else {
+        blockedSet.add(b.userId);
+      }
+    }
+    return Array.from(blockedSet);
+  }
+
+  /**
+   * 6. GET CALL HISTORY (Calls Tab)
+   * Returns compact call history matching the Calls screen design with no redundant/duplicate keys.
+   */
+  public async getCallHistory(
+    currentUserId: string,
+    query: GetCallHistoryQuery = {}
+  ): Promise<CallHistoryResponseDTO> {
+    const page = Math.max(1, parseInt(String(query?.page || 1), 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(String(query?.limit || 20), 10) || 20));
+    const offset = (page - 1) * limit;
+
+    const rawSearch = (query?.search || query?.query || query?.q || '').trim();
+    const callTypeFilter = query?.callType;
+
+    // Fetch blocked users to exclude from call history
+    const blockedUserIds = await this.getBlockedUserIds(currentUserId);
+
+    // If search is specified, find matching participant IDs
+    let participantIdFilter: string[] | null = null;
+    if (rawSearch) {
+      const dialect = sequelize.getDialect();
+      const likeOp = dialect === 'postgres' ? Op.iLike : Op.like;
+      const searchTerm = `%${rawSearch}%`;
+
+      const matchedUsers = await User.findAll({
+        where: {
+          [Op.or]: [
+            { fullName: { [likeOp]: searchTerm } },
+            { firstName: { [likeOp]: searchTerm } },
+            { lastName: { [likeOp]: searchTerm } },
+            { nickName: { [likeOp]: searchTerm } },
+            { username: { [likeOp]: searchTerm } },
+          ],
+        },
+        attributes: ['id'],
+        raw: true,
+      });
+
+      participantIdFilter = matchedUsers.map((u) => u.id);
+      if (participantIdFilter.length === 0) {
+        return {
+          calls: [],
+          pagination: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+            hasMore: false,
+          },
+        };
+      }
+    }
+
+    // Build WHERE clause
+    const andConditions: any[] = [];
+
+    // User must be caller or callee
+    if (participantIdFilter !== null) {
+      andConditions.push({
+        [Op.or]: [
+          {
+            callerId: currentUserId,
+            calleeId: { [Op.in]: participantIdFilter },
+          },
+          {
+            calleeId: currentUserId,
+            callerId: { [Op.in]: participantIdFilter },
+          },
+        ],
+      });
+    } else {
+      andConditions.push({
+        [Op.or]: [{ callerId: currentUserId }, { calleeId: currentUserId }],
+      });
+    }
+
+    // Exclude blocked users
+    if (blockedUserIds.length > 0) {
+      andConditions.push({
+        callerId: { [Op.notIn]: blockedUserIds },
+        calleeId: { [Op.notIn]: blockedUserIds },
+      });
+    }
+
+    // Filter by callType if specified
+    if (callTypeFilter) {
+      andConditions.push({ callType: callTypeFilter });
+    }
+
+    const where = { [Op.and]: andConditions };
+
+    const { count, rows } = await VideoCall.findAndCountAll({
+      where,
+      include: [
+        {
+          model: User,
+          as: 'caller',
+          attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture'],
+        },
+        {
+          model: User,
+          as: 'callee',
+          attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const calls: CallHistoryItemDTO[] = rows.map((call) => {
+      const isCaller = call.callerId === currentUserId;
+      const otherUser = isCaller ? call.callee : call.caller;
+      const otherUserId = isCaller ? call.calleeId : call.callerId;
+
+      // Calculate duration in seconds
+      let duration = 0;
+      if (call.status !== 'missed' && call.status !== 'rejected' && call.status !== 'failed') {
+        const start = call.acceptedAt || call.startedAt;
+        const end = call.endedAt;
+        if (start && end) {
+          duration = Math.max(0, Math.floor((new Date(end).getTime() - new Date(start).getTime()) / 1000));
+        }
+      }
+
+      // Resolve direction
+      let direction: 'incoming' | 'outgoing' | 'missed' = isCaller ? 'outgoing' : 'incoming';
+      if (!isCaller && call.status === 'missed') {
+        direction = 'missed';
+      }
+
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
+
+      return {
+        id: call.id,
+        user: {
+          id: otherUser ? otherUser.id : otherUserId,
+          name: otherUser ? resolveChatDisplayName(otherUser) : 'User',
+          avatarUrl: otherUser?.profilePicture ? formatMediaUrl(otherUser.profilePicture) : null,
+        },
+        callType,
+        direction,
+        status: call.status,
+        duration,
+        createdAt: call.createdAt ? new Date(call.createdAt).toISOString() : new Date().toISOString(),
+      };
+    });
+
+    const totalPages = Math.ceil(count / limit);
+
+    return {
+      calls,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages,
+        hasMore: page < totalPages,
+      },
+    };
+  }
+
+  /**
+   * 7. DELETE CALL LOG
+   * Deletes a call log entry for the authenticated participant.
+   */
+  public async deleteCall(
+    currentUserId: string,
+    callId: string
+  ): Promise<{ id: string }> {
+    const call = await VideoCall.findByPk(callId);
+    if (!call) {
+      throw new VideoCallServiceError('Call log not found', 404, 'CALL_NOT_FOUND');
+    }
+
+    if (call.callerId !== currentUserId && call.calleeId !== currentUserId) {
+      throw new VideoCallServiceError(
+        'You are not authorized to delete this call log',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    await call.destroy();
+
+    return {
+      id: callId,
+    };
+  }
 }
 
 export const videoCallService = new VideoCallService();
+export const callService = videoCallService;
+

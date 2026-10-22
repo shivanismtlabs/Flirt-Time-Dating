@@ -153,6 +153,26 @@ export interface ServerToClientEvents {
     messageId: string;
     isPinned: boolean;
   }) => void;
+
+  /**
+   * Emitted to authorized conversation participants when a message is edited.
+   */
+  'chat:message_edited': (data: any) => void;
+  'message:edited': (data: any) => void;
+
+  /**
+   * Emitted to authorized conversation participant(s) when an individual message is deleted.
+   */
+  'chat:message_deleted': (data: {
+    conversationId: string;
+    messageId: string;
+    deleteType: 'me' | 'everyone';
+  }) => void;
+  'message:deleted': (data: {
+    conversationId: string;
+    messageId: string;
+    deleteType: 'me' | 'everyone';
+  }) => void;
 }
 
 /**
@@ -169,6 +189,9 @@ export interface ClientToServerEvents {
       messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       clientMessageId?: string;
       clientMessageIds?: Record<string, string>;
+      replyToMessageId?: string;
+      parentMessageId?: string;
+      replyToId?: string;
       metadata?: any;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
@@ -184,6 +207,9 @@ export interface ClientToServerEvents {
       messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
       clientMessageId?: string;
       clientMessageIds?: Record<string, string>;
+      replyToMessageId?: string;
+      parentMessageId?: string;
+      replyToId?: string;
       metadata?: any;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
@@ -238,6 +264,60 @@ export interface ClientToServerEvents {
 
   'conversation:delete': (
     data: { conversationId: string; deleteType: 'me' | 'everyone' },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:edit_message': (
+    data: { conversationId: string; messageId: string; content: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:edit': (
+    data: { conversationId: string; messageId: string; content: string },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:reply_message': (
+    data: {
+      conversationId: string;
+      replyToMessageId?: string;
+      parentMessageId?: string;
+      content: string;
+      messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
+      clientMessageId?: string;
+      metadata?: any;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:reply': (
+    data: {
+      conversationId: string;
+      replyToMessageId?: string;
+      parentMessageId?: string;
+      content: string;
+      messageType?: 'text' | 'audio' | 'image' | 'location' | 'contact' | 'moment_reply' | 'moment_gift';
+      clientMessageId?: string;
+      metadata?: any;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:delete_message': (
+    data: {
+      conversationId: string;
+      messageId: string;
+      deleteType: 'me' | 'everyone';
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:delete': (
+    data: {
+      conversationId: string;
+      messageId: string;
+      deleteType: 'me' | 'everyone';
+    },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 }

@@ -1,6 +1,8 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
+export type CallType = 'video' | 'audio';
+
 export type VideoCallStatus =
   | 'ringing'
   | 'accepted'
@@ -27,6 +29,7 @@ export interface VideoCallAttributes {
   callerUid: number;
   calleeUid: number;
   status: VideoCallStatus;
+  callType?: CallType;
   startedAt?: Date | null;
   acceptedAt?: Date | null;
   endedAt?: Date | null;
@@ -42,6 +45,7 @@ export interface VideoCallCreationAttributes
     | 'id'
     | 'conversationId'
     | 'status'
+    | 'callType'
     | 'startedAt'
     | 'acceptedAt'
     | 'endedAt'
@@ -62,6 +66,7 @@ export class VideoCall
   declare public callerUid: number;
   declare public calleeUid: number;
   declare public status: VideoCallStatus;
+  declare public callType: CallType;
   declare public startedAt: Date | null;
   declare public acceptedAt: Date | null;
   declare public endedAt: Date | null;
@@ -126,6 +131,14 @@ VideoCall.init(
     calleeUid: {
       type: DataTypes.INTEGER,
       allowNull: false,
+    },
+    callType: {
+      type: DataTypes.STRING(20),
+      allowNull: false,
+      defaultValue: 'video',
+      validate: {
+        isIn: [['video', 'audio']],
+      },
     },
     status: {
       type: DataTypes.STRING(30),

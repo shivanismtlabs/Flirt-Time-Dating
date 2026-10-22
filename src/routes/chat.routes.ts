@@ -20,6 +20,9 @@ import {
   startConversationHandler,
   archiveConversationHandler,
   deleteConversationHandler,
+  editMessageHandler,
+  replyMessageHandler,
+  deleteMessageHandler,
 } from '../controllers/chat.controller';
 import {
   getChatListSchema,
@@ -37,6 +40,9 @@ import {
   startConversationSchema,
   archiveConversationSchema,
   deleteConversationSchema,
+  deleteMessageSchema,
+  editMessageSchema,
+  replyMessageSchema,
 } from '../schemas/chat.schema';
 
 const router = Router();
@@ -103,6 +109,21 @@ router.patch('/:conversationId/messages/:messageId/pin', validate(pinMessageSche
 // 8. POST /api/v1/chats/:conversationId/messages - Send message (text, audio, image)
 // Supports JSON payload, base64 payload, and direct multipart/form-data media file upload to AWS S3
 router.post('/:conversationId/messages', handleUploadChatMedia, validate(sendMessageSchema), sendMessageHandler);
+
+// 8b. PATCH & PUT /api/v1/chats/:conversationId/messages/:messageId - Edit message
+router.patch('/:conversationId/messages/:messageId', validate(editMessageSchema), editMessageHandler);
+router.put('/:conversationId/messages/:messageId', validate(editMessageSchema), editMessageHandler);
+
+// 8c. POST /api/v1/chats/:conversationId/messages/:messageId/reply - Reply to message
+router.post(
+  '/:conversationId/messages/:messageId/reply',
+  handleUploadChatMedia,
+  validate(replyMessageSchema),
+  replyMessageHandler
+);
+
+// 8d. DELETE /api/v1/chats/:conversationId/messages/:messageId - Delete for Me or Delete for Everyone
+router.delete('/:conversationId/messages/:messageId', validate(deleteMessageSchema), deleteMessageHandler);
 
 // 9. POST & PATCH /api/v1/chats/:conversationId/read - Mark conversation messages as read
 router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);

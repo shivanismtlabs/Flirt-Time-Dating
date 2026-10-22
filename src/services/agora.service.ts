@@ -117,8 +117,14 @@ export class AgoraService {
       throw new AgoraServiceError('Channel name is required for RTC token generation', 400, 'INVALID_CHANNEL_NAME');
     }
 
-    if (typeof params.uid !== 'number' || params.uid <= 0 || !Number.isInteger(params.uid)) {
-      throw new AgoraServiceError('A valid positive integer numeric UID is required for RTC token generation', 400, 'INVALID_UID');
+    const uid = (typeof params.uid === 'number' && Number.isInteger(params.uid) && params.uid >= 0)
+      ? params.uid
+      : 0;
+
+    if (params.uid !== undefined && params.uid !== null) {
+      if (typeof params.uid !== 'number' || params.uid < 0 || !Number.isInteger(params.uid)) {
+        throw new AgoraServiceError('A valid positive integer numeric UID is required for RTC token generation', 400, 'INVALID_UID');
+      }
     }
 
     const role = params.role !== undefined ? params.role : RtcRole.PUBLISHER;
@@ -130,7 +136,7 @@ export class AgoraService {
         appId,
         appCertificate,
         params.channelName,
-        params.uid,
+        uid,
         role,
         tokenExpire,
         privilegeExpire

@@ -42,7 +42,7 @@ export const acceptVideoCallHandler = async (
 ) => {
   try {
     const calleeId = req.user!.id;
-    const callId = req.params.callId as string;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
     const result = await videoCallService.acceptCall(calleeId, callId);
     return sendSuccess(res, 'Video call accepted successfully', result, 200);
   } catch (error: any) {
@@ -63,7 +63,7 @@ export const rejectVideoCallHandler = async (
 ) => {
   try {
     const calleeId = req.user!.id;
-    const callId = req.params.callId as string;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
     const result = await videoCallService.rejectCall(calleeId, callId);
     return sendSuccess(res, 'Video call rejected successfully', result, 200);
   } catch (error: any) {
@@ -84,7 +84,7 @@ export const endVideoCallHandler = async (
 ) => {
   try {
     const userId = req.user!.id;
-    const callId = req.params.callId as string;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
     const result = await videoCallService.endCall(userId, callId);
     return sendSuccess(res, 'Video call ended successfully', result, 200);
   } catch (error: any) {
@@ -117,3 +117,45 @@ export const getActiveVideoCallHandler = async (
     return sendError(res, error.message || 'Failed to retrieve active call', 500);
   }
 };
+
+/**
+ * 6. GET /api/v1/calls (Calls Tab / Call History)
+ * Returns compact call history matching the Calls screen design with no redundant/duplicate keys.
+ */
+export const getCallHistoryHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const currentUserId = req.user!.id;
+    const result = await videoCallService.getCallHistory(currentUserId, req.query as any);
+    return sendSuccess(res, 'Call history fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof VideoCallServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to fetch call history', 500);
+  }
+};
+
+/**
+ * 7. DELETE /api/v1/calls/:callId
+ * Deletes a call log entry for the authenticated participant.
+ */
+export const deleteCallHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const currentUserId = req.user!.id;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
+    const result = await videoCallService.deleteCall(currentUserId, callId);
+    return sendSuccess(res, 'Call log deleted successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof VideoCallServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to delete call log', 500);
+  }
+};
+

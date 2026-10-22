@@ -28,7 +28,12 @@ import {
   SendMessageInput,
   SendMultiMessageInput,
   DirectSendMessageInput,
+  EditMessageInput,
+  ReplyMessageInput,
 } from '../schemas/chat.schema';
+
+export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes window for editing sent messages
+export const MESSAGE_DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours window for Delete for Everyone
 import { env } from '../config/env';
 import { notificationService } from './notification.service';
 
@@ -117,6 +122,14 @@ export interface ChatMessageSenderDTO {
   profileImageUrl: string | null;
 }
 
+export interface ChatMessageReplyRefDTO {
+  id: string;
+  senderId: string;
+  senderName: string;
+  content: string;
+  messageType: string;
+}
+
 export interface ChatMessageDTO {
   id: string;
   conversationId: string;
@@ -136,6 +149,10 @@ export interface ChatMessageDTO {
   isPinned?: boolean;
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
+  isEdited?: boolean;
+  editedAt?: Date | string | null;
+  replyToMessageId?: string | null;
+  replyTo?: ChatMessageReplyRefDTO | null;
   sender?: ChatMessageSenderDTO;
   imageUrl?: string;
   thumbnailUrl?: string;
@@ -439,9 +456,9 @@ export class ChatService {
 
     const conversationIds = validConversations.map((c) => c.id);
 
-    // 6. Compute unread message counts considering per-user cleared timestamps
+    // 6. Compute unread message counts considering per-user cleared timestamps and deleted messages
     const unreadRecords = await ChatMessage.findAll({
-      attributes: ['conversationId', 'createdAt'],
+      attributes: ['conversationId', 'createdAt', 'metadata'],
       where: {
         conversationId: { [Op.in]: conversationIds },
         recipientId: currentUserId,
@@ -455,6 +472,13 @@ export class ChatService {
       const state = userStateMap.get(record.conversationId);
       if (state?.clearedAt && new Date(record.createdAt) <= new Date(state.clearedAt)) {
         continue;
+      }
+      if (record.metadata) {
+        try {
+          const meta = JSON.parse(record.metadata);
+          if (meta.isDeletedForEveryone || meta.isDeleted) continue;
+          if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(currentUserId)) continue;
+        } catch {}
       }
       unreadMap.set(record.conversationId, (unreadMap.get(record.conversationId) || 0) + 1);
     }
@@ -802,6 +826,20 @@ export class ChatService {
       whereClause.id = { [Op.in]: pinnedMessageIds };
     }
 
+    // Exclude messages deleted for everyone or deleted for requesting user
+    whereClause[Op.and] = whereClause[Op.and] || [];
+    whereClause[Op.and].push({
+      [Op.or]: [
+        { metadata: null },
+        {
+          [Op.and]: [
+            { metadata: { [Op.notLike]: '%"isDeletedForEveryone":true%' } },
+            { metadata: { [Op.notLike]: `%"deletedForUserIds":%${currentUserId}%` } },
+          ],
+        },
+      ],
+    });
+
     const { count, rows } = await ChatMessage.findAndCountAll({
       where: whereClause,
       order: [
@@ -838,8 +876,19 @@ export class ChatService {
       });
     }
 
+    // Safety filter to exclude any deleted messages
+    const visibleRows = rows.filter((msg) => {
+      if (!msg.metadata) return true;
+      try {
+        const meta = JSON.parse(msg.metadata);
+        if (meta.isDeletedForEveryone || meta.isDeleted) return false;
+        if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(currentUserId)) return false;
+      } catch {}
+      return true;
+    });
+
     // Batch resolve pinned status for returned messages
-    const messageIds = rows.map((r) => r.id);
+    const messageIds = visibleRows.map((r) => r.id);
     let pinsMap = new Map<string, any>();
     if (messageIds.length > 0) {
       const pinRows = await ChatMessagePin.findAll({
@@ -854,7 +903,7 @@ export class ChatService {
     }
 
     // Return in chronological order (oldest to newest) for smooth chat stream rendering
-    const chronologicalMessages: ChatMessageDTO[] = [...rows].reverse().map((msg) => {
+    const chronologicalMessages: ChatMessageDTO[] = [...visibleRows].reverse().map((msg) => {
       let parsedMetadata: any = null;
       if (msg.metadata) {
         try {
@@ -940,6 +989,10 @@ export class ChatService {
         isPinned: !!pinInfo,
         pinnedAt: pinInfo?.createdAt || null,
         pinnedBy: pinInfo?.pinnedBy || null,
+        isEdited: !!parsedMetadata?.isEdited,
+        editedAt: parsedMetadata?.editedAt || null,
+        replyToMessageId: parsedMetadata?.replyToMessageId || null,
+        replyTo: parsedMetadata?.replyTo || null,
         sender: senderMap.get(msg.senderId) || {
           id: msg.senderId,
           displayName: msg.senderId === currentUserId ? 'You' : 'Participant',
@@ -1020,6 +1073,66 @@ export class ChatService {
       );
     }
 
+    // Idempotent retry / deduplication check by clientMessageId
+    if (data.clientMessageId) {
+      const existingMsg = await ChatMessage.findOne({
+        where: {
+          conversationId,
+          senderId,
+          metadata: {
+            [Op.like]: `%"clientMessageId":"${data.clientMessageId}"%`,
+          },
+        },
+      });
+
+      if (existingMsg) {
+        let existingMeta: any = null;
+        if (existingMsg.metadata) {
+          try {
+            existingMeta = JSON.parse(existingMsg.metadata);
+          } catch {
+            existingMeta = existingMsg.metadata;
+          }
+        }
+
+        const senderUser = await User.findByPk(senderId, {
+          attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+        });
+
+        return {
+          id: existingMsg.id,
+          conversationId: existingMsg.conversationId,
+          senderId: existingMsg.senderId,
+          recipientId: existingMsg.recipientId,
+          content: existingMsg.content,
+          messageType: existingMsg.messageType as any,
+          metadata: existingMeta,
+          status: existingMsg.isRead ? 'read' : existingMsg.isDelivered ? 'delivered' : 'sent',
+          isDelivered: !!existingMsg.isDelivered,
+          deliveredAt: existingMsg.deliveredAt,
+          isRead: !!existingMsg.isRead,
+          readAt: existingMsg.readAt,
+          sentAt: existingMsg.createdAt,
+          createdAt: existingMsg.createdAt,
+          isMine: true,
+          isPinned: false,
+          pinnedAt: null,
+          pinnedBy: null,
+          isEdited: !!existingMeta?.isEdited,
+          editedAt: existingMeta?.editedAt || null,
+          replyToMessageId: existingMeta?.replyToMessageId || null,
+          replyTo: existingMeta?.replyTo || null,
+          sender: senderUser
+            ? {
+                id: senderUser.id,
+                displayName: resolveChatDisplayName(senderUser),
+                profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+              }
+            : undefined,
+        };
+      }
+    }
+
     // Prepare metadata payload and parsed object
     const metadataObj: Record<string, any> = {};
     if (data.clientMessageId) {
@@ -1038,6 +1151,85 @@ export class ChatService {
           // If not JSON, leave as is
         }
       }
+    }
+
+    // Validate and link Reply Reference if replyToMessageId is supplied
+    const targetReplyMessageId =
+      data.replyToMessageId ||
+      (data as any).parentMessageId ||
+      (data as any).replyToId;
+
+    if (targetReplyMessageId) {
+      const parentMessage = await ChatMessage.findByPk(targetReplyMessageId);
+      if (!parentMessage) {
+        throw new ChatServiceError('Original message not found', 404, 'MESSAGE_NOT_FOUND');
+      }
+
+      if (parentMessage.conversationId !== conversationId) {
+        throw new ChatServiceError(
+          'Original message does not belong to this conversation',
+          400,
+          'INVALID_CONVERSATION'
+        );
+      }
+
+      // Check if user has cleared history past parent message
+      const senderUserState = await ConversationUserState.findOne({
+        where: { conversationId, userId: senderId },
+        attributes: ['clearedAt', 'isDeleted'],
+      });
+
+      if (senderUserState?.clearedAt && parentMessage.createdAt <= senderUserState.clearedAt) {
+        throw new ChatServiceError('Cannot reply to a deleted message', 400, 'MESSAGE_DELETED');
+      }
+
+      let parentMeta: any = {};
+      if (parentMessage.metadata) {
+        try {
+          parentMeta = JSON.parse(parentMessage.metadata);
+        } catch {
+          parentMeta = {};
+        }
+      }
+
+      if (
+        parentMeta.isDeleted ||
+        parentMeta.recalled ||
+        parentMeta.isDeletedForEveryone ||
+        (Array.isArray(parentMeta.deletedForUserIds) && parentMeta.deletedForUserIds.includes(senderId))
+      ) {
+        throw new ChatServiceError('Cannot reply to a deleted or recalled message', 400, 'MESSAGE_DELETED');
+      }
+
+      const parentSender = await User.findByPk(parentMessage.senderId, {
+        attributes: ['id', 'username', 'firstName', 'lastName', 'fullName'],
+      });
+
+      const parentSenderName = parentSender ? resolveChatDisplayName(parentSender) : 'Participant';
+
+      let parentPreview = parentMessage.content || '';
+      if (parentMessage.messageType === 'image') {
+        parentPreview = 'Photo';
+      } else if (parentMessage.messageType === 'audio') {
+        parentPreview = 'Voice message';
+      } else if (parentMessage.messageType === 'location') {
+        parentPreview = 'Location';
+      } else if (parentMessage.messageType === 'contact') {
+        parentPreview = 'Contact';
+      } else if (parentPreview.length > 200) {
+        parentPreview = parentPreview.substring(0, 200) + '...';
+      }
+
+      const replyToRef: ChatMessageReplyRefDTO = {
+        id: parentMessage.id,
+        senderId: parentMessage.senderId,
+        senderName: parentSenderName,
+        content: parentPreview,
+        messageType: parentMessage.messageType,
+      };
+
+      metadataObj.replyToMessageId = parentMessage.id;
+      metadataObj.replyTo = replyToRef;
     }
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
@@ -1622,6 +1814,10 @@ export class ChatService {
       isPinned: false,
       pinnedAt: null,
       pinnedBy: null,
+      isEdited: !!parsedMeta?.isEdited,
+      editedAt: parsedMeta?.editedAt || null,
+      replyToMessageId: parsedMeta?.replyToMessageId || null,
+      replyTo: parsedMeta?.replyTo || null,
       sender: senderUser
         ? {
           id: senderUser.id,
@@ -2925,7 +3121,22 @@ export class ChatService {
       where.createdAt = { [Op.gt]: userState.clearedAt };
     }
 
-    return await ChatMessage.count({ where });
+    const unreadMessages = await ChatMessage.findAll({
+      where,
+      attributes: ['id', 'metadata'],
+    });
+
+    const validUnread = unreadMessages.filter((m) => {
+      if (!m.metadata) return true;
+      try {
+        const meta = JSON.parse(m.metadata);
+        if (meta.isDeletedForEveryone || meta.isDeleted) return false;
+        if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(userId)) return false;
+      } catch {}
+      return true;
+    });
+
+    return validUnread.length;
   }
 
   /**
@@ -2974,7 +3185,7 @@ export class ChatService {
     }
 
     const unreadRecords = await ChatMessage.findAll({
-      attributes: ['conversationId', 'createdAt'],
+      attributes: ['conversationId', 'createdAt', 'metadata'],
       where: {
         conversationId: { [Op.in]: conversationIds },
         recipientId: userId,
@@ -2988,6 +3199,13 @@ export class ChatService {
       const state = stateMap.get(record.conversationId);
       if (state?.clearedAt && new Date(record.createdAt) <= new Date(state.clearedAt)) {
         continue;
+      }
+      if (record.metadata) {
+        try {
+          const meta = JSON.parse(record.metadata);
+          if (meta.isDeletedForEveryone || meta.isDeleted) continue;
+          if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(userId)) continue;
+        } catch {}
       }
       totalUnread++;
     }
@@ -3149,6 +3367,24 @@ export class ChatService {
 
     // If message was created prior to user's history deletion, it is inaccessible to them
     if (userState?.clearedAt && new Date(message.createdAt) <= new Date(userState.clearedAt)) {
+      throw new ChatServiceError('Message not found in this conversation', 404);
+    }
+
+    let msgMeta: any = null;
+    if (message.metadata) {
+      try {
+        msgMeta = JSON.parse(message.metadata);
+      } catch {
+        msgMeta = null;
+      }
+    }
+
+    if (
+      msgMeta &&
+      (msgMeta.isDeletedForEveryone ||
+        msgMeta.isDeleted ||
+        (Array.isArray(msgMeta.deletedForUserIds) && msgMeta.deletedForUserIds.includes(currentUserId)))
+    ) {
       throw new ChatServiceError('Message not found in this conversation', 404);
     }
 
@@ -3429,6 +3665,14 @@ export class ChatService {
         }
       }
 
+      if (
+        parsedMetadata?.isDeletedForEveryone ||
+        parsedMetadata?.isDeleted ||
+        (Array.isArray(parsedMetadata?.deletedForUserIds) && parsedMetadata.deletedForUserIds.includes(currentUserId))
+      ) {
+        continue;
+      }
+
       if (msg.messageType === 'image' && msg.content) {
         if (!parsedMetadata || typeof parsedMetadata !== 'object') {
           parsedMetadata = {};
@@ -3469,6 +3713,10 @@ export class ChatService {
         isPinned: true,
         pinnedAt: pin.createdAt,
         pinnedBy: pin.pinnedBy,
+        isEdited: !!parsedMetadata?.isEdited,
+        editedAt: parsedMetadata?.editedAt || null,
+        replyToMessageId: parsedMetadata?.replyToMessageId || null,
+        replyTo: parsedMetadata?.replyTo || null,
         sender: userSenderMap.get(msg.senderId) || {
           id: msg.senderId,
           displayName: msg.senderId === currentUserId ? 'You' : 'Participant',
@@ -3742,11 +3990,21 @@ export class ChatService {
     const rows = await ChatMessage.findAll({
       where: whereClause,
       order: [['createdAt', 'DESC']],
-      limit: limit + 1,
+      limit: (limit + 1) * 2,
     });
 
-    const hasMore = rows.length > limit;
-    const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
+    const visibleRows = rows.filter((m) => {
+      if (!m.metadata) return true;
+      try {
+        const meta = JSON.parse(m.metadata);
+        if (meta.isDeletedForEveryone || meta.isDeleted) return false;
+        if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(userId)) return false;
+      } catch {}
+      return true;
+    });
+
+    const hasMore = visibleRows.length > limit;
+    const itemsToReturn = hasMore ? visibleRows.slice(0, limit) : visibleRows;
 
     await ChatMessage.update(
       { isRead: true },
@@ -4021,6 +4279,488 @@ return {
   conversationId,
   deleteType: 'everyone',
 };
+  }
+
+  /**
+   * 10. EDIT MESSAGE
+   * Allows original sender to edit their text message within the allowed edit window (15 minutes).
+   * Ensures IDOR protection, membership validation, and concurrent transaction safety.
+   */
+  public async editMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    newContent: string
+  ): Promise<ChatMessageDTO> {
+    if (!newContent || typeof newContent !== 'string' || newContent.trim().length === 0) {
+      throw new ChatServiceError('Message content cannot be empty', 400, 'VALIDATION_ERROR');
+    }
+
+    if (newContent.length > 5000) {
+      throw new ChatServiceError('Message content cannot exceed 5000 characters', 400, 'VALIDATION_ERROR');
+    }
+
+    const trimmedContent = newContent.trim();
+
+    const conversation = await Conversation.findByPk(conversationId);
+    if (!conversation || conversation.isDeletedForEveryone) {
+      throw new ChatServiceError('Conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
+    }
+
+    const normUserId = String(userId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normUserId && normUser2Id !== normUserId) {
+      throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
+    }
+
+    const recipientId = getOtherParticipantId(conversation, userId);
+
+    const message = await ChatMessage.findByPk(messageId);
+    if (!message) {
+      throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
+    }
+
+    if (message.conversationId !== conversationId) {
+      throw new ChatServiceError('Message does not belong to this conversation', 400, 'INVALID_CONVERSATION');
+    }
+
+    if (message.senderId !== userId) {
+      throw new ChatServiceError('You can only edit your own messages', 403, 'FORBIDDEN');
+    }
+
+    // Check user deletion cutoff (Delete for Me)
+    const userState = await ConversationUserState.findOne({
+      where: { conversationId, userId },
+      attributes: ['clearedAt', 'isDeleted'],
+    });
+
+    if (userState?.clearedAt && message.createdAt <= userState.clearedAt) {
+      throw new ChatServiceError('Message not found or has been deleted', 404, 'MESSAGE_NOT_FOUND');
+    }
+
+    // Only text messages can be edited (prevent editing audio, image, location, contact, system, etc.)
+    if (message.messageType !== 'text') {
+      throw new ChatServiceError('Only text messages can be edited', 400, 'UNSUPPORTED_MESSAGE_TYPE');
+    }
+
+    let parsedMeta: Record<string, any> = {};
+    if (message.metadata) {
+      try {
+        parsedMeta = JSON.parse(message.metadata);
+      } catch {
+        parsedMeta = {};
+      }
+    }
+
+    if (
+      parsedMeta.isDeleted ||
+      parsedMeta.recalled ||
+      parsedMeta.isDeletedForEveryone ||
+      (Array.isArray(parsedMeta.deletedForUserIds) && parsedMeta.deletedForUserIds.includes(userId))
+    ) {
+      throw new ChatServiceError('Cannot edit a deleted or recalled message', 400, 'MESSAGE_DELETED');
+    }
+
+    // Check edit window (15 minutes)
+    const messageAge = Date.now() - new Date(message.createdAt).getTime();
+    if (messageAge > MESSAGE_EDIT_WINDOW_MS) {
+      throw new ChatServiceError(
+        'Message edit window has expired (15 minutes limit)',
+        400,
+        'EDIT_WINDOW_EXPIRED'
+      );
+    }
+
+    const now = new Date();
+    parsedMeta.isEdited = true;
+    parsedMeta.editedAt = now.toISOString();
+
+    // Atomic transaction for safe concurrent update with retry for lock contention
+    let attempts = 0;
+    const maxAttempts = 4;
+    while (attempts < maxAttempts) {
+      attempts++;
+      const t = await sequelize.transaction();
+      try {
+        const lockedMessage = await ChatMessage.findByPk(messageId, {
+          transaction: t,
+          lock: sequelize.getDialect() === 'postgres' ? t.LOCK.UPDATE : undefined,
+        });
+
+        if (!lockedMessage) {
+          throw new ChatServiceError('Message not found', 404);
+        }
+
+        let currentMeta: Record<string, any> = {};
+        if (lockedMessage.metadata) {
+          try {
+            currentMeta = JSON.parse(lockedMessage.metadata);
+          } catch {
+            currentMeta = {};
+          }
+        }
+        currentMeta.isEdited = true;
+        currentMeta.editedAt = now.toISOString();
+
+        lockedMessage.content = trimmedContent;
+        lockedMessage.metadata = JSON.stringify(currentMeta);
+        await lockedMessage.save({ transaction: t });
+
+        // Update conversation lastMessage preview if this message is the latest message
+        if (
+          conversation.lastMessageAt &&
+          Math.abs(new Date(conversation.lastMessageAt).getTime() - new Date(lockedMessage.createdAt).getTime()) < 3000
+        ) {
+          conversation.lastMessage = trimmedContent;
+          await conversation.save({ transaction: t });
+        }
+
+        await t.commit();
+        break;
+      } catch (err: any) {
+        await t.rollback();
+        const isLockContention =
+          (err?.name === 'SequelizeDatabaseError' || err?.name === 'SequelizeTimeoutError') &&
+          (err.message?.includes('SQLITE_BUSY') || err.message?.includes('locked') || err.message?.includes('deadlock'));
+        if (isLockContention && attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 50 * attempts));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    // Build ChatMessageDTO
+    const senderUser = await User.findByPk(userId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+    });
+
+    const pinRecord = await ChatMessagePin.findOne({
+      where: { conversationId, messageId, userId },
+    });
+
+    const updatedDto: ChatMessageDTO = {
+      id: message.id,
+      conversationId: message.conversationId,
+      senderId: message.senderId,
+      recipientId,
+      content: trimmedContent,
+      messageType: 'text',
+      metadata: parsedMeta,
+      status: message.isRead ? 'read' : message.isDelivered ? 'delivered' : 'sent',
+      isDelivered: !!message.isDelivered,
+      deliveredAt: message.deliveredAt || null,
+      isRead: !!message.isRead,
+      readAt: message.readAt || null,
+      sentAt: message.createdAt,
+      createdAt: message.createdAt,
+      isMine: true,
+      isPinned: !!pinRecord,
+      pinnedAt: pinRecord?.createdAt || null,
+      pinnedBy: pinRecord?.pinnedBy || null,
+      isEdited: true,
+      editedAt: now.toISOString(),
+      replyToMessageId: parsedMeta.replyToMessageId || null,
+      replyTo: parsedMeta.replyTo || null,
+      sender: senderUser
+        ? {
+            id: senderUser.id,
+            displayName: resolveChatDisplayName(senderUser),
+            profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+          }
+        : undefined,
+    };
+
+    // Real-time broadcast to both participants
+    try {
+      const io = getSocketServer();
+      const recipientRoom = getUserRoomName(recipientId);
+      const senderRoom = getUserRoomName(userId);
+
+      const recipientDto: ChatMessageDTO = {
+        ...updatedDto,
+        isMine: false,
+      };
+
+      io.to(recipientRoom).emit('chat:message_edited' as any, recipientDto);
+      io.to(recipientRoom).emit('message:edited' as any, recipientDto);
+
+      io.to(senderRoom).emit('chat:message_edited' as any, updatedDto);
+      io.to(senderRoom).emit('message:edited' as any, updatedDto);
+    } catch {}
+
+    return updatedDto;
+  }
+
+  /**
+   * 11. REPLY MESSAGE
+   * Validates parent message, attaches minimal parent reference, persists reply, and emits real-time event.
+   */
+  public async replyMessage(
+    senderId: string,
+    conversationId: string,
+    replyToMessageId: string,
+    data: any
+  ): Promise<ChatMessageDTO> {
+    return this.sendMessage(senderId, conversationId, {
+      ...data,
+      replyToMessageId,
+    });
+  }
+
+  /**
+   * 12. DELETE CONVERSATION MESSAGE (Delete for Me and Delete for Everyone)
+   * Deletes an individual message for requesting user ('me') or recalls it for all participants ('everyone').
+   * Validates JWT context, membership, message-conversation consistency, ownership, deletion window,
+   * unpins message, cleans up attachments, updates lastMessage preview, and emits real-time events.
+   */
+  public async deleteMessage(
+    userId: string,
+    conversationId: string,
+    messageId: string,
+    deleteType: 'me' | 'everyone'
+  ): Promise<{
+    conversationId: string;
+    messageId: string;
+    deleteType: 'me' | 'everyone';
+  }> {
+    if (!deleteType || (deleteType !== 'me' && deleteType !== 'everyone')) {
+      throw new ChatServiceError('deleteType must be either "me" or "everyone"', 400, 'VALIDATION_ERROR');
+    }
+
+    const conversation = await Conversation.findByPk(conversationId, {
+      attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone', 'lastMessage', 'lastMessageAt'],
+    });
+
+    if (!conversation || conversation.isDeletedForEveryone) {
+      throw new ChatServiceError('Conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
+    }
+
+    const normUserId = String(userId || '').trim().toLowerCase();
+    const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
+    const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+
+    if (normUser1Id !== normUserId && normUser2Id !== normUserId) {
+      throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
+    }
+
+    const message = await ChatMessage.findByPk(messageId);
+    if (!message) {
+      throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
+    }
+
+    if (message.conversationId !== conversationId) {
+      throw new ChatServiceError('Message does not belong to this conversation', 400, 'INVALID_CONVERSATION');
+    }
+
+    // Check user state for history cutoff
+    const userState = await ConversationUserState.findOne({
+      where: { conversationId, userId },
+      attributes: ['clearedAt', 'isDeleted'],
+    });
+
+    if (userState?.clearedAt && message.createdAt <= userState.clearedAt) {
+      if (deleteType === 'me') {
+        return { conversationId, messageId, deleteType: 'me' };
+      }
+      throw new ChatServiceError('Message not found or has been deleted', 404, 'MESSAGE_NOT_FOUND');
+    }
+
+    // Delete for Everyone validation
+    if (deleteType === 'everyone') {
+      if (message.senderId !== userId) {
+        throw new ChatServiceError('You can only delete your own messages for everyone', 403, 'FORBIDDEN');
+      }
+
+      const messageAge = Date.now() - new Date(message.createdAt).getTime();
+      if (messageAge > MESSAGE_DELETE_FOR_EVERYONE_WINDOW_MS) {
+        throw new ChatServiceError(
+          'Message deletion window for everyone has expired (24 hours limit)',
+          400,
+          'DELETE_WINDOW_EXPIRED'
+        );
+      }
+    }
+
+    // Pre-check for idempotency before acquiring transaction
+    let initialMeta: Record<string, any> = {};
+    if (message.metadata) {
+      try {
+        initialMeta = JSON.parse(message.metadata);
+      } catch {
+        initialMeta = {};
+      }
+    }
+
+    if (deleteType === 'everyone') {
+      if (initialMeta.isDeletedForEveryone) {
+        return { conversationId, messageId, deleteType: 'everyone' };
+      }
+    } else {
+      const deletedForUserIds: string[] = Array.isArray(initialMeta.deletedForUserIds)
+        ? initialMeta.deletedForUserIds
+        : [];
+      if (deletedForUserIds.includes(userId)) {
+        return { conversationId, messageId, deleteType: 'me' };
+      }
+    }
+
+    const now = new Date();
+    let shouldEmitSocket = false;
+    let attempts = 0;
+    const maxAttempts = 4;
+
+    while (attempts < maxAttempts) {
+      attempts++;
+      const t = await sequelize.transaction();
+      try {
+        const lockedMessage = await ChatMessage.findByPk(messageId, {
+          transaction: t,
+          lock: sequelize.getDialect() === 'postgres' ? t.LOCK.UPDATE : undefined,
+        });
+
+        if (!lockedMessage) {
+          throw new ChatServiceError('Message not found', 404, 'MESSAGE_NOT_FOUND');
+        }
+
+        let currentMeta: Record<string, any> = {};
+        if (lockedMessage.metadata) {
+          try {
+            currentMeta = JSON.parse(lockedMessage.metadata);
+          } catch {
+            currentMeta = {};
+          }
+        }
+
+        if (deleteType === 'everyone') {
+          if (currentMeta.isDeletedForEveryone) {
+            await t.commit();
+            return { conversationId, messageId, deleteType: 'everyone' };
+          }
+
+          currentMeta.isDeletedForEveryone = true;
+          currentMeta.deletedForEveryoneAt = now.toISOString();
+          currentMeta.deletedForEveryoneBy = userId;
+          currentMeta.isDeleted = true;
+
+          // Strip attachments and media URLs from metadata
+          delete currentMeta.images;
+          delete currentMeta.imageUrl;
+          delete currentMeta.thumbnailUrl;
+          delete currentMeta.audioUrl;
+          delete currentMeta.mediaUrl;
+          delete currentMeta.url;
+
+          lockedMessage.content = 'This message was deleted';
+          lockedMessage.metadata = JSON.stringify(currentMeta);
+          await lockedMessage.save({ transaction: t });
+
+          // Destroy all pin records for this message across all users
+          await ChatMessagePin.destroy({
+            where: { conversationId, messageId },
+            transaction: t,
+          });
+
+          // Update conversation lastMessage preview if this was the latest message
+          const isLastMessage =
+            conversation.lastMessageAt &&
+            Math.abs(new Date(conversation.lastMessageAt).getTime() - new Date(lockedMessage.createdAt).getTime()) < 3000;
+
+          if (isLastMessage) {
+            const prevMsg = await ChatMessage.findOne({
+              where: {
+                conversationId,
+                id: { [Op.ne]: messageId },
+              },
+              order: [['createdAt', 'DESC']],
+              transaction: t,
+            });
+
+            if (prevMsg) {
+              let preview = prevMsg.content;
+              if (prevMsg.messageType === 'image') preview = '📷 Photo';
+              else if (prevMsg.messageType === 'audio') preview = '🎤 Voice message';
+              else if (prevMsg.messageType === 'location') preview = '📍 Location';
+              else if (prevMsg.messageType === 'contact') preview = '👤 Contact';
+              conversation.lastMessage = preview;
+              conversation.lastMessageAt = prevMsg.createdAt;
+            } else {
+              conversation.lastMessage = null;
+              conversation.lastMessageAt = null;
+            }
+            await conversation.save({ transaction: t });
+          }
+
+          shouldEmitSocket = true;
+        } else {
+          // Delete for Me
+          const deletedForUserIds: string[] = Array.isArray(currentMeta.deletedForUserIds)
+            ? [...currentMeta.deletedForUserIds]
+            : [];
+
+          if (deletedForUserIds.includes(userId)) {
+            await t.commit();
+            return { conversationId, messageId, deleteType: 'me' };
+          }
+
+          deletedForUserIds.push(userId);
+          currentMeta.deletedForUserIds = deletedForUserIds;
+          lockedMessage.metadata = JSON.stringify(currentMeta);
+          await lockedMessage.save({ transaction: t });
+
+          // Destroy pin for current user
+          await ChatMessagePin.destroy({
+            where: { conversationId, messageId, userId },
+            transaction: t,
+          });
+
+          shouldEmitSocket = true;
+        }
+
+        await t.commit();
+        break;
+      } catch (err: any) {
+        await t.rollback();
+        const isLockContention =
+          (err?.name === 'SequelizeDatabaseError' || err?.name === 'SequelizeTimeoutError') &&
+          (err.message?.includes('SQLITE_BUSY') || err.message?.includes('locked') || err.message?.includes('deadlock'));
+        if (isLockContention && attempts < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 50 * attempts));
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    // Post-commit Socket.IO emission to authorized participant rooms
+    if (shouldEmitSocket) {
+      try {
+        const io = getSocketServer();
+        const payload = {
+          conversationId,
+          messageId,
+          deleteType,
+        };
+
+        if (deleteType === 'me') {
+          io.to(getUserRoomName(userId)).emit('chat:message_deleted', payload);
+          io.to(getUserRoomName(userId)).emit('message:deleted' as any, payload);
+        } else {
+          io.to(getUserRoomName(conversation.user1Id)).emit('chat:message_deleted', payload);
+          io.to(getUserRoomName(conversation.user1Id)).emit('message:deleted' as any, payload);
+          io.to(getUserRoomName(conversation.user2Id)).emit('chat:message_deleted', payload);
+          io.to(getUserRoomName(conversation.user2Id)).emit('message:deleted' as any, payload);
+        }
+      } catch {}
+    }
+
+    return {
+      conversationId,
+      messageId,
+      deleteType,
+    };
   }
 }
 

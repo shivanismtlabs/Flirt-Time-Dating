@@ -57,6 +57,7 @@ export const emitVideoCallIncoming = (
   try {
     const room = getUserRoomName(calleeId);
     io.to(room).emit('video_call:incoming', payload);
+    io.to(room).emit('call:incoming' as any, payload);
     socketLogger.info('Emitted video_call:incoming', { calleeId, callId: payload.callId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:incoming', error, { calleeId, callId: payload.callId });
@@ -74,6 +75,7 @@ export const emitVideoCallAccepted = (
   try {
     const room = getUserRoomName(callerId);
     io.to(room).emit('video_call:accepted', payload);
+    io.to(room).emit('call:accepted' as any, payload);
     socketLogger.info('Emitted video_call:accepted', { callerId, callId: payload.callId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:accepted', error, { callerId, callId: payload.callId });
@@ -91,6 +93,7 @@ export const emitVideoCallRejected = (
   try {
     const room = getUserRoomName(callerId);
     io.to(room).emit('video_call:rejected', payload);
+    io.to(room).emit('call:rejected' as any, payload);
     socketLogger.info('Emitted video_call:rejected', { callerId, callId: payload.callId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:rejected', error, { callerId, callId: payload.callId });
@@ -108,6 +111,7 @@ export const emitVideoCallEnded = (
   try {
     const room = getUserRoomName(targetUserId);
     io.to(room).emit('video_call:ended', payload);
+    io.to(room).emit('call:ended' as any, payload);
     socketLogger.info('Emitted video_call:ended', { targetUserId, callId: payload.callId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:ended', error, { targetUserId, callId: payload.callId });
@@ -125,6 +129,7 @@ export const emitVideoCallBusy = (
   try {
     const room = getUserRoomName(callerId);
     io.to(room).emit('video_call:busy', payload);
+    io.to(room).emit('call:busy' as any, payload);
     socketLogger.info('Emitted video_call:busy', { callerId, calleeId: payload.calleeId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:busy', error, { callerId, calleeId: payload.calleeId });
@@ -142,6 +147,7 @@ export const emitVideoCallMissed = (
   try {
     const room = getUserRoomName(targetUserId);
     io.to(room).emit('video_call:missed', payload);
+    io.to(room).emit('call:missed' as any, payload);
     socketLogger.info('Emitted video_call:missed', { targetUserId, callId: payload.callId });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:missed', error, { targetUserId, callId: payload.callId });
@@ -156,6 +162,49 @@ export const registerVideoCallSocketHandlers = (
   _io: AppSocketServer
 ): void => {
   const currentUserId = socket.data.user.userId;
+
+  // Real-time client signal: End ongoing or ringing call
+  const handleEndCall = async (data: { callId?: string; id?: string }) => {
+    const callId = data?.callId || data?.id;
+    if (!callId) return;
+    try {
+      const { videoCallService } = await import('../services/videoCall.service');
+      await videoCallService.endCall(currentUserId, callId);
+    } catch (err: any) {
+      socketLogger.warn('Socket handleEndCall failed', { userId: currentUserId, callId, error: err.message });
+    }
+  };
+
+  // Real-time client signal: Reject incoming call
+  const handleRejectCall = async (data: { callId?: string; id?: string }) => {
+    const callId = data?.callId || data?.id;
+    if (!callId) return;
+    try {
+      const { videoCallService } = await import('../services/videoCall.service');
+      await videoCallService.rejectCall(currentUserId, callId);
+    } catch (err: any) {
+      socketLogger.warn('Socket handleRejectCall failed', { userId: currentUserId, callId, error: err.message });
+    }
+  };
+
+  // Real-time client signal: Accept incoming call
+  const handleAcceptCall = async (data: { callId?: string; id?: string }) => {
+    const callId = data?.callId || data?.id;
+    if (!callId) return;
+    try {
+      const { videoCallService } = await import('../services/videoCall.service');
+      await videoCallService.acceptCall(currentUserId, callId);
+    } catch (err: any) {
+      socketLogger.warn('Socket handleAcceptCall failed', { userId: currentUserId, callId, error: err.message });
+    }
+  };
+
+  socket.on('video_call:end' as any, handleEndCall);
+  socket.on('call:end' as any, handleEndCall);
+  socket.on('video_call:reject' as any, handleRejectCall);
+  socket.on('call:reject' as any, handleRejectCall);
+  socket.on('video_call:accept' as any, handleAcceptCall);
+  socket.on('call:accept' as any, handleAcceptCall);
 
   // Liveness check / ping from client for video call session
   socket.on('disconnect', (reason: string) => {

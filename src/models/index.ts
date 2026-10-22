@@ -1559,6 +1559,11 @@ export const ensureChatTables = async (): Promise<void> => {
       try {
         await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_recipient_deliv" ON "chat_messages" ("recipientId", "isDelivered");');
       } catch (_idxErr: any) {}
+
+      // 4. Video calls callType
+      try {
+        await sequelize.query('ALTER TABLE "video_calls" ADD COLUMN IF NOT EXISTS "callType" VARCHAR(20) DEFAULT \'video\';');
+      } catch (_vcErr: any) {}
     } else if (sequelize.getDialect() === 'sqlite') {
       try {
         await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');
@@ -1577,6 +1582,9 @@ export const ensureChatTables = async (): Promise<void> => {
       } catch (_e) {}
       try {
         await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "video_calls" ADD COLUMN "callType" VARCHAR(20) DEFAULT \'video\';');
       } catch (_e) {}
     }
 

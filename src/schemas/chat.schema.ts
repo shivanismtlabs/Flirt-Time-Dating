@@ -18,6 +18,9 @@ export const directSendMessageSchema = z.object({
     .default('text'),
   metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
   clientMessageId: z.string().trim().max(100).optional(),
+  replyToMessageId: z.string().uuid('replyToMessageId must be a valid UUID').optional(),
+  parentMessageId: z.string().uuid('parentMessageId must be a valid UUID').optional(),
+  replyToId: z.string().uuid('replyToId must be a valid UUID').optional(),
 });
 
 export type DirectSendMessageInput = z.infer<typeof directSendMessageSchema>;
@@ -197,6 +200,9 @@ export const sendMessageSchema = z.object({
         .optional()
         .default('text'),
       clientMessageId: z.string().trim().max(100, { message: 'Invalid clientMessageId format' }).optional(),
+      replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+      parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+      replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
@@ -421,6 +427,9 @@ export const sendMultiMessageSchema = z.object({
         .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
         .optional(),
       clientMessageIds: z.record(z.string().trim().max(100)).optional(),
+      replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+      parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+      replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
@@ -757,6 +766,86 @@ export const deleteConversationSchema = z.object({
   }),
 });
 
+export const deleteMessageSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
+  }),
+  body: z
+    .object({
+      deleteType: z.enum(['me', 'everyone'], {
+        errorMap: () => ({ message: 'deleteType must be either "me" or "everyone"' }),
+      }).optional(),
+    })
+    .optional(),
+  query: z
+    .object({
+      deleteType: z.enum(['me', 'everyone'], {
+        errorMap: () => ({ message: 'deleteType must be either "me" or "everyone"' }),
+      }).optional(),
+    })
+    .optional(),
+});
+
+export const editMessageSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
+  }),
+  body: z.object({
+    content: z
+      .string({ required_error: 'Content is required' })
+      .trim()
+      .min(1, { message: 'Message content cannot be empty' })
+      .max(5000, { message: 'Message content cannot exceed 5000 characters' }),
+  }),
+});
+
+export const replyMessageSchema = z.object({
+  params: z.object({
+    conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
+    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }).optional(),
+  }),
+  body: z.object({
+    replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+    parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+    replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
+    content: z
+      .string({ required_error: 'Message content is required' })
+      .trim()
+      .min(1, { message: 'Message content cannot be empty' })
+      .max(5000000, { message: 'Message content cannot exceed maximum limit' })
+      .optional(),
+    imageUrl: z.string().trim().max(5000).optional(),
+    image: z.string().trim().max(5000000).optional(),
+    mediaUrl: z.string().trim().max(5000).optional(),
+    imageKey: z.string().trim().max(5000).optional(),
+    audioUrl: z.string().trim().max(5000).optional(),
+    audio: z.string().trim().max(5000000).optional(),
+    voiceUrl: z.string().trim().max(5000).optional(),
+    url: z.string().trim().max(5000).optional(),
+    fileUrl: z.string().trim().max(5000).optional(),
+    images: z.union([z.array(z.any()), z.string()]).optional(),
+    imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+    duration: z.union([z.number(), z.string()]).optional(),
+    caption: z.string().trim().max(1000).optional(),
+    type: z
+      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
+      .optional(),
+    messageType: z
+      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
+        errorMap: () => ({
+          message:
+            'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+        }),
+      })
+      .optional()
+      .default('text'),
+    clientMessageId: z.string().trim().max(100).optional(),
+    metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+  }),
+});
+
 export type GetChatListQuery = z.infer<typeof getChatListSchema>['query'];
 export type GetMessagesQuery = z.infer<typeof getMessagesSchema>['query'];
 export type SendMessageInput = z.infer<typeof sendMessageSchema>['body'];
@@ -771,4 +860,7 @@ export type GetPinnedMessagesQuery = z.infer<typeof getPinnedMessagesSchema>['qu
 export type StartConversationInput = z.infer<typeof startConversationSchema>['body'];
 export type ArchiveConversationInput = z.infer<typeof archiveConversationSchema>['body'];
 export type DeleteConversationInput = z.infer<typeof deleteConversationSchema>['body'];
+export type DeleteMessageInput = z.infer<typeof deleteMessageSchema>;
+export type EditMessageInput = z.infer<typeof editMessageSchema>['body'];
+export type ReplyMessageInput = z.infer<typeof replyMessageSchema>['body'];
 

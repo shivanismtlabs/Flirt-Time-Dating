@@ -455,6 +455,186 @@
             "description": "Returns unread count for a specific conversation and the user's total aggregate unread messages badge count across all active conversations."
           },
           "response": []
+        },
+        {
+          "name": "15. Edit Sent Message",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Updated message text here\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/{{conversationId}}/messages/{{messageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "{{conversationId}}",
+                "messages",
+                "{{messageId}}"
+              ]
+            },
+            "description": "Edits a sent text message within the allowed 15-minute window. Restricts to original sender only. Emits `chat:message_edited` and `message:edited` via Socket.IO."
+          },
+          "response": []
+        },
+        {
+          "name": "16. Reply to Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"This is a reply to your message\",\n  \"messageType\": \"text\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/{{conversationId}}/messages/{{messageId}}/reply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "{{conversationId}}",
+                "messages",
+                "{{messageId}}",
+                "reply"
+              ]
+            },
+            "description": "Replies to an existing message in the conversation. Persists parent reference `replyToMessageId` and attaches minimal `replyTo` metadata preview."
+          },
+          "response": []
+        },
+        {
+          "name": "17. Send Message with Reply Reference",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content\": \"Reply message via standard send endpoint\",\n  \"messageType\": \"text\",\n  \"replyToMessageId\": \"{{messageId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/{{conversationId}}/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "{{conversationId}}",
+                "messages"
+              ]
+            },
+            "description": "Sends a message linking to a parent message ID directly via the standard messages endpoint."
+          },
+          "response": []
+        },
+        {
+          "name": "18. Delete Message (Delete for Me)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"me\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/{{conversationId}}/messages/{{messageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "{{conversationId}}",
+                "messages",
+                "{{messageId}}"
+              ]
+            },
+            "description": "Deletes the message for the requesting user only. It will no longer appear in the user's message history or unread count, while remaining visible to the other participant. Emits `chat:message_deleted` and `message:deleted` to requester's active sessions."
+          },
+          "response": []
+        },
+        {
+          "name": "19. Delete Message (Delete for Everyone)",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"deleteType\": \"everyone\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/chats/{{conversationId}}/messages/{{messageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chats",
+                "{{conversationId}}",
+                "messages",
+                "{{messageId}}"
+              ]
+            },
+            "description": "Recalls the message for all participants. Permitted only for the original sender within 24 hours of sending. Strips sensitive content/attachments, deletes any pins, updates conversation preview if applicable, and emits `chat:message_deleted` and `message:deleted` to both participants."
+          },
+          "response": []
         }
       ]
     },

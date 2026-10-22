@@ -25,14 +25,22 @@ export interface NotificationNavigationDTO {
   targetId: string;
 }
 
+export interface NotificationActorDTO {
+  id: string;
+  name?: string;
+  profilePhoto: string | null;
+}
+
 export interface NotificationItemDTO {
   id: string;
   type: string;
   title: string;
   body: string;
-  sender: NotificationSenderSummary | null;
   isRead: boolean;
   createdAt: string;
+  actor: NotificationActorDTO | null;
+  sender: NotificationSenderSummary | null;
+  data: Record<string, any>;
   navigation: NotificationNavigationDTO;
   actionMetadata?: Record<string, any> | null;
 }
@@ -43,6 +51,8 @@ export interface NotificationSectionDTO {
 }
 
 export interface GroupedNotificationsResponse {
+  notifications: NotificationItemDTO[];
+  items: NotificationItemDTO[];
   sections: NotificationSectionDTO[];
   pagination: {
     limit: number;
@@ -50,6 +60,30 @@ export interface GroupedNotificationsResponse {
     hasMore: boolean;
   };
 }
+
+/**
+ * Resolves raw event type to iOS tap navigation canonical notify_type:
+ * - like / favorite / super_like -> Explore -> Likes
+ * - match / new_match -> Explore -> Matches
+ * - compliment -> Explore -> Compliments
+ * - membership-upgrade / premium -> Premium
+ * - message / new_message -> Chat
+ * - gesture-unverified / profile-image-unverified / incomplete -> Verify / Edit profile
+ */
+export const resolveNotifyType = (rawType: string): string => {
+  const t = (rawType || '').toLowerCase().trim();
+  if (t === 'super_like') return 'super_like';
+  if (t === 'favorite') return 'favorite';
+  if (t.includes('like') || t.includes('reaction')) return 'like';
+  if (t === 'new_match' || t.includes('match') || t.includes('connection')) return 'match';
+  if (t.includes('compliment')) return 'compliment';
+  if (t.includes('membership') || t.includes('premium') || t.includes('upgrade')) return 'membership-upgrade';
+  if (t === 'new_message' || t.includes('message') || t.includes('chat')) return 'message';
+  if (t.includes('gesture') || t.includes('unverified') || t.includes('incomplete')) return 'gesture-unverified';
+  if (t.includes('visit') || t.includes('view') || t.includes('profile')) return 'profile_visit';
+  if (t.includes('tip')) return 'dating_tip';
+  return rawType || 'like';
+};
 
 export class NotificationServiceError extends Error {
   public statusCode: number;
@@ -295,6 +329,14 @@ export class NotificationService {
   }
 
   /**
+   * Deactivates all device tokens for a user upon logout
+   */
+  public async deactivateAllUserDevices(userId: string) {
+    await UserDevice.update({ isActive: false }, { where: { userId } });
+    return { unregistered: true };
+  }
+
+  /**
    * General notification dispatcher:
    * 1. Idempotency & deduplication check
    * 2. Persists In-App notification in DB (source of truth)
@@ -316,13 +358,15 @@ export class NotificationService {
     }
   ): Promise<PushNotificationResult> {
     const { type, title, body, senderId, entityId, navigation, idempotencyKey, isForeground } = input;
+    const resolvedNotifyType = resolveNotifyType(input.data?.notify_type || type);
+    const actorUserId = String(input.data?.user_id || senderId || '');
 
     // 1. Idempotency / deduplication check
     if (idempotencyKey || entityId) {
       const existing = await Notification.findOne({
         where: {
           recipientId,
-          type,
+          type: resolvedNotifyType,
           ...(entityId && { entityId }),
         },
       });
@@ -339,11 +383,15 @@ export class NotificationService {
 
     const payloadData: Record<string, any> = {
       ...(input.data || {}),
-      type,
+      notify_type: resolvedNotifyType,
+      type: resolvedNotifyType,
       entityId: entityId || '',
-      navigation: navigation || { type, targetId: entityId || '' },
+      navigation: navigation || { type: resolvedNotifyType, targetId: entityId || '' },
       ...(idempotencyKey && { idempotencyKey }),
     };
+    if (actorUserId) {
+      payloadData.user_id = actorUserId;
+    }
 
     // 2. Persist In-App Notification in DB
     let createdRecord: Notification;
@@ -351,7 +399,7 @@ export class NotificationService {
       createdRecord = await Notification.create({
         recipientId,
         senderId: senderId || null,
-        type,
+        type: resolvedNotifyType,
         title,
         body,
         entityId: entityId || null,
@@ -377,7 +425,7 @@ export class NotificationService {
         settings = recipientUser?.notificationSettings;
       }
 
-      const isPushAllowed = this.shouldSendPush(settings, type);
+      const isPushAllowed = this.shouldSendPush(settings, resolvedNotifyType);
 
       if (!isPushAllowed) {
         return {
@@ -416,10 +464,36 @@ export class NotificationService {
       };
     }
 
-    // 4. Dispatch Multicast Message via Firebase Admin
+    // 5. Dispatch Multicast Message via Firebase Admin
     try {
       const messaging = getFirebaseMessaging();
       const isAppForeground = Boolean(isForeground);
+
+      const fcmData: Record<string, string> = {
+        notify_type: resolvedNotifyType,
+        type: resolvedNotifyType,
+        id: String(createdRecord.id),
+        entityId: String(entityId || ''),
+        senderId: String(senderId || actorUserId || ''),
+        navType: String(navigation?.type || resolvedNotifyType),
+        navTargetId: String(navigation?.targetId || entityId || actorUserId || ''),
+        click_action: 'FLUTTER_NOTIFICATION_CLICK',
+        isForeground: isAppForeground ? 'true' : 'false',
+        title,
+        body,
+        ...(input.data
+          ? Object.fromEntries(
+              Object.entries(input.data).map(([k, v]) => [k, String(v ?? '')])
+            )
+          : {}),
+      };
+      if (actorUserId) {
+        fcmData.user_id = actorUserId;
+        fcmData.actor_id = actorUserId;
+      }
+      fcmData.notify_type = resolvedNotifyType;
+      fcmData.type = resolvedNotifyType;
+
       const message: MulticastMessage = {
         tokens,
         ...(isAppForeground
@@ -430,23 +504,7 @@ export class NotificationService {
                 body,
               },
             }),
-        data: {
-          id: String(createdRecord.id),
-          type,
-          entityId: String(entityId || ''),
-          senderId: String(senderId || ''),
-          navType: String(navigation?.type || type),
-          navTargetId: String(navigation?.targetId || entityId || ''),
-          click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          isForeground: isAppForeground ? 'true' : 'false',
-          title,
-          body,
-          ...(input.data
-            ? Object.fromEntries(
-                Object.entries(input.data).map(([k, v]) => [k, String(v ?? '')])
-              )
-            : {}),
-        },
+        data: fcmData,
         android: isAppForeground
           ? { priority: 'high' }
           : {
@@ -470,6 +528,9 @@ export class NotificationService {
                 aps: {
                   contentAvailable: true,
                 },
+                notify_type: resolvedNotifyType,
+                type: resolvedNotifyType,
+                ...(actorUserId ? { user_id: actorUserId } : {}),
               },
             }
           : {
@@ -484,6 +545,9 @@ export class NotificationService {
                   badge: 1,
                   contentAvailable: true,
                 },
+                notify_type: resolvedNotifyType,
+                type: resolvedNotifyType,
+                ...(actorUserId ? { user_id: actorUserId } : {}),
               },
             },
       };
@@ -893,30 +957,54 @@ export class NotificationService {
     // Transform into standard DTOs
     const dtos: NotificationItemDTO[] = itemsToReturn.map((n) => {
       let senderSummary: NotificationSenderSummary | null = null;
+      let primaryPhoto: string | null = null;
       if (n.sender) {
+        primaryPhoto = this.resolvePrimaryPhoto(
+          n.sender.profilePicture,
+          n.sender.photos,
+          n.sender.updatedAt
+        );
         senderSummary = {
           id: n.sender.id,
           name: resolveDisplayName(n.sender),
-          profilePhotoUrl: this.resolvePrimaryPhoto(n.sender.profilePicture, n.sender.photos, n.sender.updatedAt),
+          profilePhotoUrl: primaryPhoto,
         };
       }
 
+      const actorUserId = n.sender?.id || n.senderId || n.data?.user_id || '';
+      const actor: NotificationActorDTO | null = actorUserId
+        ? {
+            id: actorUserId,
+            name: senderSummary?.name,
+            profilePhoto: primaryPhoto,
+          }
+        : null;
+
+      const resolvedType = resolveNotifyType(n.type);
+
       // Safe navigation payload
       const nav = n.data?.navigation || {
-        type: n.type,
+        type: resolvedType,
         targetId: n.entityId || n.id,
       };
 
       return {
         id: n.id,
-        type: n.type,
+        type: resolvedType,
         title: n.title,
         body: n.body,
-        sender: senderSummary,
         isRead: Boolean(n.isRead),
         createdAt: n.createdAt.toISOString(),
+        actor,
+        sender: senderSummary,
+        data: {
+          notify_type: resolvedType,
+          type: resolvedType,
+          user_id: actorUserId,
+          ...(n.data || {}),
+        },
         navigation: {
-          type: nav.type || n.type,
+          type: nav.type || resolvedType,
           targetId: String(nav.targetId || n.entityId || n.id),
         },
         actionMetadata: n.data?.actionMetadata || null,
@@ -957,6 +1045,8 @@ export class NotificationService {
         : null;
 
     return {
+      notifications: dtos,
+      items: dtos,
       sections,
       pagination: {
         limit,

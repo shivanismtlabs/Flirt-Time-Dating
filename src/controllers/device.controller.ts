@@ -69,12 +69,14 @@ export const unregisterDeviceHandler = async (
       req.query?.token ||
       req.query?.deviceToken;
 
-    if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
-      return sendError(res, 'Device token is required to unregister', 400, 'VALIDATION_ERROR');
+    if (rawToken && typeof rawToken === 'string' && rawToken.trim()) {
+      const result = await notificationService.deactivateDeviceToken(rawToken.trim(), userId);
+      return sendSuccess(res, 'Device unregistered successfully', result, 200);
     }
 
-    const result = await notificationService.deactivateDeviceToken(rawToken, userId);
-    return sendSuccess(res, 'Device unregistered successfully', result, 200);
+    // If no specific token was provided (e.g. general logout), deactivate all devices for the user
+    const result = await notificationService.deactivateAllUserDevices(userId);
+    return sendSuccess(res, 'All devices unregistered successfully', result, 200);
   } catch (error: any) {
     console.error('[Device Unregister Error]:', error);
     return sendError(

@@ -65,7 +65,11 @@ export const getNotificationCountsHandler = async (
     return sendSuccess(
       res,
       'Notification counts fetched successfully',
-      { unreadCount },
+      {
+        unreadCount,
+        count: unreadCount,
+        unread: unreadCount,
+      },
       200
     );
   } catch (error: any) {

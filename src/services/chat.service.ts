@@ -406,6 +406,23 @@ export class ChatService {
     const blockedUserIds = await this.getBlockedUserIds(currentUserId);
     const blockedArray = Array.from(blockedUserIds);
 
+    // Fetch noped users to exclude from chat list
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUserId, action: 'nope' },
+          { targetUserId: currentUserId, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const nopedUserIds = new Set<string>();
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUserId) nopedUserIds.add(s.targetUserId);
+      if (s.targetUserId === currentUserId) nopedUserIds.add(s.userId);
+    });
+
     // 2. Fetch pinned conversations for current user
     const pins = await ConversationPin.findAll({
       where: { userId: currentUserId },
@@ -531,6 +548,9 @@ export class ChatService {
       // Safely resolve the other participant using case-insensitive check
       const otherUser = normU1 === normCurrentUserId ? conv.user2 : conv.user1;
       if (!otherUser || otherUser.isActive === false) return false;
+
+      // Exclude noped users
+      if (nopedUserIds.has(otherUser.id)) return false;
 
       // Ensure other participant is NOT the current user
       const normOtherUserId = String(otherUser.id || '').trim().toLowerCase();
@@ -5270,6 +5290,23 @@ export class ChatService {
     const blockedUserIds = await this.getBlockedUserIds(userId);
     const blockedArray = Array.from(blockedUserIds);
 
+    // Fetch noped users to exclude from conversation list
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId, action: 'nope' },
+          { targetUserId: userId, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const nopedUserIds = new Set<string>();
+    nopedSwipes.forEach((s) => {
+      if (s.userId === userId) nopedUserIds.add(s.targetUserId);
+      if (s.targetUserId === userId) nopedUserIds.add(s.userId);
+    });
+
     const whereCondition: any = {
       [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
     };
@@ -5349,6 +5386,9 @@ export class ChatService {
 
       const partner = conv.user1Id === userId ? (conv as any).user2 : (conv as any).user1;
       if (!partner || !partner.isActive) continue;
+
+      // Exclude noped users
+      if (nopedUserIds.has(partner.id)) continue;
 
       // Check Delete for Me
       const state = userStateMap.get(conv.id);

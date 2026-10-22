@@ -504,7 +504,7 @@ export class MomentService {
       });
 
       const hasUserReport = reports.some(
-        (r) => r.targetType === 'user' || !r.momentId
+        (r) => !r.momentId && (r.targetType === 'user' || !r.targetType)
       );
       if (hasUserReport) {
         return {
@@ -769,14 +769,18 @@ export class MomentService {
         reporterId: viewerId,
         status: { [Op.ne]: 'dismissed' },
       },
-      attributes: ['targetUserId', 'momentId'],
+      attributes: ['targetUserId', 'momentId', 'targetType'],
     });
 
     const reportedUserIds = new Set<string>();
     const reportedMomentIds = new Set<string>();
     for (const r of reports) {
-      if (r.targetUserId) reportedUserIds.add(r.targetUserId);
-      if (r.momentId) reportedMomentIds.add(r.momentId);
+      if (!r.momentId && (r.targetType === 'user' || !r.targetType) && r.targetUserId) {
+        reportedUserIds.add(r.targetUserId);
+      }
+      if (r.momentId) {
+        reportedMomentIds.add(r.momentId);
+      }
     }
 
     // 2. Identify matches for matches_only audience filter

@@ -1,6 +1,6 @@
 import { Op } from 'sequelize';
 import { sequelize, User, UserBlock, UserReport, Moment, MomentMedia, Conversation } from '../models';
-import { ReportReason, ReportStatus } from '../models/userReport.model';
+import { ReportReason, ReportStatus, ReportTargetType } from '../models/userReport.model';
 import { formatMediaUrl } from './s3.service';
 
 export interface BlockUserResult {
@@ -174,7 +174,9 @@ export class ModerationService {
     targetUserId: string,
     reason: ReportReason,
     description?: string | null,
-    conversationId?: string | null
+    conversationId?: string | null,
+    momentId?: string | null,
+    targetType?: ReportTargetType | null
   ): Promise<ReportUserResult> {
     // 1. Prevent self-reporting
     if (reporterId === targetUserId) {
@@ -236,6 +238,12 @@ export class ModerationService {
     const isSqlite = sequelize.getDialect() === 'sqlite';
     const t = await sequelize.transaction();
     try {
+      const effectiveTargetType: ReportTargetType = momentId || targetType === 'moment'
+        ? 'moment'
+        : isChatReport || targetType === 'chat'
+          ? 'chat'
+          : 'user';
+
       const whereCondition: any = {
         reporterId,
         targetUserId,
@@ -243,6 +251,9 @@ export class ModerationService {
       };
       if (conversationId) {
         whereCondition.conversationId = conversationId;
+      }
+      if (momentId) {
+        whereCondition.momentId = momentId;
       }
 
       const existingReport = await UserReport.findOne({
@@ -264,8 +275,9 @@ export class ModerationService {
         {
           reporterId,
           targetUserId,
-          targetType: isChatReport ? 'chat' : 'user',
+          targetType: effectiveTargetType,
           conversationId: conversationId || null,
+          momentId: momentId || null,
           reason,
           description: description ? description.trim() : null,
           status: 'pending',

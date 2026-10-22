@@ -166,7 +166,11 @@ export class UserSearchService {
         where: {
           reporterId: currentUserId,
           status: { [Op.ne]: 'dismissed' },
-        },
+          [Op.or]: [
+            { targetType: 'user' },
+            { momentId: null },
+          ],
+        } as any,
         attributes: ['targetUserId'],
       }),
       shouldExcludeSwiped

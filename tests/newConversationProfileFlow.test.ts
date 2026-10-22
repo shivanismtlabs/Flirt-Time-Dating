@@ -170,6 +170,32 @@ describe('Critical Bug Fix: Profile-to-Chat Flow and Conversation Persistence', 
 
     expect(res3.status).toBe(200);
     expect(res3.body.data.id).toBe(convId1);
+
+    const resUsername = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ recipientId: userB.username });
+
+    expect([200, 201]).toContain(resUsername.status);
+    expect(resUsername.body.data.id).toBe(convId1);
+    expect(resUsername.body.data.recipientId).toBe(userB.id);
+
+    const resEmptyAlias = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ recipientId: '', userId: userB.id });
+
+    expect(resEmptyAlias.status).toBe(200);
+    expect(resEmptyAlias.body.data.id).toBe(convId1);
+
+    const compactId = userB.id.replace(/-/g, '');
+    const resCompact = await request(app)
+      .post('/api/v1/chats')
+      .set('Authorization', `Bearer ${tokenA}`)
+      .send({ recipientId: compactId });
+
+    expect(resCompact.status).toBe(200);
+    expect(resCompact.body.data.id).toBe(convId1);
   });
 
   it('3. Conversation canonical resolution: both permutations (A,B) and (B,A) resolve to the exact same conversation', async () => {

@@ -1,5 +1,68 @@
 import { z } from 'zod';
 
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const COMPACT_UUID_RE = /^[0-9a-f]{32}$/i;
+const EMBEDDED_UUID_RE =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * Profile → chat clients send recipientId in several shapes (UUID, compact UUID,
+ * username, empty string next to userId, wrapped user object). Normalize before
+ * UUID validation so POST /api/v1/chats does not 400 on valid profile flows.
+ */
+export const normalizeRecipientIdentifier = (raw: unknown): string | undefined => {
+  if (raw === null || raw === undefined) {
+    return undefined;
+  }
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    raw = String(raw);
+  }
+  if (Array.isArray(raw)) {
+    return raw.length > 0 ? normalizeRecipientIdentifier(raw[0]) : undefined;
+  }
+  if (typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>;
+    return normalizeRecipientIdentifier(
+      obj.id ?? obj.userId ?? obj.targetUserId ?? obj.recipientId ?? obj.participantId
+    );
+  }
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+
+  let value = raw.trim();
+  if (!value || value === 'null' || value === 'undefined') {
+    return undefined;
+  }
+  if (
+    (value.startsWith('{') && value.endsWith('}')) ||
+    (value.startsWith('"') && value.endsWith('"'))
+  ) {
+    value = value.slice(1, -1).trim();
+  }
+  if (COMPACT_UUID_RE.test(value)) {
+    value = `${value.slice(0, 8)}-${value.slice(8, 12)}-${value.slice(12, 16)}-${value.slice(16, 20)}-${value.slice(20)}`;
+  }
+  const embedded = value.match(EMBEDDED_UUID_RE);
+  if (embedded) {
+    return embedded[0];
+  }
+  return value;
+};
+
+export const isUuidIdentifier = (value: string): boolean => UUID_RE.test(value);
+
+const optionalRecipientRef = z.preprocess(
+  (val) => normalizeRecipientIdentifier(val),
+  z
+    .string()
+    .trim()
+    .min(1, { message: 'recipientId cannot be empty' })
+    .max(80, { message: 'recipientId is too long' })
+    .optional()
+);
+
 export const directSendMessageSchema = z.object({
   recipientId: z
     .string({ required_error: 'recipientId is required' })
@@ -894,16 +957,21 @@ export const getPinnedMessagesSchema = z.object({
 export const startConversationSchema = z.object({
   body: z
     .object({
-      recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
-      userId: z.string().uuid({ message: 'Invalid userId UUID format' }).optional(),
-      targetUserId: z.string().uuid({ message: 'Invalid targetUserId UUID format' }).optional(),
-      participantId: z.string().uuid({ message: 'Invalid participantId UUID format' }).optional(),
-      recipientIds: z
-        .union([
-          z.array(z.string().uuid({ message: 'Every recipientId in recipientIds must be a valid UUID' })),
-          z.string().uuid({ message: 'Invalid recipientIds UUID format' }).transform((val) => [val]),
-        ])
-        .optional(),
+      recipientId: optionalRecipientRef,
+      userId: optionalRecipientRef,
+      targetUserId: optionalRecipientRef,
+      participantId: optionalRecipientRef,
+      recipientIds: z.preprocess(
+        (val) => {
+          const normalized = normalizeRecipientIdentifier(val);
+          if (normalized) return [normalized];
+          if (Array.isArray(val)) {
+            return val.map((item) => normalizeRecipientIdentifier(item)).filter(Boolean);
+          }
+          return val;
+        },
+        z.array(z.string().min(1).max(80)).optional()
+      ),
     })
     .superRefine((data, ctx) => {
       const target =
@@ -915,8 +983,8 @@ export const startConversationSchema = z.object({
       if (!target) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ['recipientIds'],
-          message: 'recipientIds or recipientId is required',
+          path: ['recipientId'],
+          message: 'recipientId is required',
         });
       }
     }),

@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { chatService, ChatServiceError } from '../services/chat.service';
 import { s3Service } from '../services/s3.service';
+import { normalizeRecipientIdentifier } from '../schemas/chat.schema';
 
 /**
  * 1. GET /api/v1/chats
@@ -620,12 +621,19 @@ export const startConversationHandler = async (req: AuthenticatedRequest, res: R
   try {
     const currentUserId = req.user!.id;
     const recipientId =
-      (Array.isArray(req.body.recipientIds) && req.body.recipientIds.length > 0 ? req.body.recipientIds[0] : undefined) ||
-      (typeof req.body.recipientIds === 'string' ? req.body.recipientIds : undefined) ||
-      req.body.recipientId ||
-      req.body.userId ||
-      req.body.targetUserId ||
-      req.body.participantId;
+      normalizeRecipientIdentifier(
+        (Array.isArray(req.body.recipientIds) && req.body.recipientIds.length > 0
+          ? req.body.recipientIds[0]
+          : undefined) ||
+          req.body.recipientIds ||
+          req.body.recipientId ||
+          req.body.userId ||
+          req.body.targetUserId ||
+          req.body.participantId
+      );
+    if (!recipientId) {
+      return sendError(res, 'recipientId is required', 400, 'VALIDATION_ERROR');
+    }
     const result = await chatService.startConversation(currentUserId, recipientId);
     const message = result.isNew ? 'Conversation created successfully' : 'Conversation retrieved successfully';
     return sendSuccess(res, message, result, result.isNew ? 201 : 200);

@@ -40,3 +40,5 @@ test.sqlite*
 serviceAccountKey*.json
 *.p8
 *.pem
+
+.tmp-onevibe/

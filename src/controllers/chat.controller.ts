@@ -200,6 +200,50 @@ export const sendMultiMessageHandler = async (req: AuthenticatedRequest, res: Re
 };
 
 /**
+ * 4d. POST /api/v1/chats/messages/forward
+ * Forward single or multiple messages to single or multiple recipients.
+ * Enforces authentication, source message ownership, recipient validation,
+ * transaction safety, and 8-pillar Global API Response Standard.
+ */
+export const forwardMessagesHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const result = await chatService.forwardMessages(currentUserId, req.body);
+
+    const message =
+      result.failureCount === 0
+        ? 'Messages forwarded successfully'
+        : result.successCount > 0
+          ? 'Messages forwarded with some delivery failures'
+          : 'Failed to forward messages to all recipients';
+
+    let responseData: any = {
+      totalCount: result.totalCount,
+      successCount: result.successCount,
+      failureCount: result.failureCount,
+      results: result.results,
+    };
+
+    if (result.results && result.results.length === 1 && result.results[0]?.status === 'success') {
+      responseData = {
+        ...responseData,
+        conversationId: result.results[0].conversationId,
+        messageId: result.results[0].messageId,
+        isForwarded: true,
+      };
+    }
+
+    return sendSuccess(res, message, responseData, 201);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to forward messages', 500);
+  }
+};
+
+
+/**
  * 4c. POST /api/v1/chats/upload, POST /api/v1/chats/media, POST /api/v1/chats/:conversationId/upload
  * S3 image/media upload handler specifically for chat attachments.
  * Accepts direct multipart file upload to S3 or presigned PUT URL generation.

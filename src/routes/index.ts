@@ -33,8 +33,8 @@ import { sendComplimentHandler } from '../controllers/interaction.controller';
 import { sendComplimentSchema } from '../schemas/interaction.schema';
 import { searchUsersHandler } from '../controllers/userSearch.controller';
 import { userSearchSchema } from '../schemas/userSearch.schema';
-import { sendMultiMessageHandler, syncDeliveredMessagesHandler } from '../controllers/chat.controller';
-import { sendMultiMessageSchema, syncDeliveredMessagesSchema } from '../schemas/chat.schema';
+import { sendMultiMessageHandler, syncDeliveredMessagesHandler, forwardMessagesHandler } from '../controllers/chat.controller';
+import { sendMultiMessageSchema, syncDeliveredMessagesSchema, forwardMessagesSchema } from '../schemas/chat.schema';
 
 const router = Router();
 
@@ -62,6 +62,7 @@ router.use('/chat', chatRoutes);
 router.use('/chats', chatRoutes);
 router.use('/chat/conversations', chatRoutes);
 router.post('/chat/messages', authenticate, handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+router.post('/chat/messages/forward', authenticate, validate(forwardMessagesSchema), forwardMessagesHandler);
 router.all(
   ['/chat/delivered/sync', '/chat/delivery/sync'],
   authenticate,

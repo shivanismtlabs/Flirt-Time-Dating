@@ -226,6 +226,41 @@ export const registerChatSocketHandlers = (
   socket.on('chat:send_message', handleSendMessage);
   socket.on('message:send' as any, handleSendMessage);
 
+  // 1b. Event: chat:forward_message & message:forward
+  const handleForwardMessage = async (payload: any, callback?: Function) => {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'Payload must be an object',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.forwardMessages(currentUserId, payload);
+      if (typeof callback === 'function') {
+        callback({
+          success: true,
+          data: result,
+        });
+      }
+    } catch (error: any) {
+      const errorMessage = error?.message || 'Failed to forward messages';
+      socketLogger.error('Failed to forward message via socket', {
+        userId: currentUserId,
+        error: errorMessage,
+      });
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  };
+
+  socket.on('chat:forward_message', handleForwardMessage);
+  socket.on('message:forward' as any, handleForwardMessage);
+
   // 2. Event: chat:mark_read & message:read (Read Acknowledgement)
   const handleMarkRead = async (payload: any, callback?: Function) => {
     try {
@@ -390,6 +425,50 @@ export const registerChatSocketHandlers = (
         err instanceof ChatServiceError
           ? err.message
           : 'Failed to update conversation archive status';
+
+      if (typeof callback === 'function') {
+        callback({ success: false, error: errorMessage });
+      }
+    }
+  });
+
+  // 4b. Event: conversation:pin
+  socket.on('conversation:pin', async (payload: any, callback?: Function) => {
+    try {
+      if (
+        !payload ||
+        typeof payload !== 'object' ||
+        !payload.conversationId ||
+        typeof payload.isPinned !== 'boolean'
+      ) {
+        if (typeof callback === 'function') {
+          return callback({
+            success: false,
+            error: 'conversationId and boolean isPinned are required',
+          });
+        }
+        return;
+      }
+
+      const result = await chatService.pinConversation(
+        currentUserId,
+        payload.conversationId,
+        payload.isPinned
+      );
+
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      socketLogger.error('Error handling conversation:pin event', err, {
+        userId: currentUserId,
+        conversationId: payload?.conversationId,
+      });
+
+      const errorMessage =
+        err instanceof ChatServiceError
+          ? err.message
+          : 'Failed to update conversation pin status';
 
       if (typeof callback === 'function') {
         callback({ success: false, error: errorMessage });

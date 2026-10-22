@@ -31,8 +31,8 @@ import {
   DirectSendMessageInput,
   EditMessageInput,
   ReplyMessageInput,
+  ForwardMessagesInput,
   normalizeReactionEmoji,
-  ALLOWED_CHAT_REACTION_EMOJIS,
 } from '../schemas/chat.schema';
 
 export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes window for editing sent messages
@@ -157,6 +157,11 @@ export interface ChatMessageDTO {
   editedAt?: Date | string | null;
   replyToMessageId?: string | null;
   replyTo?: ChatMessageReplyRefDTO | null;
+  isForwarded?: boolean;
+  forwardedFromMessageId?: string | null;
+  originalSenderId?: string | null;
+  originalSenderName?: string | null;
+  originalCreatedAt?: string | Date | null;
   sender?: ChatMessageSenderDTO;
   imageUrl?: string;
   thumbnailUrl?: string;
@@ -260,6 +265,25 @@ export interface SendMultiMessageResultDTO {
   successCount: number;
   failureCount: number;
   results: SendMessageResultItemDTO[];
+}
+
+export interface ForwardResultItemDTO {
+  recipientId: string;
+  conversationId: string | null;
+  status: 'success' | 'failed';
+  messageId?: string;
+  messageIds?: string[];
+  isForwarded?: boolean;
+  messages?: ChatMessageDTO[];
+  error?: string;
+  errorCode?: string;
+}
+
+export interface ForwardMessagesResultDTO {
+  totalCount: number;
+  successCount: number;
+  failureCount: number;
+  results: ForwardResultItemDTO[];
 }
 
 export class ChatService {
@@ -1093,6 +1117,11 @@ export class ChatService {
         editedAt: parsedMetadata?.editedAt || null,
         replyToMessageId: parsedMetadata?.replyToMessageId || null,
         replyTo: parsedMetadata?.replyTo || null,
+        isForwarded: !!parsedMetadata?.isForwarded,
+        forwardedFromMessageId: parsedMetadata?.forwardedFromMessageId || null,
+        originalSenderId: parsedMetadata?.originalSenderId || null,
+        originalSenderName: parsedMetadata?.originalSenderName || null,
+        originalCreatedAt: parsedMetadata?.originalCreatedAt || null,
         sender: senderMap.get(msg.senderId) || {
           id: msg.senderId,
           displayName: isMine ? 'You' : 'Participant',
@@ -4061,37 +4090,54 @@ export class ChatService {
       }
     }
 
-    const t = await sequelize.transaction();
-    try {
-      if (isPinned) {
-        await ConversationPin.findOrCreate({
-          where: {
-            conversationId,
-            userId: currentUserId,
-          },
-          transaction: t,
-        });
+    // Check existing pin state for idempotence
+    const existingPin = await ConversationPin.findOne({
+      where: { conversationId, userId: currentUserId },
+    });
+    const alreadyPinned = !!existingPin;
+    const hasChanged = alreadyPinned !== isPinned;
 
-        // If pinning an archived conversation, unarchive it
-        if (userState?.isArchived) {
-          userState.isArchived = false;
-          userState.archivedAt = null;
-          await userState.save({ transaction: t });
+    if (hasChanged) {
+      const t = await sequelize.transaction();
+      try {
+        if (isPinned) {
+          await ConversationPin.create(
+            {
+              conversationId,
+              userId: currentUserId,
+            },
+            { transaction: t }
+          );
+        } else {
+          await ConversationPin.destroy({
+            where: {
+              conversationId,
+              userId: currentUserId,
+            },
+            transaction: t,
+          });
         }
-      } else {
-        await ConversationPin.destroy({
-          where: {
-            conversationId,
-            userId: currentUserId,
-          },
-          transaction: t,
-        });
+
+        await t.commit();
+      } catch (err) {
+        await t.rollback();
+        throw err;
       }
 
-      await t.commit();
-    } catch (err) {
-      await t.rollback();
-      throw err;
+      // Real-time synchronization only to requesting user's active sessions (never other participants)
+      // and only emitted when state actually changed (idempotent guard)
+      try {
+        const io = getSocketServer();
+        const payload = {
+          conversationId,
+          isPinned,
+        };
+        const userRoom = getUserRoomName(currentUserId);
+        io.to(userRoom).emit('conversation:pin-updated', payload);
+        io.to(userRoom).emit('conversation:pin_updated' as any, payload);
+      } catch {
+        // Socket server not available in test/offline environments
+      }
     }
 
     return {
@@ -4782,6 +4828,14 @@ export class ChatService {
     });
     const userStateMap = new Map<string, any>(userStates.map((s) => [s.conversationId, s]));
 
+    // Fetch pinned conversations for current user
+    const pins = await ConversationPin.findAll({
+      where: { userId },
+      attributes: ['conversationId'],
+      raw: true,
+    });
+    const pinnedConversationIdSet = new Set(pins.map((p) => p.conversationId));
+
     const results: ConversationSummaryDTO[] = [];
 
     for (const conv of conversations) {
@@ -4832,8 +4886,16 @@ export class ChatService {
         lastMessageAt: conv.lastMessageAt ? conv.lastMessageAt.toISOString() : null,
         unreadCount,
         isMatched: Boolean(match),
+        isPinned: pinnedConversationIdSet.has(conv.id),
       });
     }
+
+    // Pinned conversations appear before unpinned conversations
+    results.sort((a, b) => {
+      if (a.isPinned && !b.isPinned) return -1;
+      if (!a.isPinned && b.isPinned) return 1;
+      return 0;
+    });
 
     return results;
   }
@@ -5665,11 +5727,11 @@ return {
 
     const normalizedEmoji = normalizeReactionEmoji(emojiInput);
     if (!normalizedEmoji) {
-      throw new ChatServiceError(
-        `Unsupported reaction emoji. Allowed emojis: ${ALLOWED_CHAT_REACTION_EMOJIS.join(', ')}`,
-        400,
-        'UNSUPPORTED_EMOJI'
-      );
+      throw new ChatServiceError('Reaction emoji is required', 400, 'VALIDATION_ERROR');
+    }
+
+    if (normalizedEmoji.length > 32) {
+      throw new ChatServiceError('Reaction emoji cannot exceed 32 characters', 400, 'VALIDATION_ERROR');
     }
 
     const conversation = await Conversation.findByPk(conversationId);
@@ -5934,6 +5996,553 @@ return {
     }
 
     return resultPayload;
+  }
+
+  /**
+   * FORWARD MESSAGES TO SINGLE / MULTIPLE RECIPIENTS
+   * Validates access to all source messages and original conversations.
+   * Enforces recipient activity, block checks, and batch limits.
+   * Reuses or creates 1-to-1 conversations transactionally.
+   * Preserves content and attachments securely without duplicate IDs or ORM leakage.
+   * Sets canonical forwarding metadata (isForwarded, forwardedFromMessageId, originalSenderId).
+   * Dispatches real-time Socket.IO delivery events after database persistence succeeds.
+   */
+  public async forwardMessages(
+    senderId: string,
+    data: ForwardMessagesInput
+  ): Promise<ForwardMessagesResultDTO> {
+    // 1. Resolve & normalize target message IDs
+    let targetMessageIds: string[] = [];
+    if (Array.isArray(data.messageIds)) {
+      targetMessageIds = data.messageIds;
+    } else if (typeof (data as any).messageIds === 'string' && (data as any).messageIds.trim()) {
+      const s = (data as any).messageIds.trim();
+      targetMessageIds = s.includes(',') ? s.split(',').map((x: string) => x.trim()).filter(Boolean) : [s];
+    } else if (data.messageId) {
+      targetMessageIds = [data.messageId];
+    }
+
+    // Check for duplicate messageIds in request
+    if (new Set(targetMessageIds).size !== targetMessageIds.length) {
+      throw new ChatServiceError('Duplicate messageIds are not allowed', 400, 'DUPLICATE_MESSAGE_IDS');
+    }
+
+    if (targetMessageIds.length === 0) {
+      throw new ChatServiceError('At least one valid messageId is required', 400, 'INVALID_MESSAGES');
+    }
+
+    const maxForwardMessages = 20;
+    if (targetMessageIds.length > maxForwardMessages) {
+      throw new ChatServiceError(
+        `Message limit exceeded. Maximum ${maxForwardMessages} messages allowed per forward operation`,
+        400,
+        'MESSAGE_LIMIT_EXCEEDED'
+      );
+    }
+
+    // 2. Resolve & normalize target recipient IDs
+    let targetRecipientIds: string[] = [];
+    if (Array.isArray(data.recipientIds)) {
+      targetRecipientIds = data.recipientIds;
+    } else if (typeof (data as any).recipientIds === 'string' && (data as any).recipientIds.trim()) {
+      const s = (data as any).recipientIds.trim();
+      targetRecipientIds = s.includes(',') ? s.split(',').map((x: string) => x.trim()).filter(Boolean) : [s];
+    } else if (data.recipientId) {
+      targetRecipientIds = [data.recipientId];
+    }
+
+    // Check for duplicate recipientIds in request
+    if (new Set(targetRecipientIds).size !== targetRecipientIds.length) {
+      throw new ChatServiceError('Duplicate recipientIds are not allowed', 400, 'DUPLICATE_RECIPIENT_IDS');
+    }
+
+    if (targetRecipientIds.length === 0) {
+      throw new ChatServiceError('At least one valid recipient is required', 400, 'INVALID_RECIPIENTS');
+    }
+
+    const maxBulkRecipients = env.CHAT_MAX_BULK_RECIPIENTS || 50;
+    if (targetRecipientIds.length > maxBulkRecipients) {
+      throw new ChatServiceError(
+        `Recipient limit exceeded. Maximum ${maxBulkRecipients} recipients allowed per operation`,
+        400,
+        'RECIPIENT_LIMIT_EXCEEDED'
+      );
+    }
+
+    const normSenderId = String(senderId || '').trim().toLowerCase();
+
+    // Check single self-forwarding
+    if (targetRecipientIds.length === 1 && targetRecipientIds[0].trim().toLowerCase() === normSenderId) {
+      throw new ChatServiceError('You cannot forward messages to yourself', 400, 'SELF_MESSAGING_PROHIBITED');
+    }
+
+    // 3. Batch fetch and validate all source messages FIRST (All-or-Nothing validation before any mutations)
+    const sourceMessages = await ChatMessage.findAll({
+      where: { id: { [Op.in]: targetMessageIds } },
+    });
+    const foundMessageMap = new Map(sourceMessages.map((m) => [m.id, m]));
+
+    for (const msgId of targetMessageIds) {
+      if (!foundMessageMap.has(msgId)) {
+        throw new ChatServiceError('Source message not found or has been deleted', 404, 'MESSAGE_NOT_FOUND');
+      }
+    }
+
+    // Fetch conversations for source messages to verify participant access
+    const convIds = Array.from(new Set(sourceMessages.map((m) => m.conversationId)));
+    const conversations = await Conversation.findAll({
+      where: { id: { [Op.in]: convIds } },
+    });
+    const convMap = new Map(conversations.map((c) => [c.id, c]));
+
+    // Fetch conversation user state for history cutoff verification
+    const userStates = await ConversationUserState.findAll({
+      where: {
+        userId: senderId,
+        conversationId: { [Op.in]: convIds },
+      },
+    });
+    const userStateMap = new Map(userStates.map((s) => [s.conversationId, s]));
+
+    for (const srcMsg of sourceMessages) {
+      const conv = convMap.get(srcMsg.conversationId);
+      if (!conv || conv.isDeletedForEveryone) {
+        throw new ChatServiceError('Source message conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
+      }
+
+      const u1 = String(conv.user1Id || '').trim().toLowerCase();
+      const u2 = String(conv.user2Id || '').trim().toLowerCase();
+      if (u1 !== normSenderId && u2 !== normSenderId) {
+        throw new ChatServiceError('You are not authorized to access this message', 403, 'FORBIDDEN');
+      }
+
+      const userState = userStateMap.get(srcMsg.conversationId);
+      if (userState?.clearedAt && srcMsg.createdAt <= userState.clearedAt) {
+        throw new ChatServiceError('Source message not found or has been deleted', 404, 'MESSAGE_NOT_FOUND');
+      }
+
+      let parsedMeta: Record<string, any> = {};
+      if (srcMsg.metadata) {
+        try {
+          parsedMeta = JSON.parse(srcMsg.metadata);
+        } catch {
+          parsedMeta = {};
+        }
+      }
+
+      if (
+        parsedMeta.isDeleted ||
+        parsedMeta.recalled ||
+        parsedMeta.isDeletedForEveryone ||
+        (Array.isArray(parsedMeta.deletedForUserIds) && parsedMeta.deletedForUserIds.includes(senderId))
+      ) {
+        throw new ChatServiceError('Cannot forward a deleted or recalled message', 400, 'MESSAGE_DELETED');
+      }
+    }
+
+    // Preserve requested order of source messages
+    const orderedSourceMessages = targetMessageIds.map((id) => foundMessageMap.get(id)!);
+
+    // Fetch original senders' profiles for forwarding attribution
+    const originalSenderIds = Array.from(new Set(orderedSourceMessages.map((m) => m.senderId)));
+    const originalUsers = await User.findAll({
+      where: { id: { [Op.in]: originalSenderIds } },
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName'],
+    });
+    const originalSenderNameMap = new Map(originalUsers.map((u) => [u.id, resolveChatDisplayName(u)]));
+
+    // Fetch sender user profile
+    const senderUser = await User.findByPk(senderId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+    });
+
+    // 4. Batch query target users, blocks, and existing conversations (prevent N+1 queries)
+    const targetUsers = await User.findAll({
+      where: { id: { [Op.in]: targetRecipientIds } },
+      attributes: ['id', 'isActive'],
+    });
+    const targetUserMap = new Map(targetUsers.map((u) => [u.id, u]));
+
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [
+          { userId: senderId, blockedUserId: { [Op.in]: targetRecipientIds } },
+          { userId: { [Op.in]: targetRecipientIds }, blockedUserId: senderId },
+        ],
+      },
+      attributes: ['userId', 'blockedUserId'],
+      raw: true,
+    });
+    const blockedRecipientIdSet = new Set<string>();
+    for (const b of blocks) {
+      if (b.userId === senderId) blockedRecipientIdSet.add(b.blockedUserId);
+      if (b.blockedUserId === senderId) blockedRecipientIdSet.add(b.userId);
+    }
+
+    const eligibleRecipientIds = targetRecipientIds.filter(
+      (rId) => rId.trim().toLowerCase() !== normSenderId
+    );
+    const convPairs = eligibleRecipientIds.map((rId) => {
+      const [u1, u2] = [senderId, rId].sort();
+      return { user1Id: u1, user2Id: u2 };
+    });
+
+    const destConvMap = new Map<string, Conversation>();
+    if (convPairs.length > 0) {
+      const existingConvs = await Conversation.findAll({
+        where: { [Op.or]: convPairs },
+      });
+      for (const conv of existingConvs) {
+        const otherId = getOtherParticipantId(conv, senderId);
+        destConvMap.set(otherId, conv);
+      }
+    }
+
+    // 5. Process each recipient independently with transaction safety
+    const results: ForwardResultItemDTO[] = [];
+
+    for (const recipientId of targetRecipientIds) {
+      if (recipientId.trim().toLowerCase() === normSenderId) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'You cannot forward messages to yourself',
+          errorCode: 'SELF_MESSAGING_PROHIBITED',
+        });
+        continue;
+      }
+
+      const recipient = targetUserMap.get(recipientId);
+      if (!recipient || recipient.isActive === false) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'User profile is unavailable',
+          errorCode: 'USER_NOT_FOUND',
+        });
+        continue;
+      }
+
+      if (blockedRecipientIdSet.has(recipientId)) {
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: 'You cannot chat with this user',
+          errorCode: 'USER_BLOCKED',
+        });
+        continue;
+      }
+
+      const baseClientMessageId =
+        data.clientMessageIds?.[recipientId] ||
+        (data.clientMessageId
+          ? targetRecipientIds.length === 1
+            ? data.clientMessageId
+            : `${data.clientMessageId}:${recipientId}`
+          : undefined);
+
+      const t = await sequelize.transaction();
+      try {
+        let conv = destConvMap.get(recipientId);
+        if (!conv) {
+          const [u1, u2] = [senderId, recipientId].sort();
+          conv = await Conversation.create(
+            {
+              user1Id: u1,
+              user2Id: u2,
+              isDeletedForEveryone: false,
+            },
+            { transaction: t }
+          );
+          destConvMap.set(recipientId, conv);
+        } else if (conv.isDeletedForEveryone) {
+          conv.isDeletedForEveryone = false;
+          conv.deletedForEveryoneAt = null;
+          conv.deletedForEveryoneBy = null;
+          await conv.save({ transaction: t });
+        }
+
+        const conversationId = conv.id;
+        const savedMessages: ChatMessage[] = [];
+        let lastMessagePreview: string = '';
+
+        for (let i = 0; i < orderedSourceMessages.length; i++) {
+          const srcMsg = orderedSourceMessages[i];
+          const perMessageClientId = baseClientMessageId
+            ? orderedSourceMessages.length === 1
+              ? baseClientMessageId
+              : `${baseClientMessageId}-${i}`
+            : undefined;
+
+          // Idempotency check
+          if (perMessageClientId) {
+            const existingMessage = await ChatMessage.findOne({
+              where: {
+                conversationId,
+                senderId,
+                metadata: {
+                  [Op.like]: `%"clientMessageId":"${perMessageClientId}"%`,
+                },
+              },
+              transaction: t,
+            });
+            if (existingMessage) {
+              savedMessages.push(existingMessage);
+              continue;
+            }
+          }
+
+          let srcMeta: Record<string, any> = {};
+          if (srcMsg.metadata) {
+            try {
+              srcMeta = JSON.parse(srcMsg.metadata);
+            } catch {
+              srcMeta = {};
+            }
+          }
+
+          // Build clean forwarding metadata copying media/attachment references
+          const destMeta: Record<string, any> = {};
+          const safeKeys = [
+            'imageUrl',
+            'thumbnailUrl',
+            'mediaUrl',
+            'url',
+            'audioUrl',
+            'voiceUrl',
+            'duration',
+            'durationMs',
+            'caption',
+            'images',
+            'imageUrls',
+            'name',
+            'phoneNumber',
+            'latitude',
+            'longitude',
+            'mimeType',
+            'fileSize',
+          ];
+          for (const k of safeKeys) {
+            if (srcMeta[k] !== undefined) {
+              destMeta[k] = srcMeta[k];
+            }
+          }
+
+          destMeta.isForwarded = true;
+          destMeta.forwardedFromMessageId = srcMsg.id;
+          destMeta.originalSenderId = srcMsg.senderId;
+          destMeta.originalSenderName =
+            originalSenderNameMap.get(srcMsg.senderId) || 'Participant';
+          destMeta.originalCreatedAt = srcMsg.createdAt
+            ? new Date(srcMsg.createdAt).toISOString()
+            : new Date().toISOString();
+
+          if (perMessageClientId) {
+            destMeta.clientMessageId = perMessageClientId;
+          }
+
+          const createdMsg = await ChatMessage.create(
+            {
+              conversationId,
+              senderId,
+              recipientId,
+              content: srcMsg.content,
+              messageType: srcMsg.messageType,
+              metadata: JSON.stringify(destMeta),
+              isRead: false,
+            },
+            { transaction: t }
+          );
+
+          savedMessages.push(createdMsg);
+
+          if (srcMsg.messageType === 'image') {
+            lastMessagePreview = '📷 Photo';
+          } else if (srcMsg.messageType === 'audio') {
+            lastMessagePreview = '🎤 Voice message';
+          } else if (srcMsg.messageType === 'location') {
+            lastMessagePreview = destMeta.name ? `📍 ${destMeta.name}` : '📍 Location';
+          } else if (srcMsg.messageType === 'contact') {
+            lastMessagePreview = destMeta.name ? `👤 ${destMeta.name}` : '👤 Contact';
+          } else {
+            lastMessagePreview = srcMsg.content;
+          }
+        }
+
+        const lastSaved = savedMessages[savedMessages.length - 1];
+        if (lastSaved) {
+          conv.lastMessage = lastMessagePreview;
+          conv.lastMessageAt = lastSaved.createdAt;
+          await conv.save({ transaction: t });
+        }
+
+        // Unhide conversation if previously deleted for participants
+        await ConversationUserState.update(
+          { isDeleted: false },
+          {
+            where: {
+              conversationId,
+              userId: { [Op.in]: [senderId, recipientId] },
+              isDeleted: true,
+            },
+            transaction: t,
+          }
+        );
+
+        await t.commit();
+
+        // Build response DTOs for successfully committed messages
+        const recipientDtos: ChatMessageDTO[] = [];
+        for (const savedMessage of savedMessages) {
+          let parsedMeta: any = null;
+          if (savedMessage.metadata) {
+            try {
+              parsedMeta = JSON.parse(savedMessage.metadata);
+            } catch {
+              parsedMeta = savedMessage.metadata;
+            }
+          }
+
+          const imageUrl =
+            parsedMeta?.imageUrl ||
+            (savedMessage.messageType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+          const thumbnailUrl =
+            parsedMeta?.thumbnailUrl ||
+            (savedMessage.messageType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+          const audioUrl =
+            parsedMeta?.audioUrl ||
+            parsedMeta?.voiceUrl ||
+            (savedMessage.messageType === 'audio' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
+          const mediaUrl = parsedMeta?.mediaUrl || audioUrl || imageUrl;
+          const url = audioUrl || imageUrl || mediaUrl;
+
+          const dur =
+            parsedMeta?.duration !== undefined ? Number(parsedMeta.duration) : undefined;
+          const durMs =
+            parsedMeta?.durationMs !== undefined
+              ? Number(parsedMeta.durationMs)
+              : dur !== undefined
+                ? dur * 1000
+                : undefined;
+
+          const dto: ChatMessageDTO = {
+            id: savedMessage.id,
+            conversationId: savedMessage.conversationId,
+            senderId: savedMessage.senderId,
+            recipientId: savedMessage.recipientId,
+            content: savedMessage.content,
+            messageType: savedMessage.messageType as any,
+            metadata: parsedMeta,
+            status: savedMessage.status,
+            isDelivered: !!savedMessage.isDelivered,
+            deliveredAt: savedMessage.deliveredAt || null,
+            isRead: savedMessage.isRead,
+            readAt: savedMessage.readAt || null,
+            sentAt: savedMessage.createdAt,
+            createdAt: savedMessage.createdAt,
+            isMine: true,
+            isSender: true,
+            isPinned: false,
+            pinnedAt: null,
+            pinnedBy: null,
+            isForwarded: true,
+            forwardedFromMessageId: parsedMeta?.forwardedFromMessageId || null,
+            originalSenderId: parsedMeta?.originalSenderId || null,
+            originalSenderName: parsedMeta?.originalSenderName || null,
+            originalCreatedAt: parsedMeta?.originalCreatedAt || null,
+            sender: senderUser
+              ? {
+                  id: senderUser.id,
+                  displayName: resolveChatDisplayName(senderUser),
+                  profileImageUrl: formatMediaUrl(senderUser.profilePicture),
+                }
+              : undefined,
+            imageUrl,
+            thumbnailUrl,
+            mediaUrl,
+            audioUrl,
+            voiceUrl: audioUrl,
+            url,
+            duration: dur,
+            durationMs: durMs,
+            images: parsedMeta?.images,
+            imageUrls: parsedMeta?.imageUrls,
+          };
+
+          recipientDtos.push(dto);
+        }
+
+        // Real-Time Delivery via Socket.IO after database persistence succeeds
+        try {
+          const io = getSocketServer();
+          if (io) {
+            const recipientRoom = getUserRoomName(recipientId);
+            const senderRoom = getUserRoomName(senderId);
+
+            for (const dto of recipientDtos) {
+              const recipientPayload = {
+                ...dto,
+                isMine: false,
+                isSender: false,
+              };
+
+              // Emit to recipient's multi-device room
+              io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+              io.to(recipientRoom).emit('message:received' as any, recipientPayload);
+              io.to(recipientRoom).emit('new_message' as any, recipientPayload);
+              io.to(recipientRoom).emit('chat:message_forwarded' as any, recipientPayload);
+
+              // Synchronize sender's other connected devices
+              io.to(senderRoom).emit('chat:message_sent' as any, dto);
+              io.to(senderRoom).emit('message:sent' as any, dto);
+              io.to(senderRoom).emit('new_message' as any, dto);
+              io.to(senderRoom).emit('chat:message_forwarded' as any, dto);
+            }
+
+            if (lastSaved) {
+              await this.emitConversationUpdate(
+                conversationId,
+                lastSaved,
+                lastMessagePreview,
+                senderId,
+                recipientId
+              );
+            }
+          }
+        } catch {
+          // Socket server may not be bound in isolated test contexts; continue gracefully
+        }
+
+        results.push({
+          recipientId,
+          conversationId,
+          status: 'success',
+          messageId: recipientDtos[0]?.id,
+          messageIds: recipientDtos.map((d) => d.id),
+          isForwarded: true,
+          messages: recipientDtos,
+        });
+      } catch (err: any) {
+        await t.rollback();
+        results.push({
+          recipientId,
+          conversationId: null,
+          status: 'failed',
+          error: err.message || 'Failed to forward messages',
+          errorCode: 'FORWARD_ERROR',
+        });
+      }
+    }
+
+    return {
+      totalCount: targetRecipientIds.length,
+      successCount: results.filter((r) => r.status === 'success').length,
+      failureCount: results.filter((r) => r.status === 'failed').length,
+      results,
+    };
   }
 }
 

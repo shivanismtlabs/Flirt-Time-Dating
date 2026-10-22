@@ -995,7 +995,7 @@ export const ALLOWED_CHAT_REACTION_EMOJIS = [
   '🙏',
 ] as const;
 
-export type AllowedChatReactionEmoji = (typeof ALLOWED_CHAT_REACTION_EMOJIS)[number];
+export type AllowedChatReactionEmoji = string;
 
 const EMOJI_ALIAS_MAP: Record<string, string> = {
   heart: '❤️',
@@ -1035,11 +1035,7 @@ export const normalizeReactionEmoji = (input?: string | null): string | null => 
     normalized = '❤️';
   }
 
-  if ((ALLOWED_CHAT_REACTION_EMOJIS as readonly string[]).includes(normalized)) {
-    return normalized;
-  }
-
-  return null;
+  return normalized;
 };
 
 export const reactMessageSchema = z.object({
@@ -1049,9 +1045,9 @@ export const reactMessageSchema = z.object({
   }),
   body: z
     .object({
-      emoji: z.string().trim().min(1).max(32).optional(),
-      reaction: z.string().trim().min(1).max(32).optional(),
-      reactionEmoji: z.string().trim().min(1).max(32).optional(),
+      emoji: z.string().trim().min(1, { message: 'Reaction emoji cannot be empty' }).max(32, { message: 'Reaction emoji cannot exceed 32 characters' }).optional(),
+      reaction: z.string().trim().min(1, { message: 'Reaction emoji cannot be empty' }).max(32, { message: 'Reaction emoji cannot exceed 32 characters' }).optional(),
+      reactionEmoji: z.string().trim().min(1, { message: 'Reaction emoji cannot be empty' }).max(32, { message: 'Reaction emoji cannot exceed 32 characters' }).optional(),
     })
     .refine(
       (data) => {
@@ -1060,11 +1056,87 @@ export const reactMessageSchema = z.object({
         return normalizeReactionEmoji(val) !== null;
       },
       {
-        message: `Invalid reaction emoji. Supported emojis: ${ALLOWED_CHAT_REACTION_EMOJIS.join(', ')}`,
+        message: 'Reaction emoji is required',
         path: ['emoji'],
       }
     ),
 });
 
 export type ReactMessageInput = z.infer<typeof reactMessageSchema>;
+
+export const forwardMessagesSchema = z.object({
+  body: z
+    .object({
+      messageIds: z
+        .preprocess((val) => {
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (!trimmed) return [];
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {
+              // Not JSON
+            }
+            if (trimmed.includes(',')) {
+              return trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+            }
+            return [trimmed];
+          }
+          return val;
+        }, z.array(z.string().uuid({ message: 'Every messageId must be a valid UUID' }))
+          .min(1, { message: 'At least one messageId is required' })
+          .max(20, { message: 'Cannot forward more than 20 messages at once' })
+          .refine((items) => new Set(items).size === items.length, {
+            message: 'messageIds must contain unique IDs with no duplicates',
+          })
+        )
+        .optional(),
+      messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }).optional(),
+      recipientIds: z
+        .preprocess((val) => {
+          if (typeof val === 'string') {
+            const trimmed = val.trim();
+            if (!trimmed) return [];
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed)) return parsed;
+            } catch {
+              // Not JSON
+            }
+            if (trimmed.includes(',')) {
+              return trimmed.split(',').map((s) => s.trim()).filter(Boolean);
+            }
+            return [trimmed];
+          }
+          return val;
+        }, z.array(z.string().uuid({ message: 'Every recipientId must be a valid UUID' }))
+          .min(1, { message: 'At least one recipientId is required' })
+          .max(50, { message: 'Cannot forward messages to more than 50 recipients at once' })
+          .refine((items) => new Set(items).size === items.length, {
+            message: 'recipientIds must contain unique IDs with no duplicates',
+          })
+        )
+        .optional(),
+      recipientId: z.string().uuid({ message: 'Invalid recipientId UUID format' }).optional(),
+      clientMessageId: z.string().trim().max(100).optional(),
+      clientMessageIds: z.record(z.string()).optional(),
+    })
+    .refine(
+      (data) => (data.messageIds && data.messageIds.length > 0) || !!data.messageId,
+      {
+        message: 'At least one messageId is required',
+        path: ['messageIds'],
+      }
+    )
+    .refine(
+      (data) => (data.recipientIds && data.recipientIds.length > 0) || !!data.recipientId,
+      {
+        message: 'At least one recipientId is required',
+        path: ['recipientIds'],
+      }
+    ),
+});
+
+export type ForwardMessagesInput = z.infer<typeof forwardMessagesSchema>['body'];
 

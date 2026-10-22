@@ -235,15 +235,16 @@ describe('Message Reaction API & Real-Time Socket.IO Synchronization', () => {
       expect(res.body.success).toBe(false);
     });
 
-    it('should reject unsupported emoji / invalid text with 400', async () => {
+    it('should allow any custom emoji without restricted list validation', async () => {
       const res = await request(app)
         .post(`/api/v1/chats/${convAB.id}/messages/${msg1.id}/reactions`)
         .set('Authorization', `Bearer ${tokenA}`)
-        .send({ emoji: 'banana_random_junk' });
+        .send({ emoji: '🎉' });
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(JSON.stringify(res.body)).toMatch(/Invalid reaction emoji|Unsupported/i);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.action).toBe('added');
+      expect(res.body.data.reaction.emoji).toBe('🎉');
     });
 
     it('should reject non-uuid conversationId with 400', async () => {
@@ -683,6 +684,57 @@ describe('Message Reaction API & Real-Time Socket.IO Synchronization', () => {
 
       expect(socketAck.success).toBe(false);
       expect(socketAck.error).toMatch(/Unsupported reaction emoji/i);
+    });
+
+    it('should broadcast chat:message_reaction event to the other user with otherUserReaction and active emoji', async () => {
+      const receivedByB = new Promise<any>((resolve) => {
+        socketB.once('chat:message_reaction', (payload) => resolve(payload));
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg1.id}/reactions`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ reaction: '❤️' });
+
+      expect(res.status).toBe(200);
+
+      const eventB = await receivedByB;
+      expect(eventB).toMatchObject({
+        action: 'added',
+        messageId: msg1.id,
+        conversationId: convAB.id,
+        emoji: '❤️',
+        userId: userA.id,
+        otherUserReaction: '❤️',
+      });
+      expect(Array.isArray(eventB.reactions)).toBe(true);
+      expect(eventB.reactions.length).toBe(1);
+    });
+
+    it('should ensure the other user sees the reaction on the message when calling GET /messages API', async () => {
+      // User A reacts to User B's message (msg2)
+      await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg2.id}/reactions`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ emoji: '🔥' });
+
+      // User B (the other user / message sender) fetches messages
+      const resB = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenB}`);
+
+      expect(resB.status).toBe(200);
+      const foundMsg = resB.body.data.messages.find((m: any) => m.id === msg2.id);
+      expect(foundMsg).toBeDefined();
+
+      // Verify that User B sees the reaction clearly on other user's reaction / message
+      expect(foundMsg.reaction).toBe('🔥');
+      expect(foundMsg.emoji).toBe('🔥');
+      expect(foundMsg.otherUserReaction).toBe('🔥');
+      expect(foundMsg.myReaction).toBeNull();
+      expect(foundMsg.reactionCounts).toMatchObject({ '🔥': 1, total: 1 });
+      expect(foundMsg.reactions).toHaveLength(1);
+      expect(foundMsg.reactions[0].userId).toBe(userA.id);
     });
   });
 });

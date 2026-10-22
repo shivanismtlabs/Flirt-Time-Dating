@@ -1,3 +1,4 @@
+
 /**
  * FlirtTime Real-Time Socket Infrastructure Types
  * Strict TypeScript definitions for socket contexts, server instances, and events.
@@ -139,11 +140,17 @@ export interface ServerToClientEvents {
   'video_call:missed': (data: { callId: string; status: string }) => void;
 
   /**
-   * Conversation Archive & Deletion Events
+   * Conversation Archive, Deletion & Pin Events
    */
   'conversation:archived': (data: { conversationId: string; isArchived: boolean }) => void;
 
   'conversation:deleted': (data: { conversationId: string; deleteType: 'me' | 'everyone' }) => void;
+
+  /**
+   * Emitted to requesting user's active sessions when conversation pin status is updated.
+   */
+  'conversation:pin-updated': (data: { conversationId: string; isPinned: boolean }) => void;
+  'conversation:pin_updated': (data: { conversationId: string; isPinned: boolean }) => void;
 
   /**
    * Emitted to authorized conversation participants when a message is pinned.
@@ -170,6 +177,12 @@ export interface ServerToClientEvents {
    */
   'chat:message_edited': (data: any) => void;
   'message:edited': (data: any) => void;
+
+  /**
+   * Emitted to authorized conversation participants when a message is forwarded.
+   */
+  'chat:message_forwarded': (data: any) => void;
+  'message:forwarded': (data: any) => void;
 
   /**
    * Emitted to authorized conversation participant(s) when an individual message is deleted.
@@ -255,6 +268,30 @@ export interface ClientToServerEvents {
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 
+  'chat:forward_message': (
+    data: {
+      messageIds?: string[];
+      messageId?: string;
+      recipientIds?: string[];
+      recipientId?: string;
+      clientMessageId?: string;
+      clientMessageIds?: Record<string, string>;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'message:forward': (
+    data: {
+      messageIds?: string[];
+      messageId?: string;
+      recipientIds?: string[];
+      recipientId?: string;
+      clientMessageId?: string;
+      clientMessageIds?: Record<string, string>;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
   'chat:mark_read': (
     data: { conversationId: string; lastReadMessageId?: string },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
@@ -299,6 +336,11 @@ export interface ClientToServerEvents {
 
   'conversation:archive': (
     data: { conversationId: string; isArchived: boolean },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'conversation:pin': (
+    data: { conversationId: string; isPinned: boolean },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;
 

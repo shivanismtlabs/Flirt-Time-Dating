@@ -9,6 +9,7 @@ import {
   getMessagesHandler,
   sendMessageHandler,
   sendMultiMessageHandler,
+  forwardMessagesHandler,
   uploadChatMediaHandler,
   markReadHandler,
   deliveryReceiptHandler,
@@ -31,6 +32,7 @@ import {
   getMessagesSchema,
   sendMessageSchema,
   sendMultiMessageSchema,
+  forwardMessagesSchema,
   markReadSchema,
   deliveryReceiptSchema,
   conversationDeliveredSchema,
@@ -81,6 +83,9 @@ router.post('/', validate(startConversationSchema), startConversationHandler);
 router.post('/messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
 router.post('/send', handleUploadChatMedia, sendMessageHandler);
 router.post('/bulk-messages', handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+
+// 4a. Forward Single/Multiple Messages to Single/Multiple Recipients
+router.post('/messages/forward', validate(forwardMessagesSchema), forwardMessagesHandler);
 
 // 4b. Dedicated S3 Chat Media Upload & Presigned URL Endpoints
 // Supports POST /api/v1/chats/upload, POST /api/v1/chats/media
@@ -171,13 +176,18 @@ router.patch('/:conversationId/delivered', validate(conversationDeliveredSchema)
 router.put('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 router.get('/:conversationId/delivered', validate(conversationDeliveredSchema), deliveryReceiptHandler);
 
-// 10. POST /api/v1/chats/:conversationId/pin - Pin or unpin conversation (or message if messageId provided)
+// 10. PATCH & POST /api/v1/chat/conversations/:conversationId/pin & /api/v1/chats/:conversationId/pin - Pin or unpin conversation
+router.patch('/conversations/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);
+router.patch('/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);
+router.post('/conversations/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);
 router.post('/:conversationId/pin', validate(pinConversationSchema), pinConversationHandler);
 
 // 11. PATCH /api/v1/chats/:conversationId/archive - Archive or unarchive conversation
+router.patch('/conversations/:conversationId/archive', validate(archiveConversationSchema), archiveConversationHandler);
 router.patch('/:conversationId/archive', validate(archiveConversationSchema), archiveConversationHandler);
 
 // 12. DELETE /api/v1/chats/:conversationId - Delete for Me or Delete for Everyone
+router.delete('/conversations/:conversationId', validate(deleteConversationSchema), deleteConversationHandler);
 router.delete('/:conversationId', validate(deleteConversationSchema), deleteConversationHandler);
 
 export default router;

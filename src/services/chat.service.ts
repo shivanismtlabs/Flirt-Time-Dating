@@ -146,6 +146,7 @@ export interface ChatMessageDTO {
   sentAt?: Date | string;
   createdAt?: string | Date;
   isMine: boolean;
+  isSender?: boolean;
   isPinned?: boolean;
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
@@ -553,36 +554,47 @@ export class ChatService {
     isPinned: boolean;
     isArchived?: boolean;
   }> {
-    const conversation = await Conversation.findByPk(conversationId, {
-      include: [
-        {
-          model: User,
-          as: 'user1',
-          include: [
-            {
-              model: Interest,
-              as: 'interests',
-              through: { attributes: [] },
-              where: { isActive: true },
-              required: false,
-            },
-          ],
-        },
-        {
-          model: User,
-          as: 'user2',
-          include: [
-            {
-              model: Interest,
-              as: 'interests',
-              through: { attributes: [] },
-              where: { isActive: true },
-              required: false,
-            },
-          ],
-        },
-      ],
+    const includeModels = [
+      {
+        model: User,
+        as: 'user1',
+        include: [
+          {
+            model: Interest,
+            as: 'interests',
+            through: { attributes: [] },
+            where: { isActive: true },
+            required: false,
+          },
+        ],
+      },
+      {
+        model: User,
+        as: 'user2',
+        include: [
+          {
+            model: Interest,
+            as: 'interests',
+            through: { attributes: [] },
+            where: { isActive: true },
+            required: false,
+          },
+        ],
+      },
+    ];
+
+    let conversation = await Conversation.findByPk(conversationId, {
+      include: includeModels,
     });
+
+    if (!conversation) {
+      // Check if conversationId is actually a participant/target user ID
+      const [u1, u2] = [currentUserId, conversationId].sort();
+      conversation = await Conversation.findOne({
+        where: { user1Id: u1, user2Id: u2 },
+        include: includeModels,
+      });
+    }
 
     if (!conversation || conversation.isDeletedForEveryone) {
       throw new ChatServiceError('Conversation not found', 404);
@@ -603,7 +615,7 @@ export class ChatService {
 
     // Check user deletion state for Delete for Me
     const userState = await ConversationUserState.findOne({
-      where: { conversationId, userId: currentUserId },
+      where: { conversationId: conversation.id, userId: currentUserId },
     });
 
     if (userState?.isDeleted) {
@@ -715,13 +727,24 @@ export class ChatService {
     const limit = query.limit || 30;
     const offset = (page - 1) * limit;
 
-    const conversation = await Conversation.findByPk(conversationId, {
+    let conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone', 'lastMessageAt'],
     });
+
+    if (!conversation) {
+      // Check if conversationId is actually a participant/target user ID
+      const [u1, u2] = [currentUserId, conversationId].sort();
+      conversation = await Conversation.findOne({
+        where: { user1Id: u1, user2Id: u2 },
+        attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone', 'lastMessageAt'],
+      });
+    }
 
     if (!conversation || conversation.isDeletedForEveryone) {
       throw new ChatServiceError('Conversation not found', 404);
     }
+
+    const actualConversationId = conversation.id;
 
     const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
     const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
@@ -733,7 +756,7 @@ export class ChatService {
 
     // Check user state for Delete for Me
     const userState = await ConversationUserState.findOne({
-      where: { conversationId, userId: currentUserId },
+      where: { conversationId: actualConversationId, userId: currentUserId },
     });
 
     if (userState?.isDeleted) {
@@ -793,7 +816,7 @@ export class ChatService {
       }
     }
 
-    const whereClause: any = { conversationId };
+    const whereClause: any = { conversationId: actualConversationId };
 
     // Apply per-user history clearing threshold if Delete for Me was executed
     const dateConditions: any[] = [];
@@ -817,7 +840,7 @@ export class ChatService {
     if (query.pinned) {
       const pinnedRecords = await ChatMessagePin.findAll({
         where: {
-          conversationId,
+          conversationId: actualConversationId,
           userId: currentUserId,
         },
         attributes: ['messageId'],
@@ -893,7 +916,7 @@ export class ChatService {
     if (messageIds.length > 0) {
       const pinRows = await ChatMessagePin.findAll({
         where: {
-          conversationId,
+          conversationId: actualConversationId,
           messageId: { [Op.in]: messageIds },
           userId: currentUserId,
         },
@@ -971,6 +994,8 @@ export class ChatService {
 
       const pinInfo = pinsMap.get(msg.id);
 
+      const isMine = String(msg.senderId || '').trim().toLowerCase() === normCurrentUserId;
+
       const msgItem: ChatMessageDTO = {
         id: msg.id,
         conversationId: msg.conversationId,
@@ -985,7 +1010,8 @@ export class ChatService {
         isRead: !!msg.isRead,
         readAt: msg.readAt || null,
         sentAt: msg.createdAt,
-        isMine: msg.senderId === currentUserId,
+        isMine,
+        isSender: isMine,
         isPinned: !!pinInfo,
         pinnedAt: pinInfo?.createdAt || null,
         pinnedBy: pinInfo?.pinnedBy || null,
@@ -995,7 +1021,7 @@ export class ChatService {
         replyTo: parsedMetadata?.replyTo || null,
         sender: senderMap.get(msg.senderId) || {
           id: msg.senderId,
-          displayName: msg.senderId === currentUserId ? 'You' : 'Participant',
+          displayName: isMine ? 'You' : 'Participant',
           profileImageUrl: null,
         },
       };
@@ -1020,7 +1046,7 @@ export class ChatService {
     const hasMore = offset + limit < count;
 
     return {
-      conversationId,
+      conversationId: actualConversationId,
       messages: chronologicalMessages,
       pagination: {
         page,

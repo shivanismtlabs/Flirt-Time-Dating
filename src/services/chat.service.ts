@@ -16,6 +16,7 @@ import {
   Interest,
   ConversationUserState,
   Match,
+  SwipeAction,
   UserPhoto,
 } from '../models';
 import { ChatMessageType } from '../models/chatMessage.model';
@@ -32,6 +33,7 @@ import {
   EditMessageInput,
   ReplyMessageInput,
   ForwardMessagesInput,
+  GetForwardRecipientsQuery,
   normalizeReactionEmoji,
 } from '../schemas/chat.schema';
 
@@ -91,6 +93,33 @@ export const getOtherParticipantUser = (
   const normCurrent = String(currentUserId || '').trim().toLowerCase();
   const normU1 = String(conv.user1Id || '').trim().toLowerCase();
   return normU1 === normCurrent ? conv.user2 : conv.user1;
+};
+
+/**
+ * Validates S3 media object key or URL for path traversal and user ownership.
+ * Throws 400 INVALID_MEDIA_KEY if invalid path traversal,
+ * or 403 ATTACHMENT_OWNERSHIP_INVALID if key points to another user's private media folder.
+ */
+export const validateMediaAttachmentKey = (raw: string, senderId: string): string => {
+  if (!raw || typeof raw !== 'string') return '';
+  const cleanKey = s3Service.extractKey(raw);
+  if (cleanKey.includes('..') || cleanKey.includes('\\') || cleanKey.includes('\0')) {
+    throw new ChatServiceError('Invalid S3 object key or URL', 400, 'INVALID_MEDIA_KEY');
+  }
+  const userFolderMatch = (raw + ' ' + cleanKey).match(
+    /(?:uploads|chat|photos|moments|quick-moments|avatars|verifications)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
+  );
+  if (userFolderMatch && userFolderMatch[1]) {
+    const ownerId = userFolderMatch[1];
+    if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
+      throw new ChatServiceError(
+        'You cannot attach media belonging to another user',
+        403,
+        'ATTACHMENT_OWNERSHIP_INVALID'
+      );
+    }
+  }
+  return cleanKey;
 };
 
 export interface ChatParticipantDTO {
@@ -286,6 +315,28 @@ export interface ForwardMessagesResultDTO {
   successCount: number;
   failureCount: number;
   results: ForwardResultItemDTO[];
+}
+
+export type ForwardRecipientRelationshipType = 'match' | 'super_like_received';
+
+export interface ForwardRecipientDTO {
+  userId: string;
+  name: string;
+  profileImage: string | null;
+  relationshipType: ForwardRecipientRelationshipType;
+}
+
+export interface ForwardRecipientsPaginationDTO {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasMore: boolean;
+}
+
+export interface ForwardRecipientsResponseDTO {
+  recipients: ForwardRecipientDTO[];
+  pagination: ForwardRecipientsPaginationDTO;
 }
 
 export class ChatService {
@@ -1087,14 +1138,26 @@ export class ChatService {
           parsedMetadata.images = parsedMetadata.images.map((img: any) => {
             if (typeof img === 'string') {
               const k = s3Service.extractKey(img);
-              return { url: s3Service.getPublicUrl(k), thumbnailUrl: s3Service.getThumbnailUrl(k), key: k };
+              const pubUrl = s3Service.getPublicUrl(k);
+              const thUrl = s3Service.getThumbnailUrl(k);
+              return { url: pubUrl, imageUrl: pubUrl, thumbnailUrl: thUrl, mediaUrl: pubUrl, key: k };
             }
             if (img && typeof img === 'object') {
-              const k = img.key || s3Service.extractKey(img.url || img.imageUrl || '');
+              const rawUrl = img.url || img.imageUrl || '';
+              const k = img.key || s3Service.extractKey(rawUrl);
+              const pubUrl = (rawUrl && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')))
+                ? rawUrl
+                : (k ? s3Service.getPublicUrl(k) : '');
+              const thUrl = (img.thumbnailUrl && (img.thumbnailUrl.startsWith('http://') || img.thumbnailUrl.startsWith('https://')))
+                ? img.thumbnailUrl
+                : (k ? s3Service.getThumbnailUrl(k) : pubUrl);
               return {
                 ...img,
-                url: img.url || (k ? s3Service.getPublicUrl(k) : ''),
-                thumbnailUrl: img.thumbnailUrl || (k ? s3Service.getThumbnailUrl(k) : ''),
+                url: pubUrl,
+                imageUrl: pubUrl,
+                thumbnailUrl: thUrl,
+                mediaUrl: pubUrl,
+                key: k,
               };
             }
             return img;
@@ -1233,10 +1296,12 @@ export class ChatService {
           msgItem.imageUrls = urls;
           msgItem.images = urls.map((u: string) => {
             const k = s3Service.extractKey(u);
+            const pubUrl = (u && (u.startsWith('http://') || u.startsWith('https://'))) ? u : s3Service.getPublicUrl(k);
             return {
-              url: u,
-              imageUrl: u,
+              url: pubUrl,
+              imageUrl: pubUrl,
               thumbnailUrl: s3Service.getThumbnailUrl(k),
+              mediaUrl: pubUrl,
               key: k,
             };
           });
@@ -1645,7 +1710,9 @@ export class ChatService {
     // 1. Process all attached multipart files (support 3-4 images, audio, or both)
     if (attachedFiles.length > 0) {
       for (const file of attachedFiles) {
-        if (!file || !file.buffer) continue;
+        if (!file || !file.buffer || file.buffer.length === 0) {
+          throw new ChatServiceError('One or more attached files are invalid or empty', 400, 'INVALID_FILE_BUFFER');
+        }
         const mime = (file.mimetype || '').toLowerCase();
         const origName = (file.originalname || '').toLowerCase();
         const field = (file.fieldname || '').toLowerCase();
@@ -1719,7 +1786,7 @@ export class ChatService {
               item?.key ||
               '';
         if (!raw) continue;
-        const cleanKey = s3Service.extractKey(raw);
+        const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -1737,7 +1804,7 @@ export class ChatService {
       for (const rawItem of rawImageUrls) {
         const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
         if (!raw || typeof raw !== 'string') continue;
-        const cleanKey = s3Service.extractKey(raw);
+        const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -1762,7 +1829,7 @@ export class ChatService {
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
     const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
     if (bodyAudio && uploadedAudios.length === 0) {
-      const cleanKey = s3Service.extractKey(bodyAudio);
+      const cleanKey = validateMediaAttachmentKey(bodyAudio, senderId);
       const audioPubUrl = s3Service.getPublicUrl(cleanKey);
       const dur =
         (data as any).duration !== undefined
@@ -1828,21 +1895,7 @@ export class ChatService {
           fileSize: buffer.length,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const userFolderMatch = messageContent.match(
-          /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
-        );
-        if (userFolderMatch && userFolderMatch[1]) {
-          const ownerId = userFolderMatch[1];
-          if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
-            throw new ChatServiceError(
-              'You cannot attach media belonging to another user',
-              403,
-              'ATTACHMENT_OWNERSHIP_INVALID'
-            );
-          }
-        }
-
-        const cleanKey = s3Service.extractKey(messageContent);
+        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -1894,7 +1947,7 @@ export class ChatService {
 
         uploadedAudios.push({
           url: audioPublicUrl,
-          audioUrl: audioPublicUrl,
+          audioUrl: audioPubUrl,
           voiceUrl: audioPublicUrl,
           mediaUrl: audioPublicUrl,
           key: s3Key,
@@ -1904,7 +1957,7 @@ export class ChatService {
           durationMs: durMs !== undefined && !Number.isNaN(durMs) ? durMs : undefined,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const cleanKey = s3Service.extractKey(messageContent);
+        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
         const audioPublicUrl = s3Service.getPublicUrl(cleanKey);
         const dur =
           (data as any).duration !== undefined
@@ -2645,7 +2698,9 @@ export class ChatService {
     // 1. Direct file attachment on broadcast: upload to S3 ONCE before distributing
     if (attachedFiles.length > 0) {
       for (const file of attachedFiles) {
-        if (!file || !file.buffer) continue;
+        if (!file || !file.buffer || file.buffer.length === 0) {
+          throw new ChatServiceError('One or more attached files are invalid or empty', 400, 'INVALID_FILE_BUFFER');
+        }
         const mime = (file.mimetype || '').toLowerCase();
         const origName = (file.originalname || '').toLowerCase();
         const field = (file.fieldname || '').toLowerCase();
@@ -2701,11 +2756,7 @@ export class ChatService {
             mimeType: imgMime,
             fileSize: file.size,
           });
-        }
-      }
-    }
-
-    // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
+      // 2. Process image arrays passed via JSON (data.images or data.imageUrls)
     if (Array.isArray(rawImages) && rawImages.length > 0) {
       for (const item of rawImages) {
         const raw =
@@ -2719,7 +2770,7 @@ export class ChatService {
               item?.key ||
               '';
         if (!raw) continue;
-        const cleanKey = s3Service.extractKey(raw);
+        const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -2737,7 +2788,7 @@ export class ChatService {
       for (const rawItem of rawImageUrls) {
         const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
         if (!raw || typeof raw !== 'string') continue;
-        const cleanKey = s3Service.extractKey(raw);
+        const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -2755,7 +2806,7 @@ export class ChatService {
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
     const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
     if (bodyAudio && uploadedAudios.length === 0) {
-      const cleanKey = s3Service.extractKey(bodyAudio);
+      const cleanKey = validateMediaAttachmentKey(bodyAudio, senderId);
       const audioPubUrl = s3Service.getPublicUrl(cleanKey);
       const dur =
         (data as any).duration !== undefined
@@ -2821,21 +2872,7 @@ export class ChatService {
           fileSize: buffer.length,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const userFolderMatch = messageContent.match(
-          /(?:uploads|chat|photos|moments|quick-moments|avatars)\/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/i
-        );
-        if (userFolderMatch && userFolderMatch[1]) {
-          const ownerId = userFolderMatch[1];
-          if (ownerId.toLowerCase() !== senderId.toLowerCase()) {
-            throw new ChatServiceError(
-              'You cannot attach media belonging to another user',
-              403,
-              'ATTACHMENT_OWNERSHIP_INVALID'
-            );
-          }
-        }
-
-        const cleanKey = s3Service.extractKey(messageContent);
+        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -2887,7 +2924,7 @@ export class ChatService {
 
         uploadedAudios.push({
           url: audioPublicUrl,
-          audioUrl: audioPublicUrl,
+          audioUrl: audioPubUrl,
           voiceUrl: audioPublicUrl,
           mediaUrl: audioPublicUrl,
           key: s3Key,
@@ -2897,7 +2934,7 @@ export class ChatService {
           durationMs: durMs !== undefined && !Number.isNaN(durMs) ? durMs : undefined,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const cleanKey = s3Service.extractKey(messageContent);
+        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
         const audioPublicUrl = s3Service.getPublicUrl(cleanKey);
         const dur =
           (data as any).duration !== undefined
@@ -7066,6 +7103,210 @@ return {
       successCount: results.filter((r) => r.status === 'success').length,
       failureCount: results.filter((r) => r.status === 'failed').length,
       results,
+    };
+  }
+
+  /**
+   * FORWARD MESSAGE RECIPIENT SELECTION LIST
+   * GET /api/v1/chats/forward/recipients
+   * Fetches users eligible as forward message recipients:
+   * 1. Mutual active matches with authenticated user
+   * 2. Users who have sent an incoming super-like to authenticated user
+   *
+   * Enforces:
+   * - Exclusion of current user
+   * - Exclusion of bidirectional blocked users (blocked by or blocking current user)
+   * - Exclusion of inactive/deleted/suspended accounts
+   * - Exclusion of ordinary one-way likes and outgoing super-likes
+   * - Deduplication: users qualifying for both are returned once with relationshipType: 'match'
+   * - Search by participant name / username
+   * - Pagination support
+   * - 8-pillar Global API Response Standard (clean compact DTO, no ORM leakage)
+   */
+  public async getForwardRecipients(
+    currentUserId: string,
+    query: GetForwardRecipientsQuery
+  ): Promise<ForwardRecipientsResponseDTO> {
+    const normCurrentUserId = String(currentUserId || '').trim().toLowerCase();
+    const page = Number(query?.page) || 1;
+    const limit = Number(query?.limit) || 20;
+
+    // 1. Fetch blocked users to exclude (both directions)
+    const blockedUserIds = await this.getBlockedUserIds(currentUserId);
+
+    // 2. Fetch mutual active matches for current user
+    const matches = await Match.findAll({
+      where: {
+        [Op.or]: [{ user1Id: currentUserId }, { user2Id: currentUserId }],
+        isActive: true,
+      },
+      attributes: ['user1Id', 'user2Id', 'createdAt'],
+      order: [['createdAt', 'DESC']],
+      raw: true,
+    });
+
+    // 3. Fetch incoming super-likes for current user (targetUserId = current user, action = 'super_like')
+    const superLikes = await SwipeAction.findAll({
+      where: {
+        targetUserId: currentUserId,
+        action: 'super_like',
+      },
+      attributes: ['userId', 'createdAt'],
+      order: [['createdAt', 'DESC']],
+      raw: true,
+    });
+
+    // 4. Map candidate recipients and enforce deduplication + precedence:
+    // If a user qualifies as both a match and incoming super-like, 'match' takes precedence.
+    const candidateMap = new Map<
+      string,
+      { relationshipType: ForwardRecipientRelationshipType; interactionAt: Date }
+    >();
+
+    for (const m of matches) {
+      const partnerId =
+        String(m.user1Id || '').trim().toLowerCase() === normCurrentUserId
+          ? m.user2Id
+          : m.user1Id;
+      if (!partnerId) continue;
+      const normPartnerId = String(partnerId).trim().toLowerCase();
+      if (normPartnerId === normCurrentUserId || blockedUserIds.has(partnerId)) continue;
+
+      candidateMap.set(partnerId, {
+        relationshipType: 'match',
+        interactionAt: m.createdAt ? new Date(m.createdAt) : new Date(0),
+      });
+    }
+
+    for (const sl of superLikes) {
+      const senderId = sl.userId;
+      if (!senderId) continue;
+      const normSenderId = String(senderId).trim().toLowerCase();
+      if (normSenderId === normCurrentUserId || blockedUserIds.has(senderId)) continue;
+
+      if (!candidateMap.has(senderId)) {
+        candidateMap.set(senderId, {
+          relationshipType: 'super_like_received',
+          interactionAt: sl.createdAt ? new Date(sl.createdAt) : new Date(0),
+        });
+      }
+    }
+
+    const candidateIds = Array.from(candidateMap.keys());
+    if (candidateIds.length === 0) {
+      return {
+        recipients: [],
+        pagination: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasMore: false,
+        },
+      };
+    }
+
+    // 5. Fetch active users matching candidate IDs (excluding inactive/deleted/suspended accounts)
+    const userWhere: any = {
+      id: { [Op.in]: candidateIds },
+      isActive: true,
+    };
+
+    if (query?.search && query.search.trim().length > 0) {
+      const dialect = sequelize.getDialect();
+      const likeOp = dialect === 'postgres' ? Op.iLike : Op.like;
+      const searchTerm = `%${query.search.trim()}%`;
+      userWhere[Op.or] = [
+        { fullName: { [likeOp]: searchTerm } },
+        { firstName: { [likeOp]: searchTerm } },
+        { lastName: { [likeOp]: searchTerm } },
+        { nickName: { [likeOp]: searchTerm } },
+        { username: { [likeOp]: searchTerm } },
+      ];
+    }
+
+    let matchingUsers = await User.findAll({
+      where: userWhere,
+      attributes: [
+        'id',
+        'fullName',
+        'firstName',
+        'lastName',
+        'nickName',
+        'username',
+        'profilePicture',
+        'isActive',
+      ],
+      include: [
+        {
+          model: UserPhoto,
+          as: 'photos',
+          where: { status: 'approved' },
+          required: false,
+          attributes: ['id', 'imageUrl', 'isPrimary', 'status'],
+        },
+      ],
+    });
+
+    // Additional in-memory display name search filter to support composite full names (e.g. "Jessica Parker")
+    if (query?.search && query.search.trim().length > 0) {
+      const s = query.search.trim().toLowerCase();
+      matchingUsers = matchingUsers.filter((u) => {
+        const dispName = resolveChatDisplayName(u).toLowerCase();
+        const username = (u.username || '').toLowerCase();
+        const fullName = (u.fullName || '').toLowerCase();
+        const firstName = (u.firstName || '').toLowerCase();
+        const lastName = (u.lastName || '').toLowerCase();
+        const nickName = (u.nickName || '').toLowerCase();
+        return (
+          dispName.includes(s) ||
+          username.includes(s) ||
+          fullName.includes(s) ||
+          firstName.includes(s) ||
+          lastName.includes(s) ||
+          nickName.includes(s)
+        );
+      });
+    }
+
+    // 6. Sort candidate users by interaction recency (newest interaction first), secondary by name
+    matchingUsers.sort((a, b) => {
+      const timeA = candidateMap.get(a.id)?.interactionAt.getTime() || 0;
+      const timeB = candidateMap.get(b.id)?.interactionAt.getTime() || 0;
+      if (timeB !== timeA) {
+        return timeB - timeA;
+      }
+      return resolveChatDisplayName(a).localeCompare(resolveChatDisplayName(b));
+    });
+
+    // 7. Paginate results
+    const total = matchingUsers.length;
+    const totalPages = Math.ceil(total / limit) || 0;
+    const offset = (page - 1) * limit;
+    const pagedUsers = matchingUsers.slice(offset, offset + limit);
+    const hasMore = page * limit < total;
+
+    // 8. Build compact response DTO (8-pillar standard)
+    const recipients: ForwardRecipientDTO[] = pagedUsers.map((user) => {
+      const candidate = candidateMap.get(user.id);
+      const photo = this.resolvePrimaryPhoto(user.profilePicture, (user as any).photos);
+      return {
+        userId: user.id,
+        name: resolveChatDisplayName(user),
+        profileImage: photo,
+        relationshipType: candidate?.relationshipType || 'match',
+      };
+    });
+
+    return {
+      recipients,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages,
+        hasMore,
+      },
     };
   }
 }

@@ -245,6 +245,24 @@ export const forwardMessagesHandler = async (req: AuthenticatedRequest, res: Res
   }
 };
 
+/**
+ * 4e. GET /api/v1/chats/forward/recipients
+ * Fetches users available in the Forward Message recipient selection list:
+ * Mutual active matches with authenticated user or incoming super-likes.
+ */
+export const getForwardRecipientsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const currentUserId = req.user!.id;
+    const result = await chatService.getForwardRecipients(currentUserId, req.query as any);
+    return sendSuccess(res, 'Forward recipients fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof ChatServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Failed to fetch forward recipients', 500);
+  }
+};
+
 
 /**
  * 4c. POST /api/v1/chats/upload, POST /api/v1/chats/media, POST /api/v1/chats/:conversationId/upload

@@ -933,15 +933,33 @@ export const registerChatSocketHandlers = (
   socket.on('reaction:send' as any, handleMessageReaction);
 
   // 12. Event: conversation:join / chat:join / join_conversation
-  const handleJoinConversation = (payload: any) => {
-    const convId =
-      payload?.conversationId ||
-      payload?.conversation_id ||
-      payload?.chatId ||
-      (typeof payload === 'string' ? payload : null);
-    if (convId) {
+  const handleJoinConversation = async (payload: any, callback?: Function) => {
+    try {
+      const convId =
+        payload?.conversationId ||
+        payload?.conversation_id ||
+        payload?.chatId ||
+        (typeof payload === 'string' ? payload : null);
+      if (!convId) {
+        if (typeof callback === 'function') callback({ success: false, error: 'conversationId is required' });
+        return;
+      }
+      const conv = await Conversation.findByPk(convId);
+      if (!conv || (conv.user1Id !== currentUserId && conv.user2Id !== currentUserId)) {
+        if (typeof callback === 'function') {
+          callback({ success: false, error: 'Unauthorized to join this conversation room' });
+        }
+        return;
+      }
       socket.join(`conversation:${convId}`);
       socket.join(`chat:${convId}`);
+      if (typeof callback === 'function') {
+        callback({ success: true, conversationId: convId });
+      }
+    } catch {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: 'Failed to join conversation room' });
+      }
     }
   };
 

@@ -1198,3 +1198,31 @@ export const forwardMessagesSchema = z.object({
 
 export type ForwardMessagesInput = z.infer<typeof forwardMessagesSchema>['body'];
 
+export const getForwardRecipientsSchema = z.object({
+  query: z.object({
+    search: z
+      .string()
+      .trim()
+      .max(100, { message: 'Search query cannot exceed 100 characters' })
+      .optional(),
+    page: z
+      .union([
+        z.string().regex(/^\d+$/, { message: 'Page must be a positive integer' }).transform(Number),
+        z.number(),
+      ])
+      .pipe(z.number().int().min(1))
+      .optional()
+      .default(1),
+    limit: z
+      .union([
+        z.string().regex(/^\d+$/, { message: 'Limit must be a positive integer' }).transform(Number),
+        z.number(),
+      ])
+      .pipe(z.number().int().min(1).max(100, { message: 'Limit cannot exceed 100' }))
+      .optional()
+      .default(20),
+  }),
+});
+
+export type GetForwardRecipientsQuery = z.infer<typeof getForwardRecipientsSchema>['query'];
+

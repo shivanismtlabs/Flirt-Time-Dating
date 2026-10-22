@@ -10,6 +10,7 @@ import {
   sendMessageHandler,
   sendMultiMessageHandler,
   forwardMessagesHandler,
+  getForwardRecipientsHandler,
   uploadChatMediaHandler,
   markReadHandler,
   deliveryReceiptHandler,
@@ -33,6 +34,7 @@ import {
   sendMessageSchema,
   sendMultiMessageSchema,
   forwardMessagesSchema,
+  getForwardRecipientsSchema,
   markReadSchema,
   deliveryReceiptSchema,
   conversationDeliveredSchema,
@@ -86,6 +88,13 @@ router.post('/bulk-messages', handleUploadChatMedia, validate(sendMultiMessageSc
 
 // 4a. Forward Single/Multiple Messages to Single/Multiple Recipients
 router.post('/messages/forward', validate(forwardMessagesSchema), forwardMessagesHandler);
+
+// 4a-1. Forward Message Recipients Selection List
+router.get(
+  ['/forward/recipients', '/messages/forward/recipients'],
+  validate(getForwardRecipientsSchema),
+  getForwardRecipientsHandler
+);
 
 // 4b. Dedicated S3 Chat Media Upload & Presigned URL Endpoints
 // Supports POST /api/v1/chats/upload, POST /api/v1/chats/media

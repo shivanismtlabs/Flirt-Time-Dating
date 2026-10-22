@@ -10,6 +10,9 @@ import {
   UserSubscription,
   SubscriptionPlan,
   SubscriptionFeature,
+  Conversation,
+  ConversationUserState,
+  ConversationPin,
 } from '../models';
 import { notificationService } from './notification.service';
 import {
@@ -194,6 +197,8 @@ export class DiscoveryActionService {
       let isCommitted = false;
 
       try {
+        const [u1, u2] = [currentUserId, targetUserId].sort();
+
         // Check existing swipe from current user to target user
         const existingSwipe = await SwipeAction.findOne({
           where: {
@@ -204,11 +209,65 @@ export class DiscoveryActionService {
           ...(isPostgres && { lock: t.LOCK.UPDATE }),
         });
 
+        // Nope action handling: unmatches user, deletes conversation, records swipe, and returns isMatched: false
+        if (action === 'nope') {
+          // 1. Deactivate existing Match between these users so they are removed from Match List
+          await Match.update(
+            { isActive: false },
+            { where: { user1Id: u1, user2Id: u2 }, transaction: t }
+          );
+
+          // 2. Hide / Delete Conversation between these users so they are removed from Chat List
+          const existingConv = await Conversation.findOne({
+            where: { user1Id: u1, user2Id: u2 },
+            transaction: t,
+          });
+          if (existingConv) {
+            existingConv.isDeletedForEveryone = true;
+            existingConv.deletedForEveryoneAt = new Date();
+            existingConv.deletedForEveryoneBy = currentUserId;
+            await existingConv.save({ transaction: t });
+
+            await ConversationUserState.update(
+              { isDeleted: true, deletedAt: new Date(), clearedAt: new Date() },
+              { where: { conversationId: existingConv.id }, transaction: t }
+            );
+
+            await ConversationPin.destroy({
+              where: { conversationId: existingConv.id },
+              transaction: t,
+            });
+          }
+
+          // 3. Record or update swipe action as 'nope'
+          if (existingSwipe) {
+            existingSwipe.action = 'nope';
+            await existingSwipe.save({ transaction: t });
+          } else {
+            await SwipeAction.create(
+              {
+                userId: currentUserId,
+                targetUserId,
+                action: 'nope',
+              },
+              { transaction: t }
+            );
+          }
+
+          await t.commit();
+          isCommitted = true;
+          return {
+            targetUserId,
+            action: 'nope',
+            isMatched: false,
+            matchId: null,
+          };
+        }
+
         if (existingSwipe) {
           // If the same action is repeated, treat as idempotent retry
           // Prevent duplicate retries from consuming additional quota
           if (existingSwipe.action === action) {
-            const [u1, u2] = [currentUserId, targetUserId].sort();
             const existingMatch = await Match.findOne({
               where: {
                 user1Id: u1,
@@ -339,17 +398,7 @@ export class DiscoveryActionService {
         );
       }
 
-      // Nope actions never create matches
-      if (action === 'nope') {
-        await t.commit();
-        isCommitted = true;
-        return {
-          targetUserId,
-          action: 'nope',
-          isMatched: false,
-          matchId: null,
-        };
-      }
+
 
       // Check for reciprocal like / super_like from the target user
       const reciprocalSwipe = await SwipeAction.findOne({

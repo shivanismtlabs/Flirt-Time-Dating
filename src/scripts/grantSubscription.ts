@@ -84,6 +84,22 @@ async function run() {
     const expiresAt = new Date();
     expiresAt.setFullYear(expiresAt.getFullYear() + 1);
 
+    // Detect timestamp column names dynamically for table resilience
+    const [subCols]: any = await customSequelize.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'user_subscriptions' AND column_name IN ('createdAt', 'created_at', 'updatedAt', 'updated_at')
+    `);
+    const subCreatedCol = subCols.some((c: any) => c.column_name === 'created_at') ? 'created_at' : '"createdAt"';
+    const subUpdatedCol = subCols.some((c: any) => c.column_name === 'updated_at') ? 'updated_at' : '"updatedAt"';
+
+    const [userCols]: any = await customSequelize.query(`
+      SELECT column_name 
+      FROM information_schema.columns 
+      WHERE table_name = 'users' AND column_name IN ('updatedAt', 'updated_at')
+    `);
+    const userUpdatedCol = userCols.some((c: any) => c.column_name === 'updated_at') ? 'updated_at' : '"updatedAt"';
+
     for (const u of rawUsers) {
       console.log(`\n⚙️ Granting active subscription to: ${u.email} (${u.id})...`);
 
@@ -93,7 +109,7 @@ async function run() {
          SET is_subscribed = true, 
              subscription_expires_at = :expiresAt, 
              active_subscription_plan_id = :planId, 
-             "updatedAt" = NOW() 
+             ${userUpdatedCol} = NOW() 
          WHERE id = :userId`,
         {
           replacements: {
@@ -124,8 +140,8 @@ async function run() {
           acknowledged,
           bonus_coins_credited,
           bonus_coins_amount,
-          "createdAt",
-          "updatedAt"
+          ${subCreatedCol},
+          ${subUpdatedCol}
         ) VALUES (
           gen_random_uuid(),
           :userId,

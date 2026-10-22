@@ -635,6 +635,7 @@ export interface OtherUserProfileResponse {
   myAction: 'like' | 'nope' | 'super_like' | null;
   isMatched: boolean;
   canConnect: boolean;
+  conversationId?: string | null;
 }
 
 /**
@@ -909,7 +910,7 @@ export const getOtherUserProfile = async (
   }
 
   // 9. Existing actions & match state
-  const [existingSwipe, existingMatch, existingRequest] = await Promise.all([
+  const [existingSwipe, existingMatch, existingRequest, existingConv] = await Promise.all([
     SwipeAction.findOne({
       where: {
         userId: viewerUserId,
@@ -932,6 +933,18 @@ export const getOtherUserProfile = async (
         targetUserId,
       },
     }),
+    (async () => {
+      const { Conversation } = await import('../models');
+      const [u1, u2] = [viewerUserId, targetUserId].sort();
+      return Conversation.findOne({
+        where: {
+          user1Id: u1,
+          user2Id: u2,
+          isDeletedForEveryone: false,
+        },
+        attributes: ['id'],
+      });
+    })(),
   ]);
 
   let action: 'like' | 'nope' | 'super_like' | null = existingSwipe
@@ -995,6 +1008,7 @@ export const getOtherUserProfile = async (
     myAction,
     isMatched,
     canConnect,
+    conversationId: existingConv?.id || null,
   };
 };
 

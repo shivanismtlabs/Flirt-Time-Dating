@@ -21,6 +21,7 @@ import {
 } from '../models';
 import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
+import { isAudioChatFile, isImageMediaReference } from '../utils/chatMediaKind';
 import { calculateAge, calculateDistanceKm } from './discovery.service';
 import { isUserConnected, isUserViewingConversation, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
@@ -266,6 +267,14 @@ export const buildChatGalleryMeta = (
   };
   if (caption) meta.caption = caption;
   if (base.clientMessageId) meta.galleryId = base.clientMessageId;
+  delete meta.audioUrl;
+  delete meta.voiceUrl;
+  delete meta.call;
+  delete meta.callType;
+  delete meta.callId;
+  delete meta.channelName;
+  delete meta.duration;
+  delete meta.durationMs;
   return meta;
 };
 
@@ -592,6 +601,24 @@ export const contactFieldsFromMeta = (
   };
 };
 
+const IMAGE_CALL_KEYS = ['audioUrl', 'voiceUrl', 'duration', 'durationMs'] as const;
+
+/** Photo payloads must not carry voice-call fields. `type` stays `image`. */
+export const presentChatMessage = (dto: ChatMessageDTO): ChatMessageDTO => {
+  const messageType = String(dto.messageType || 'text');
+  if (messageType !== 'image') return dto;
+  const next: ChatMessageDTO = { ...dto, messageType, type: 'image' };
+  for (const key of IMAGE_CALL_KEYS) delete (next as any)[key];
+  if (next.metadata && typeof next.metadata === 'object') {
+    const meta = { ...next.metadata };
+    for (const key of [...IMAGE_CALL_KEYS, 'call', 'callType', 'callId', 'channelName']) {
+      delete meta[key];
+    }
+    next.metadata = meta;
+  }
+  return next;
+};
+
 export const buildViewerChatMessage = (
   dto: ChatMessageDTO,
   isMine: boolean,
@@ -608,7 +635,7 @@ export const buildViewerChatMessage = (
     results?: any[];
   };
   const medias = toChatMedias(images);
-  return {
+  return presentChatMessage({
     ...rest,
     ...contactFieldsFromMeta(dto.messageType, dto.metadata, { senderId: dto.senderId, isMine }),
     isMine,
@@ -619,7 +646,7 @@ export const buildViewerChatMessage = (
     imageUrls,
     mediaUrls: imageUrls,
     ...(medias.length > 0 ? { medias } : {}),
-  };
+  });
 };
 
 export interface ChatParticipantDTO {
@@ -689,6 +716,11 @@ export interface ChatMessageDTO {
   recipientId: string;
   content: string;
   messageType: ChatMessageType | 'text' | 'moment_reply' | 'moment_gift' | string;
+  /**
+   * Same value as messageType. Call handling reads `type` and treats a missing
+   * type as a voice call, so a photo must say `image`.
+   */
+  type?: string;
   metadata: any;
   status?: 'sent' | 'delivered' | 'read';
   /** Same value as status. The mobile client reads this field for ticks. */
@@ -1963,7 +1995,7 @@ export class ChatService {
         }
       }
 
-      return msgItem;
+      return presentChatMessage(msgItem);
     });
 
     const totalPages = Math.ceil(count / limit) || 1;
@@ -2229,15 +2261,16 @@ export class ChatService {
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
     if (!data.messageType && !data.type) {
-      if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
-        msgType = 'audio';
-      } else if (
-        (data as any).imageUrl ||
-        (data as any).image ||
+      const hasImage =
+        !!(data as any).imageUrl ||
+        !!(data as any).image ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
-        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0)
-      ) {
+        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
+      const audioRef = (data as any).audioUrl || (data as any).audio || (data as any).voiceUrl;
+      if (hasImage) {
         msgType = 'image';
+      } else if (audioRef && !isImageMediaReference(audioRef)) {
+        msgType = 'audio';
       }
     }
 
@@ -2345,13 +2378,7 @@ export class ChatService {
         }
         const mime = (file.mimetype || '').toLowerCase();
         const origName = (file.originalname || '').toLowerCase();
-        const field = (file.fieldname || '').toLowerCase();
-
-        const isAudio =
-          mime.startsWith('audio/') ||
-          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
-          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName) ||
-          (msgType === 'audio' && !mime.startsWith('image/'));
+        const isAudio = isAudioChatFile(file, msgType);
 
         if (isAudio) {
           const audioMime = resolveAudioMime(origName, mime);
@@ -2474,7 +2501,9 @@ export class ChatService {
 
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
     const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
-    if (bodyAudio && uploadedAudios.length === 0) {
+    const imageSend =
+      msgType === 'image' || uploadedImages.length > 0 || isImageMediaReference(bodyAudio);
+    if (bodyAudio && uploadedAudios.length === 0 && !imageSend) {
       const cleanKey = validateMediaAttachmentKey(bodyAudio, senderId);
       const audioPubUrl = s3Service.getPublicUrl(cleanKey);
       const dur =
@@ -3411,15 +3440,16 @@ export class ChatService {
 
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
     if (!data.messageType && !data.type) {
-      if ((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl) {
-        msgType = 'audio';
-      } else if (
-        (data as any).imageUrl ||
-        (data as any).image ||
+      const hasImage =
+        !!(data as any).imageUrl ||
+        !!(data as any).image ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
-        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0)
-      ) {
+        (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
+      const audioRef = (data as any).audioUrl || (data as any).audio || (data as any).voiceUrl;
+      if (hasImage) {
         msgType = 'image';
+      } else if (audioRef && !isImageMediaReference(audioRef)) {
+        msgType = 'audio';
       }
     }
 
@@ -3527,13 +3557,7 @@ export class ChatService {
         }
         const mime = (file.mimetype || '').toLowerCase();
         const origName = (file.originalname || '').toLowerCase();
-        const field = (file.fieldname || '').toLowerCase();
-
-        const isAudio =
-          mime.startsWith('audio/') ||
-          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
-          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName) ||
-          (msgType === 'audio' && !mime.startsWith('image/'));
+        const isAudio = isAudioChatFile(file, msgType);
 
         if (isAudio) {
           const audioMime = resolveAudioMimeMulti(origName, mime);
@@ -3643,7 +3667,9 @@ export class ChatService {
 
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
     const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
-    if (bodyAudio && uploadedAudios.length === 0) {
+    const imageSend =
+      msgType === 'image' || uploadedImages.length > 0 || isImageMediaReference(bodyAudio);
+    if (bodyAudio && uploadedAudios.length === 0 && !imageSend) {
       const cleanKey = validateMediaAttachmentKey(bodyAudio, senderId);
       const audioPubUrl = s3Service.getPublicUrl(cleanKey);
       const dur =
@@ -4583,14 +4609,10 @@ export class ChatService {
     const ids = input.messageIds.filter(Boolean);
     const cursorId = input.cursorId || ids[ids.length - 1] || null;
     const atIso = input.at.toISOString();
-    const status = input.kind === 'delivered' ? 'delivered' : 'seen';
+    const isRead = input.kind === 'read';
+    // Same three ticks as the message row: sent, delivered, read.
+    const status = isRead ? 'read' : 'delivered';
     const clientMessageIds = input.clientMessageIds || {};
-    // The message just sent is first, so its tick is not stuck behind older bubbles.
-    const orderedIds = [...ids];
-    if (cursorId && orderedIds.includes(cursorId)) {
-      orderedIds.splice(orderedIds.indexOf(cursorId), 1);
-      orderedIds.unshift(cursorId);
-    }
 
     const messages = ids.map((id) => ({
       id,
@@ -4598,52 +4620,60 @@ export class ChatService {
       ...(clientMessageIds[id] ? { clientMessageId: clientMessageIds[id] } : {}),
       conversationId: input.conversationId,
       status,
-      receiptStatus: input.kind === 'read' ? 'read' : 'delivered',
-      messageStatus: status,
+      receiptStatus: status,
+      messageStatus: isRead ? 'seen' : 'delivered',
       isDelivered: true,
       deliveredAt: atIso,
-      isRead: input.kind === 'read',
-      readAt: input.kind === 'read' ? atIso : null,
-      seen: input.kind === 'read',
+      isRead,
+      readAt: isRead ? atIso : null,
+      seen: isRead,
     }));
 
-    const legacy =
-      input.kind === 'delivered'
-        ? {
-            id: cursorId,
-            conversationId: input.conversationId,
-            recipientId: input.actorId,
-            delivererId: input.actorId,
-            userId: input.actorId,
-            messageIds: ids,
-            messageId: cursorId,
-            messages,
-            deliveredAt: atIso,
-            status: 'delivered' as const,
-            receiptStatus: 'delivered' as const,
-            isDelivered: true,
-            isRead: false,
-            deliveredCount: input.markedCount ?? ids.length,
-          }
-        : {
-            id: cursorId,
-            conversationId: input.conversationId,
-            readerId: input.actorId,
-            userId: input.actorId,
-            readBy: input.actorId,
-            lastReadMessageId: cursorId,
-            messageId: cursorId,
-            messageIds: ids,
-            messages,
-            markedCount: input.markedCount ?? ids.length,
-            readAt: atIso,
-            deliveredAt: atIso,
-            status: 'seen' as const,
-            receiptStatus: 'read' as const,
-            isDelivered: true,
-            isRead: true,
-            seen: true,
-          };
+    const payload = isRead
+      ? {
+          id: cursorId,
+          conversationId: input.conversationId,
+          readerId: input.actorId,
+          userId: input.actorId,
+          readBy: input.actorId,
+          lastReadMessageId: cursorId,
+          messageId: cursorId,
+          ...(cursorId && clientMessageIds[cursorId]
+            ? { clientMessageId: clientMessageIds[cursorId] }
+            : {}),
+          messageIds: ids,
+          messages,
+          markedCount: input.markedCount ?? ids.length,
+          readAt: atIso,
+          deliveredAt: atIso,
+          status: 'read' as const,
+          receiptStatus: 'read' as const,
+          messageStatus: 'seen' as const,
+          isDelivered: true,
+          isRead: true,
+          seen: true,
+        }
+      : {
+          id: cursorId,
+          conversationId: input.conversationId,
+          recipientId: input.actorId,
+          delivererId: input.actorId,
+          userId: input.actorId,
+          messageIds: ids,
+          messageId: cursorId,
+          ...(cursorId && clientMessageIds[cursorId]
+            ? { clientMessageId: clientMessageIds[cursorId] }
+            : {}),
+          messages,
+          deliveredAt: atIso,
+          status: 'delivered' as const,
+          receiptStatus: 'delivered' as const,
+          messageStatus: 'delivered' as const,
+          isDelivered: true,
+          isRead: false,
+          seen: false,
+          deliveredCount: input.markedCount ?? ids.length,
+        };
 
     const rooms = [
       getUserRoomName(input.notifyUserId),
@@ -4658,52 +4688,32 @@ export class ChatService {
       rooms.push(getUserRoomName(input.actorId.toLowerCase()));
     }
 
-    const events =
-      input.kind === 'delivered'
-        ? [
-            'chat:delivery_receipt',
-            'message:delivery_receipt',
-            'chat:message:delivered',
-            'chat:message:status',
-            'message:status',
-          ]
-        : [
-            'chat:read_receipt',
-            'message:read_receipt',
-            'chat:message:seen',
-            'chat:message:status',
-            'message:status',
-          ];
+    const events = isRead
+      ? [
+          'chat:read_receipt',
+          'message:read_receipt',
+          'chat:message:seen',
+          'chat:message:status',
+          'message:status',
+        ]
+      : [
+          'chat:delivery_receipt',
+          'message:delivery_receipt',
+          'chat:message:delivered',
+          'chat:message:status',
+          'message:status',
+        ];
 
-    const emitPayload = (payload: Record<string, unknown>) => {
-      for (const room of rooms) {
-        for (const event of events) {
-          io.to(room).emit(event as any, payload);
-        }
+    for (const room of rooms) {
+      for (const event of events) {
+        io.to(room).emit(event as any, payload);
       }
-    };
-
-    for (const id of orderedIds) {
-      emitPayload({
-        ...legacy,
-        id,
-        messageId: id,
-        ...(clientMessageIds[id] ? { clientMessageId: clientMessageIds[id] } : {}),
-        messageIds: [id],
-        messages: messages.filter((message) => message.id === id),
-      });
     }
-    emitPayload({
-      ...legacy,
-      ...(cursorId && clientMessageIds[cursorId] ? { clientMessageId: clientMessageIds[cursorId] } : {}),
-    });
 
     const inbox = {
       conversationId: input.conversationId,
-      reason: input.kind === 'delivered' ? 'delivered' : 'read',
-      ...(input.kind === 'delivered'
-        ? { delivererId: input.actorId }
-        : { readerId: input.actorId }),
+      reason: isRead ? 'read' : 'delivered',
+      ...(isRead ? { readerId: input.actorId } : { delivererId: input.actorId }),
     };
     io.to(getUserRoomName(input.notifyUserId)).emit('chat:inbox:refresh' as any, inbox);
   }

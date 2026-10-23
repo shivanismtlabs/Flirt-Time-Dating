@@ -2253,7 +2253,7 @@ export class MomentService {
     if (!resolvedMomentId && comment.metadata) {
       try {
         const parsed = typeof comment.metadata === 'string' ? JSON.parse(comment.metadata) : comment.metadata;
-        resolvedMomentId = parsed.momentId;
+        resolvedMomentId = parsed.momentId || parsed.moment_id || null;
       } catch {}
     }
 

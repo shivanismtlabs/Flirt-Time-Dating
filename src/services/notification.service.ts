@@ -1149,6 +1149,7 @@ export class NotificationService {
         : null;
 
       const resolvedType = resolveNotifyType(n.type);
+      const momentId = String(n.data?.momentId || '').trim();
 
       // Safe navigation payload
       const nav = n.data?.navigation || {
@@ -1170,6 +1171,7 @@ export class NotificationService {
           type: resolvedType,
           user_id: actorUserId,
           ...(n.data || {}),
+          ...(momentId ? { momentId } : {}),
         },
         navigation: {
           type: nav.type || resolvedType,

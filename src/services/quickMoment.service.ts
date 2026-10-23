@@ -80,6 +80,29 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
   return { badgeText, topEmojis, total, breakdown };
 }
 
+function mapQuickMomentReaction(r: any) {
+  return {
+    id: r.id,
+    emoji: r.emoji,
+    reaction: r.emoji,
+    userId: r.userId,
+    createdAt: r.createdAt,
+    timeAgo: r.createdAt ? formatTimeAgo(r.createdAt, false) : null,
+    user: r.user
+      ? {
+          id: r.user.id,
+          name: r.user.fullName || r.user.nickName || 'User',
+          avatar: r.user.profilePicture
+            ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt)
+            : null,
+          city: r.user.city,
+          isVerified: !!r.user.isFaceVerified,
+          isSubscribed: !!r.user.isSubscribed,
+        }
+      : null,
+  };
+}
+
 let quickMomentTablesReady = false;
 
 export async function ensureQuickMomentTables(): Promise<void> {
@@ -192,7 +215,14 @@ export class QuickMomentService {
         {
           model: QuickMomentReaction,
           as: 'reactions',
-          attributes: ['id', 'emoji', 'userId'],
+          attributes: ['id', 'emoji', 'userId', 'createdAt'],
+          include: [
+            {
+              model: User,
+              as: 'user',
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+            },
+          ],
         },
         {
           model: QuickMomentView,
@@ -254,11 +284,8 @@ export class QuickMomentService {
             topEmojis: storySummary.topEmojis,
             badgeText: storySummary.badgeText,
             reactionsBreakdown: storySummary.breakdown,
-            reactions: storyReactions.map((r: any) => ({
-              emoji: r.emoji,
-              reaction: r.emoji,
-              userId: r.userId,
-            })),
+            reactions: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
+            reactors: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
           };
         }),
       };
@@ -463,20 +490,8 @@ export class QuickMomentService {
         repliesCount: m.repliesCount,
         viewsCount: m.viewsCount || (m.views ? m.views.length : 0),
         isMine: true,
-        reactors: reactions.map((r: any) => ({
-          id: r.id,
-          emoji: r.emoji,
-          createdAt: r.createdAt,
-          timeAgo: formatTimeAgo(r.createdAt, false),
-          user: {
-            id: r.user?.id,
-            name: r.user?.fullName || r.user?.nickName || 'User',
-            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
-            city: r.user?.city,
-            isVerified: !!r.user?.isFaceVerified,
-            isSubscribed: !!r.user?.isSubscribed,
-          },
-        })),
+        reactions: reactions.map((r: any) => mapQuickMomentReaction(r)),
+        reactors: reactions.map((r: any) => mapQuickMomentReaction(r)),
         viewers: (m.views || []).map((v: any) => ({
           userId: v.viewer?.id,
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
@@ -561,7 +576,14 @@ export class QuickMomentService {
         {
           model: QuickMomentReaction,
           as: 'reactions',
-          attributes: ['id', 'emoji', 'userId'],
+          attributes: ['id', 'emoji', 'userId', 'createdAt'],
+          include: [
+            {
+              model: User,
+              as: 'user',
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+            },
+          ],
         },
         {
           model: QuickMomentView,
@@ -609,12 +631,19 @@ export class QuickMomentService {
         topEmojis: reactionSummary.topEmojis,
         reactionsBreakdown: reactionSummary.breakdown,
         badgeText: reactionSummary.badgeText,
-        reactions: (m.reactions || []).map((r: any) => ({
-          emoji: r.emoji,
-          reaction: r.emoji,
-          userId: r.userId,
-          isMine: r.userId === viewerUserId,
-        })),
+        reactions: (m.reactions || []).map((r: any) => {
+          const isOwnerView = viewerUserId === targetUserId;
+          const row = mapQuickMomentReaction(r);
+          return {
+            ...row,
+            isMine: r.userId === viewerUserId,
+            user: isOwnerView ? row.user : null,
+            userId: isOwnerView ? r.userId : undefined,
+          };
+        }),
+        reactors: viewerUserId === targetUserId
+          ? (m.reactions || []).map((r: any) => mapQuickMomentReaction(r))
+          : [],
       };
     });
 
@@ -803,22 +832,48 @@ export class QuickMomentService {
       }
     }
 
-    // Return updated reaction metrics
+    // Return updated reaction metrics with the people who reacted, so the
+    // owner's open story can show the emoji without a second request.
     const allReactions = await QuickMomentReaction.findAll({
       where: { quickMomentId: momentId },
-      attributes: ['emoji'],
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+        },
+      ],
     });
 
     const reactionSummary = buildReactionBadge(allReactions);
+    const reactions = allReactions.map((r) => mapQuickMomentReaction(r));
 
-    return {
+    const result = {
       action,
+      momentId,
       myReaction: currentEmoji,
       totalReactions: reactionSummary.total,
       topEmojis: reactionSummary.topEmojis,
       badgeText: reactionSummary.badgeText,
       breakdown: reactionSummary.breakdown,
+      reactions,
+      reactors: reactions,
     };
+
+    try {
+      const { getSocketServer } = await import('../realtime/socket.server');
+      const { getUserRoomName } = await import('../realtime/socket.lifecycle');
+      const io = getSocketServer();
+      io.to(getUserRoomName(moment.userId)).emit('quick_moment:reaction' as any, result);
+      io.to(getUserRoomName(viewerUserId)).emit('quick_moment:reaction' as any, {
+        ...result,
+        myReaction: currentEmoji,
+      });
+    } catch {
+      // Socket server is optional in tests.
+    }
+
+    return result;
   }
 
   /**

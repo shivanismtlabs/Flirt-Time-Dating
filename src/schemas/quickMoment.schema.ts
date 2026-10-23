@@ -28,9 +28,14 @@ export const reactQuickMomentSchema = z.object({
   params: z.object({
     momentId: z.string().uuid('Invalid quick moment ID'),
   }),
-  body: z.object({
-    emoji: z.string().min(1).max(20),
-  }),
+  body: z
+    .object({
+      emoji: z.string().min(1).max(20).optional(),
+      reaction: z.string().min(1).max(20).optional(),
+    })
+    .refine((data) => Boolean(data.emoji || data.reaction), {
+      message: 'Reaction emoji is required',
+    }),
 });
 
 export const replyQuickMomentSchema = z.object({

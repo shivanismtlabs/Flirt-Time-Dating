@@ -244,7 +244,12 @@ export const publishMomentRealtime = async (
     const rooms = new Set<string>();
     if (momentId) rooms.add(getMomentRoomName(momentId));
 
-    const userIds = [input.ownerId, input.actorId, ...(input.notifyUserIds || [])];
+    // Gift alerts are the push notification. Also pushing moment:gift_sent onto
+    // the owner's user room makes the open app show a second banner.
+    const userIds =
+      input.type === 'gift'
+        ? [input.actorId, ...(input.notifyUserIds || [])]
+        : [input.ownerId, input.actorId, ...(input.notifyUserIds || [])];
     for (const userId of userIds) {
       const normalized = String(userId || '').trim();
       if (normalized) rooms.add(getUserRoomName(normalized));

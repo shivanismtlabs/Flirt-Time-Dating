@@ -154,7 +154,7 @@ export const reactQuickMomentHandler = async (
     }
 
     const momentId = req.params.momentId as string;
-    const { emoji } = req.body;
+    const emoji = req.body.emoji || req.body.reaction;
 
     const result = await quickMomentService.reactToQuickMoment(
       viewerId,

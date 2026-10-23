@@ -3,7 +3,9 @@ import { getFirebaseMessaging } from '../config/firebase';
 import { Notification, UserDevice, User, UserPhoto, NotificationSetting } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { resolveDisplayName } from './discovery.service';
+import { isUserConnected } from '../realtime/socket.lifecycle';
 import type { MulticastMessage, BatchResponse } from 'firebase-admin/messaging';
+import { normalizeVoipToken } from '../utils/voipToken';
 
 export interface PushNotificationResult {
   inAppCreated: boolean;
@@ -102,7 +104,7 @@ export const resolveNotifyType = (rawType: string): string => {
   return rawType || 'like';
 };
 
-/** Ringing audio/video pushes stay data-only so the OS does not play a sound or show a banner. */
+/** Direct dispatcher calls for call types stay data-only. Live audio/video rings use callPush (PushKit + incoming_calls). */
 const SILENT_CALL_NOTIFY_TYPES = new Set(['incoming_call', 'video_call', 'audio_call']);
 
 export const isSilentCallNotification = (type: string): boolean =>
@@ -318,10 +320,16 @@ export class NotificationService {
       deviceToken: string;
       platform?: 'ios' | 'android' | 'web';
       deviceId?: string | null;
+      /**
+       * iOS PushKit token. A non-empty value replaces the stored token.
+       * Omit it to keep the previous CallKit registration.
+       */
+      voipToken?: string | null;
     }
   ) {
     const { deviceToken, deviceId } = input;
     const cleanToken = deviceToken.trim();
+    const voipInRequest = normalizeVoipToken(input.voipToken);
     const rawPlatform = String(input.platform || 'android').toLowerCase().trim();
     const platform: 'ios' | 'android' | 'web' =
       rawPlatform === 'ios' || rawPlatform === 'iphone' || rawPlatform === 'ipad' || rawPlatform === 'apple'
@@ -331,12 +339,18 @@ export class NotificationService {
         : 'android';
 
     let device = await UserDevice.findOne({ where: { deviceToken: cleanToken } });
+    if (!device && deviceId) {
+      device = await UserDevice.findOne({ where: { userId, deviceId } });
+    }
+
     if (device) {
       device.userId = userId;
+      device.deviceToken = cleanToken;
       device.platform = platform;
       if (deviceId !== undefined) device.deviceId = deviceId || null;
       device.isActive = true;
       device.lastUsedAt = new Date();
+      if (voipInRequest) device.voipToken = voipInRequest;
       await device.save();
     } else {
       device = await UserDevice.create({
@@ -344,9 +358,22 @@ export class NotificationService {
         deviceToken: cleanToken,
         platform,
         deviceId: deviceId || null,
+        voipToken: voipInRequest || null,
         isActive: true,
         lastUsedAt: new Date(),
       });
+    }
+
+    if (voipInRequest) {
+      await UserDevice.update(
+        { voipToken: null },
+        {
+          where: {
+            voipToken: voipInRequest,
+            id: { [Op.ne]: device.id },
+          },
+        }
+      );
     }
 
     return {
@@ -355,6 +382,7 @@ export class NotificationService {
       userId: device.userId,
       platform: device.platform,
       isActive: device.isActive,
+      hasVoipToken: Boolean(normalizeVoipToken(device.voipToken)),
     };
   }
 
@@ -397,7 +425,7 @@ export class NotificationService {
       navigation?: NotificationNavigationDTO;
       idempotencyKey?: string;
       isForeground?: boolean;
-      /** Data-only push: no alert and no sound. Incoming calls always use this. */
+      /** Data-only push: no alert and no sound. */
       silent?: boolean;
       /** How long a silent call push stays deliverable, in milliseconds. */
       ttlMs?: number;
@@ -407,6 +435,9 @@ export class NotificationService {
     const silentPush =
       Boolean(input.silent) || isSilentCallNotification(type) || isSilentCallNotification(String(input.data?.type || ''));
     const resolvedNotifyType = resolveNotifyType(input.data?.notify_type || type);
+    // The recipient's open app already draws one banner from the data payload.
+    // A second OS alert for the same gift is the duplicate the device shows.
+    const giftWhileAppOpen = resolvedNotifyType === 'moment_gift' && isUserConnected(recipientId);
     const actorUserId = String(input.data?.user_id || senderId || '');
 
     // 1. Idempotency / deduplication check (only when explicit idempotencyKey is provided).
@@ -525,7 +556,11 @@ export class NotificationService {
     try {
       const messaging = getFirebaseMessaging();
       const isAppForeground = Boolean(isForeground);
-      const dataOnly = isAppForeground || silentPush;
+      const dataOnly = isAppForeground || silentPush || giftWhileAppOpen;
+      const giftCollapseKey =
+        resolvedNotifyType === 'moment_gift'
+          ? idempotencyKey || `moment_gift_${entityId || recipientId}`
+          : undefined;
       const callTtlMs = silentPush
         ? Math.max(1000, Math.min(input.ttlMs ?? 60_000, 5 * 60 * 1000))
         : undefined;
@@ -588,12 +623,14 @@ export class NotificationService {
         android: dataOnly
           ? {
               priority: 'high',
+              ...(giftCollapseKey ? { collapseKey: giftCollapseKey } : {}),
               ...(silentPush
                 ? { ttl: callTtlMs, collapseKey: 'incoming_call' }
                 : {}),
             }
           : {
               priority: 'high',
+              ...(giftCollapseKey ? { collapseKey: giftCollapseKey } : {}),
               notification: {
                 title,
                 body,
@@ -627,6 +664,7 @@ export class NotificationService {
               headers: {
                 'apns-priority': '10',
                 'apns-push-type': 'alert',
+                ...(giftCollapseKey ? { 'apns-collapse-id': giftCollapseKey } : {}),
               },
               payload: {
                 aps: {

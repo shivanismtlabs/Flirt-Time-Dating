@@ -75,6 +75,69 @@ export class ComplimentService {
   }
 
   /**
+   * Puts the compliment on both chat screens. The recipient copy is received,
+   * the sender copy is sent.
+   */
+  private async publishComplimentChat(input: {
+    conversationId: string;
+    messageId: string;
+    senderId: string;
+    recipientId: string;
+    content: string;
+    createdAt: Date;
+  }): Promise<void> {
+    try {
+      const { getSocketServer } = await import('../realtime/socket.server');
+      const { getUserRoomName } = await import('../realtime/socket.lifecycle');
+      const { chatService } = await import('./chat.service');
+      const io = getSocketServer();
+      const sentAt = input.createdAt.toISOString();
+      const base = {
+        id: input.messageId,
+        messageId: input.messageId,
+        conversationId: input.conversationId,
+        senderId: input.senderId,
+        recipientId: input.recipientId,
+        content: input.content,
+        messageType: 'text',
+        metadata: { type: 'compliment' },
+        status: 'sent',
+        receiptStatus: 'sent',
+        messageStatus: 'sent',
+        seen: false,
+        isDelivered: false,
+        isRead: false,
+        sentAt,
+        createdAt: sentAt,
+      };
+      const received = { ...base, isMine: false, isSender: false, direction: 'received', isIncoming: true };
+      const sent = { ...base, isMine: true, isSender: true, direction: 'sent', isIncoming: false };
+      const recipientRoom = getUserRoomName(input.recipientId);
+      const senderRoom = getUserRoomName(input.senderId);
+      io.to(recipientRoom).emit('chat:message_received' as any, received);
+      io.to(recipientRoom).emit('message:received' as any, received);
+      io.to(recipientRoom).emit('new_message' as any, received);
+      io.to(senderRoom).emit('chat:message_sent' as any, sent);
+      io.to(senderRoom).emit('message:sent' as any, sent);
+      await chatService.emitConversationUpdate(
+        input.conversationId,
+        {
+          id: input.messageId,
+          content: input.content,
+          messageType: 'text',
+          senderId: input.senderId,
+          createdAt: input.createdAt,
+        },
+        input.content,
+        input.senderId,
+        input.recipientId
+      );
+    } catch {
+      // Chat still exists if the socket server is not running.
+    }
+  }
+
+  /**
    * Sends a profile compliment from the authenticated user to a target user.
    * Rules:
    * 1. Subscribed users: unlimited compliments (unmatched or matched).
@@ -237,6 +300,15 @@ export class ComplimentService {
         throw err;
       }
 
+      await this.publishComplimentChat({
+        conversationId: conversation.id,
+        messageId: chatMessage.id,
+        senderId: requesterId,
+        recipientId: targetUserId,
+        content: finalMessage,
+        createdAt: chatMessage.createdAt || new Date(),
+      });
+
       // Dispatch compliment notification to targetUser
       try {
         await notificationService.sendComplimentNotification(targetUserId, {
@@ -373,6 +445,15 @@ export class ComplimentService {
 
         await t.commit();
 
+        await this.publishComplimentChat({
+          conversationId: conversation.id,
+          messageId: chatMessage.id,
+          senderId: requesterId,
+          recipientId: targetUserId,
+          content: finalMessage,
+          createdAt: chatMessage.createdAt || new Date(),
+        });
+
         // Dispatch compliment notification to targetUser
         try {
           await notificationService.sendComplimentNotification(targetUserId, {
@@ -442,14 +523,16 @@ export class ComplimentService {
     let deliveredConversationId: string | undefined;
     let deliveredChatMessageId: string | undefined;
     try {
+      const now = new Date();
       savedRequest = await ConnectionRequest.create(
         {
           requesterId,
           targetUserId,
-          status: 'pending',
+          status: deliverToChat ? 'accepted' : 'pending',
           message: finalMessage,
           reason: finalReason,
           momentId,
+          ...(deliverToChat ? { respondedAt: now } : {}),
         },
         { transaction: t }
       );
@@ -461,7 +544,6 @@ export class ComplimentService {
       );
 
       if (deliverToChat) {
-        const now = new Date();
         const [conv] = await Conversation.findOrCreate({
           where: { user1Id: u1, user2Id: u2 },
           defaults: {
@@ -502,6 +584,17 @@ export class ComplimentService {
     } catch (dbErr: any) {
       await t.rollback();
       throw dbErr;
+    }
+
+    if (deliveredConversationId && deliveredChatMessageId) {
+      await this.publishComplimentChat({
+        conversationId: deliveredConversationId,
+        messageId: deliveredChatMessageId,
+        senderId: requesterId,
+        recipientId: targetUserId,
+        content: finalMessage,
+        createdAt: savedRequest.createdAt || new Date(),
+      });
     }
 
     // 9. Dispatch In-App & Push Notification to target user

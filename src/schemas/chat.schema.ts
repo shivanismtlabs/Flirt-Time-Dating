@@ -271,7 +271,36 @@ export const locationMetadataSchema = z
   })
   .strict({ message: 'Unknown property in location metadata. Duplicate or unpermitted keys are rejected' });
 
-export const contactMetadataSchema = z
+const CONTACT_META_KEYS = new Set([
+  'name',
+  'displayName',
+  'contactName',
+  'phoneNumber',
+  'phone',
+  'mobile',
+  'number',
+  'email',
+  'contact',
+]);
+
+export const contactMetadataSchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+  const src = raw as Record<string, any>;
+  const nested = src.contact && typeof src.contact === 'object' ? src.contact : {};
+  const name = src.name || src.displayName || src.contactName || nested.name || nested.displayName || '';
+  const phoneNumber =
+    src.phoneNumber || src.phone || src.mobile || src.number || nested.phoneNumber || nested.phone || nested.mobile || nested.number || '';
+  const email = src.email || nested.email;
+  const canonical: Record<string, unknown> = {
+    name: typeof name === 'string' ? name.trim() : name,
+    phoneNumber: typeof phoneNumber === 'string' ? phoneNumber.trim() : phoneNumber,
+    ...(typeof email === 'string' && email.trim() ? { email: email.trim() } : {}),
+  };
+  for (const key of Object.keys(src)) {
+    if (!CONTACT_META_KEYS.has(key)) canonical[key] = src[key];
+  }
+  return canonical;
+}, z
   .object({
     name: z
       .string({ required_error: 'Contact name is required' })
@@ -285,7 +314,7 @@ export const contactMetadataSchema = z
       .max(30, { message: 'Phone number cannot exceed 30 characters' }),
     email: z.string().trim().email({ message: 'Invalid contact email' }).max(100).optional(),
   })
-  .strict({ message: 'Unknown property in contact metadata. Duplicate or unpermitted keys are rejected' });
+  .strict({ message: 'Unknown property in contact metadata. Duplicate or unpermitted keys are rejected' }));
 
 export const imageMetadataSchema = z
   .object({

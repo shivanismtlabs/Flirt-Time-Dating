@@ -236,20 +236,74 @@ export const dedupeChatImages = <T extends { key?: string; imageUrl?: string; ur
  * does not walk a second list that was copied from the sender (`isMine: true`)
  * and then hide the gallery.
  */
+const firstContactString = (...values: unknown[]): string | null => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return null;
+};
+
+/** Copies phone/name aliases onto the canonical contact fields before save. */
+export const normalizeContactMetadata = (meta: Record<string, any>): Record<string, any> => {
+  const nested = meta.contact && typeof meta.contact === 'object' ? meta.contact : {};
+  const name = firstContactString(
+    meta.name,
+    meta.displayName,
+    meta.contactName,
+    nested.name,
+    nested.displayName,
+    nested.contactName
+  );
+  const phoneNumber = firstContactString(
+    meta.phoneNumber,
+    meta.phone,
+    meta.mobile,
+    meta.number,
+    nested.phoneNumber,
+    nested.phone,
+    nested.mobile,
+    nested.number
+  );
+  const email = firstContactString(meta.email, nested.email);
+  if (name) meta.name = name;
+  if (phoneNumber) meta.phoneNumber = phoneNumber;
+  if (email) meta.email = email;
+  return meta;
+};
+
 /** Contact card fields the chat screen reads beside metadata. */
 export const contactFieldsFromMeta = (
   messageType: string | null | undefined,
-  meta: any
-): { contact?: { name: string | null; phoneNumber: string | null; email: string | null }; contactName?: string | null; phoneNumber?: string | null } => {
-  if (messageType !== 'contact' || !meta || typeof meta !== 'object') return {};
-  const name = typeof meta.name === 'string' ? meta.name : null;
-  const phoneNumber = typeof meta.phoneNumber === 'string' ? meta.phoneNumber : null;
-  const email = typeof meta.email === 'string' ? meta.email : null;
+  meta: any,
+  viewer?: { senderId?: string | null; isMine?: boolean }
+): { contact?: { name: string | null; phoneNumber: string | null; email: string | null; sharedByUserId: string | null }; contactName?: string | null; phoneNumber?: string | null; direction?: 'sent' | 'received'; isIncoming?: boolean } => {
+  if (String(messageType || '').toLowerCase() !== 'contact' || !meta || typeof meta !== 'object') return {};
+  const nested = meta.contact && typeof meta.contact === 'object' ? meta.contact : {};
+  const name = firstContactString(meta.name, meta.displayName, meta.contactName, nested.name, nested.displayName);
+  const phoneNumber = firstContactString(
+    meta.phoneNumber,
+    meta.phone,
+    meta.mobile,
+    meta.number,
+    nested.phoneNumber,
+    nested.phone,
+    nested.mobile,
+    nested.number
+  );
+  const email = firstContactString(meta.email, nested.email);
   if (!name && !phoneNumber && !email) return {};
+  const isMine = !!viewer?.isMine;
   return {
-    contact: { name, phoneNumber, email },
+    contact: {
+      name,
+      phoneNumber,
+      email,
+      sharedByUserId: viewer?.senderId || null,
+    },
     contactName: name,
     phoneNumber,
+    direction: isMine ? 'sent' : 'received',
+    isIncoming: !isMine,
   };
 };
 
@@ -271,9 +325,11 @@ export const buildViewerChatMessage = (
   const medias = toChatMedias(images);
   return {
     ...rest,
-    ...contactFieldsFromMeta(dto.messageType, dto.metadata),
+    ...contactFieldsFromMeta(dto.messageType, dto.metadata, { senderId: dto.senderId, isMine }),
     isMine,
     isSender: isMine,
+    direction: isMine ? 'sent' : 'received',
+    isIncoming: !isMine,
     images,
     imageUrls,
     mediaUrls: imageUrls,
@@ -302,9 +358,18 @@ export interface LastMessageDTO {
   senderName?: string | null;
   messageType?: string;
   isMine?: boolean;
-  contact?: { name: string | null; phoneNumber: string | null; email: string | null };
+  contact?: { name: string | null; phoneNumber: string | null; email: string | null; sharedByUserId?: string | null };
   contactName?: string | null;
   phoneNumber?: string | null;
+  direction?: 'sent' | 'received';
+  status?: 'sent' | 'delivered' | 'read';
+  receiptStatus?: 'sent' | 'delivered' | 'read';
+  messageStatus?: 'sent' | 'delivered' | 'seen';
+  seen?: boolean;
+  isDelivered?: boolean;
+  isRead?: boolean;
+  deliveredAt?: Date | string | null;
+  readAt?: Date | string | null;
 }
 
 export interface ChatListItemDTO {
@@ -390,9 +455,13 @@ export interface ChatMessageDTO {
   hasReacted?: boolean;
   totalCount?: number;
   results?: any[];
-  contact?: { name: string | null; phoneNumber: string | null; email: string | null };
+  contact?: { name: string | null; phoneNumber: string | null; email: string | null; sharedByUserId?: string | null };
   contactName?: string | null;
   phoneNumber?: string | null;
+  direction?: 'sent' | 'received';
+  isIncoming?: boolean;
+  seen?: boolean;
+  messageStatus?: 'sent' | 'delivered' | 'seen';
 }
 
 export interface MessageReactionDTO {
@@ -566,12 +635,36 @@ export class ChatService {
    */
   private async loadLatestMessageSenders(
     conversationIds: string[]
-  ): Promise<Map<string, { senderId: string; messageType: string; metadata: any }>> {
-    const latest = new Map<string, { senderId: string; messageType: string; metadata: any }>();
+  ): Promise<
+    Map<
+      string,
+      {
+        senderId: string;
+        messageType: string;
+        metadata: any;
+        isRead: boolean;
+        isDelivered: boolean;
+        deliveredAt: Date | null;
+        readAt: Date | null;
+      }
+    >
+  > {
+    const latest = new Map<
+      string,
+      {
+        senderId: string;
+        messageType: string;
+        metadata: any;
+        isRead: boolean;
+        isDelivered: boolean;
+        deliveredAt: Date | null;
+        readAt: Date | null;
+      }
+    >();
     if (conversationIds.length === 0) return latest;
 
     const rows = await ChatMessage.findAll({
-      attributes: ['conversationId', 'senderId', 'messageType', 'metadata', 'createdAt', 'id'],
+      attributes: ['conversationId', 'senderId', 'messageType', 'metadata', 'createdAt', 'id', 'isRead', 'isDelivered', 'deliveredAt', 'readAt'],
       where: { conversationId: { [Op.in]: conversationIds } },
       order: [
         ['createdAt', 'DESC'],
@@ -593,6 +686,10 @@ export class ChatService {
           senderId: row.senderId,
           messageType: row.messageType || 'text',
           metadata,
+          isRead: !!row.isRead,
+          isDelivered: !!row.isDelivered,
+          deliveredAt: row.deliveredAt || null,
+          readAt: row.readAt || null,
         });
       }
     }
@@ -876,8 +973,20 @@ export class ChatService {
             senderId: latest?.senderId,
             senderName,
             isMine: !!senderIsViewer,
+            direction: senderIsViewer ? 'sent' as const : 'received' as const,
             messageType: latest?.messageType || 'text',
-            ...contactFieldsFromMeta(latest?.messageType, latest?.metadata),
+            status: latest?.isRead ? 'read' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
+            receiptStatus: latest?.isRead ? 'read' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
+            messageStatus: latest?.isRead ? 'seen' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
+            seen: !!latest?.isRead,
+            isDelivered: !!latest?.isDelivered,
+            isRead: !!latest?.isRead,
+            deliveredAt: latest?.deliveredAt || null,
+            readAt: latest?.readAt || null,
+            ...contactFieldsFromMeta(latest?.messageType, latest?.metadata, {
+              senderId: latest?.senderId,
+              isMine: !!senderIsViewer,
+            }),
           }
           : null,
         unreadCount,
@@ -1418,9 +1527,16 @@ export class ChatService {
         content: msg.content,
         messageType: (msg.messageType as any) || 'text',
         metadata: parsedMetadata,
-        ...contactFieldsFromMeta(msg.messageType, parsedMetadata),
+        ...contactFieldsFromMeta(msg.messageType, parsedMetadata, {
+          senderId: msg.senderId,
+          isMine,
+        }),
         status,
         receiptStatus: status,
+        messageStatus: status === 'read' ? 'seen' : status,
+        seen: !!msg.isRead,
+        direction: isMine ? 'sent' : 'received',
+        isIncoming: !isMine,
         isDelivered: !!msg.isDelivered,
         deliveredAt: msg.deliveredAt || null,
         isRead: !!msg.isRead,
@@ -1700,67 +1816,6 @@ export class ChatService {
       conversation.deletedForEveryoneAt = null;
       conversation.deletedForEveryoneBy = null;
       await conversation.save();
-    }
-
-    // Idempotent retry / deduplication check by clientMessageId
-    if (data.clientMessageId) {
-      const existingMsg = await ChatMessage.findOne({
-        where: {
-          conversationId,
-          senderId,
-          metadata: {
-            [Op.like]: `%"clientMessageId":"${data.clientMessageId}"%`,
-          },
-        },
-      });
-
-      if (existingMsg) {
-        let existingMeta: any = null;
-        if (existingMsg.metadata) {
-          try {
-            existingMeta = JSON.parse(existingMsg.metadata);
-          } catch {
-            existingMeta = existingMsg.metadata;
-          }
-        }
-
-        const senderUser = await User.findByPk(senderId, {
-          attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
-        });
-
-        return {
-          id: existingMsg.id,
-          conversationId: existingMsg.conversationId,
-          senderId: existingMsg.senderId,
-          recipientId: existingMsg.recipientId,
-          content: existingMsg.content,
-          messageType: existingMsg.messageType as any,
-          metadata: existingMeta,
-          status: existingMsg.isRead ? 'read' : existingMsg.isDelivered ? 'delivered' : 'sent',
-          isDelivered: !!existingMsg.isDelivered,
-          deliveredAt: existingMsg.deliveredAt,
-          isRead: !!existingMsg.isRead,
-          readAt: existingMsg.readAt,
-          sentAt: existingMsg.createdAt,
-          createdAt: existingMsg.createdAt,
-          isMine: true,
-          isSender: true,
-          isPinned: false,
-          pinnedAt: null,
-          pinnedBy: null,
-          isEdited: !!existingMeta?.isEdited,
-          editedAt: existingMeta?.editedAt || null,
-          replyToMessageId: existingMeta?.replyToMessageId || null,
-          replyTo: existingMeta?.replyTo || null,
-          sender: senderUser
-            ? {
-                id: senderUser.id,
-                displayName: resolveChatDisplayName(senderUser),
-                profileImageUrl: formatMediaUrl(senderUser.profilePicture),
-              }
-            : undefined,
-        };
-      }
     }
 
     // Prepare metadata payload and parsed object
@@ -2326,6 +2381,7 @@ export class ChatService {
 
     // Contact sharing handling
     if (msgType === 'contact') {
+      normalizeContactMetadata(metadataObj);
       const contactName =
         typeof metadataObj.name === 'string' ? metadataObj.name.trim() : '';
       const phone =
@@ -2344,19 +2400,26 @@ export class ChatService {
       }
     }
 
-    // Idempotency check: if clientMessageId provided, prevent duplicate insert
+    // Idempotency: a retry of the same photos returns the saved message.
+    // A later photo in the same burst, sent with the same clientMessageId, is inserted.
     if (data.clientMessageId) {
-      const existingMessage = await ChatMessage.findOne({
+      const existingRows = await ChatMessage.findAll({
         where: {
           conversationId,
           senderId,
           metadata: {
-            [Op.like]: `%"clientMessageId":"${data.clientMessageId}"%`,
+            [Op.like]: `%"clientMessageId":"${data.clientMessageId}%`,
           },
         },
       });
 
-      if (existingMessage) {
+      if (existingRows.length > 0) {
+        const existingKeys = new Set(existingRows.map((row) => String(row.content || '')));
+        const pendingImages = uploadedImages.filter((img) => !existingKeys.has(img.key));
+        const pendingAudios = uploadedAudios.filter((aud) => !existingKeys.has(aud.key));
+        const isMediaSend = uploadedImages.length > 0 || uploadedAudios.length > 0;
+        if (!isMediaSend || (pendingImages.length === 0 && pendingAudios.length === 0)) {
+          const existingMessage = existingRows[0];
         let meta: any = null;
         try {
           meta = JSON.parse(existingMessage.metadata || '{}');
@@ -2435,6 +2498,11 @@ export class ChatService {
           imageUrls: meta?.imageUrls || (meta?.images ? meta.images.map((i: any) => i.url || i.imageUrl) : undefined),
           medias: toChatMedias(meta?.images || meta?.medias),
         };
+        }
+        uploadedImages.length = 0;
+        uploadedImages.push(...pendingImages);
+        uploadedAudios.length = 0;
+        uploadedAudios.push(...pendingAudios);
       }
     }
 
@@ -2449,21 +2517,25 @@ export class ChatService {
     const galleryImages = uploadedImages.map(decorateChatGalleryImage);
     const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
 
-    // All images (creates distinct chat message row for each image so ALL images display in chat UI)
+    // One row per photo. Each row carries only that photo, so both chat screens
+    // render every image instead of collapsing the shared gallery to the first one.
     for (let i = 0; i < uploadedImages.length; i++) {
       const img = uploadedImages[i];
+      const ownImage = decorateChatGalleryImage(img);
+      const ownUrl = ownImage?.imageUrl || img.imageUrl;
       const itemMeta: Record<string, any> = {
         ...metadataObj,
-        imageUrl: img.imageUrl,
-        thumbnailUrl: img.thumbnailUrl,
-        mediaUrl: img.mediaUrl,
-        url: img.url,
+        imageUrl: ownUrl,
+        thumbnailUrl: ownImage?.thumbnailUrl || img.thumbnailUrl,
+        mediaUrl: ownUrl,
+        url: ownUrl,
         mimeType: img.mimeType,
         fileSize: img.fileSize,
-        images: galleryImages,
-        imageUrls: galleryUrls,
-        mediaUrls: galleryUrls,
-        medias: toChatMedias(galleryImages),
+        images: [ownImage],
+        imageUrls: ownUrl ? [ownUrl] : [],
+        mediaUrls: ownUrl ? [ownUrl] : [],
+        medias: toChatMedias([ownImage]),
+        galleryCount: galleryImages.length,
       };
       if ((data as any).caption && i === 0) {
         itemMeta.caption = (data as any).caption;
@@ -2696,12 +2768,8 @@ export class ChatService {
 
     const viewerGallery = galleryImages.length > 0 ? galleryImages : undefined;
     const viewerUrls = galleryUrls.length > 0 ? galleryUrls : undefined;
-    const recipientMessages = allDtos.map((item) =>
-      buildViewerChatMessage(item, false, viewerGallery, viewerUrls)
-    );
-    const senderMessages = allDtos.map((item) =>
-      buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
-    );
+    const recipientMessages = allDtos.map((item) => buildViewerChatMessage(item, false));
+    const senderMessages = allDtos.map((item) => buildViewerChatMessage(item, true));
 
     const liveStatus = await this.applyLiveReceipts(
       senderId,
@@ -2723,12 +2791,10 @@ export class ChatService {
       for (let i = 0; i < allDtos.length; i++) {
         const recipientPayload = {
           ...recipientMessages[i],
-          messages: recipientMessages,
           totalCount: allDtos.length,
         };
         const senderPayload = {
           ...senderMessages[i],
-          messages: senderMessages,
           totalCount: allDtos.length,
         };
 
@@ -2771,7 +2837,7 @@ export class ChatService {
           images: viewerGallery || recipientMessages[0].images,
           imageUrls: viewerUrls || recipientMessages[0].imageUrls,
           mediaUrls: viewerUrls || recipientMessages[0].mediaUrls,
-          medias: recipientMessages[0].medias,
+          medias: toChatMedias(viewerGallery || recipientMessages[0].images),
           totalCount: allDtos.length,
         };
         io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -2789,7 +2855,7 @@ export class ChatService {
           images: viewerGallery || senderMessages[0].images,
           imageUrls: viewerUrls || senderMessages[0].imageUrls,
           mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
-          medias: senderMessages[0].medias,
+          medias: toChatMedias(viewerGallery || senderMessages[0].images),
           totalCount: allDtos.length,
         };
         io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
@@ -2814,6 +2880,7 @@ export class ChatService {
       images: viewerGallery || senderMessages[0].images,
       imageUrls: viewerUrls || senderMessages[0].imageUrls,
       mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
+      medias: toChatMedias(viewerGallery || senderMessages[0].images),
       totalCount: allDtos.length,
       results: senderMessages.map((d) => ({ message: d, status: d.status || 'sent' })),
     };
@@ -3389,6 +3456,7 @@ export class ChatService {
 
     // Contact sharing handling
     if (msgType === 'contact') {
+      normalizeContactMetadata(metadataObj);
       const contactName =
         typeof metadataObj.name === 'string' ? metadataObj.name.trim() : '';
       const phone =
@@ -3632,21 +3700,24 @@ export class ChatService {
         const galleryImages = uploadedImages.map(decorateChatGalleryImage);
         const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
 
-        // All images
+        // One row per photo so each chat screen lists every image.
         for (let i = 0; i < uploadedImages.length; i++) {
           const img = uploadedImages[i];
+          const ownImage = decorateChatGalleryImage(img);
+          const ownUrl = ownImage?.imageUrl || img.imageUrl;
           const itemMeta: Record<string, any> = {
             ...metadataObj,
-            imageUrl: img.imageUrl,
-            thumbnailUrl: img.thumbnailUrl,
-            mediaUrl: img.mediaUrl,
-            url: img.url,
+            imageUrl: ownUrl,
+            thumbnailUrl: ownImage?.thumbnailUrl || img.thumbnailUrl,
+            mediaUrl: ownUrl,
+            url: ownUrl,
             mimeType: img.mimeType,
             fileSize: img.fileSize,
-            images: galleryImages,
-            imageUrls: galleryUrls,
-            mediaUrls: galleryUrls,
-            medias: toChatMedias(galleryImages),
+            images: [ownImage],
+            imageUrls: ownUrl ? [ownUrl] : [],
+            mediaUrls: ownUrl ? [ownUrl] : [],
+            medias: toChatMedias([ownImage]),
+            galleryCount: galleryImages.length,
           };
           if ((data as any).caption && i === 0) {
             itemMeta.caption = (data as any).caption;
@@ -3862,12 +3933,8 @@ export class ChatService {
 
         const viewerGallery = galleryImages.length > 0 ? galleryImages : undefined;
         const viewerUrls = galleryUrls.length > 0 ? galleryUrls : undefined;
-        const receiverViews = recipientDtos.map((item) =>
-          buildViewerChatMessage(item, false, viewerGallery, viewerUrls)
-        );
-        const senderViews = recipientDtos.map((item) =>
-          buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
-        );
+        const receiverViews = recipientDtos.map((item) => buildViewerChatMessage(item, false));
+        const senderViews = recipientDtos.map((item) => buildViewerChatMessage(item, true));
 
         const liveStatus = await this.applyLiveReceipts(
           senderId,
@@ -3889,12 +3956,10 @@ export class ChatService {
           for (let i = 0; i < recipientDtos.length; i++) {
             const recipientPayload = {
               ...receiverViews[i],
-              messages: receiverViews,
               totalCount: recipientDtos.length,
             };
             const senderPayload = {
               ...senderViews[i],
-              messages: senderViews,
               totalCount: recipientDtos.length,
             };
 
@@ -3937,7 +4002,7 @@ export class ChatService {
               images: viewerGallery || receiverViews[0].images,
               imageUrls: viewerUrls || receiverViews[0].imageUrls,
               mediaUrls: viewerUrls || receiverViews[0].mediaUrls,
-              medias: receiverViews[0].medias,
+              medias: toChatMedias(viewerGallery || receiverViews[0].images),
               totalCount: recipientDtos.length,
             };
             io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -3955,7 +4020,7 @@ export class ChatService {
               images: viewerGallery || senderViews[0].images,
               imageUrls: viewerUrls || senderViews[0].imageUrls,
               mediaUrls: viewerUrls || senderViews[0].mediaUrls,
-              medias: senderViews[0].medias,
+              medias: toChatMedias(viewerGallery || senderViews[0].images),
               totalCount: recipientDtos.length,
             };
             io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
@@ -3981,6 +4046,7 @@ export class ChatService {
           images: viewerGallery || senderViews[0].images,
           imageUrls: viewerUrls || senderViews[0].imageUrls,
           mediaUrls: viewerUrls || senderViews[0].mediaUrls,
+          medias: toChatMedias(viewerGallery || senderViews[0].images),
           totalCount: recipientDtos.length,
           results: senderViews.map((d) => ({ message: d, status: d.status || 'sent' })),
         };
@@ -4054,7 +4120,8 @@ export class ChatService {
       messageId: id,
       conversationId: input.conversationId,
       status,
-      receiptStatus: status,
+      receiptStatus: input.kind === 'read' ? 'read' : 'delivered',
+      messageStatus: status,
       isDelivered: true,
       deliveredAt: atIso,
       isRead: input.kind === 'read',
@@ -4115,8 +4182,20 @@ export class ChatService {
 
     const events =
       input.kind === 'delivered'
-        ? ['chat:delivery_receipt', 'message:delivery_receipt']
-        : ['chat:read_receipt', 'message:read_receipt'];
+        ? [
+            'chat:delivery_receipt',
+            'message:delivery_receipt',
+            'chat:message:delivered',
+            'chat:message:status',
+            'message:status',
+          ]
+        : [
+            'chat:read_receipt',
+            'message:read_receipt',
+            'chat:message:seen',
+            'chat:message:status',
+            'message:status',
+          ];
 
     const emitPayload = (payload: Record<string, unknown>) => {
       for (const room of rooms) {
@@ -4159,14 +4238,15 @@ export class ChatService {
     status: 'delivered' | 'read',
     at: string
   ): void {
-    dto.status = status === 'read' ? 'seen' : 'delivered';
-    dto.receiptStatus = status === 'read' ? 'read' : 'delivered';
+    dto.status = status;
+    dto.receiptStatus = status;
+    (dto as { messageStatus?: string }).messageStatus = status === 'read' ? 'seen' : status;
+    (dto as { seen?: boolean }).seen = status === 'read';
     dto.isDelivered = true;
     if (!dto.deliveredAt) dto.deliveredAt = at;
     if (status === 'read') {
       dto.isRead = true;
       dto.readAt = at;
-      (dto as { seen?: boolean }).seen = true;
     }
   }
 

@@ -422,6 +422,8 @@ export class NotificationService {
       }
     }
 
+    const momentId = String(input.data?.momentId || '').trim();
+
     const payloadData: Record<string, any> = {
       ...(input.data || {}),
       notify_type: resolvedNotifyType,
@@ -429,6 +431,7 @@ export class NotificationService {
       entityId: entityId || '',
       navigation: navigation || { type: resolvedNotifyType, targetId: entityId || '' },
       ...(idempotencyKey && { idempotencyKey }),
+      ...(momentId ? { momentId } : {}),
     };
     if (actorUserId) {
       payloadData.user_id = actorUserId;
@@ -538,9 +541,19 @@ export class NotificationService {
       }
       fcmData.notify_type = resolvedNotifyType;
       fcmData.type = resolvedNotifyType;
+      if (momentId) {
+        fcmData.momentId = momentId;
+      }
       if (silentPush) {
         fcmData.silent = 'true';
       }
+
+      const apnsCustom: Record<string, string> = {
+        notify_type: resolvedNotifyType,
+        type: resolvedNotifyType,
+        ...(actorUserId ? { user_id: actorUserId } : {}),
+        ...(momentId ? { momentId } : {}),
+      };
 
       const message: MulticastMessage = {
         tokens,
@@ -587,10 +600,8 @@ export class NotificationService {
                 aps: {
                   contentAvailable: true,
                 },
-                notify_type: resolvedNotifyType,
-                type: resolvedNotifyType,
+                ...apnsCustom,
                 ...(silentPush ? { silent: 'true' } : {}),
-                ...(actorUserId ? { user_id: actorUserId } : {}),
               },
             }
           : {
@@ -605,9 +616,7 @@ export class NotificationService {
                   badge: 1,
                   contentAvailable: true,
                 },
-                notify_type: resolvedNotifyType,
-                type: resolvedNotifyType,
-                ...(actorUserId ? { user_id: actorUserId } : {}),
+                ...apnsCustom,
               },
             },
       };

@@ -19,6 +19,8 @@ import {
   getActiveVideoCallHandler,
   getCallHistoryHandler,
   deleteCallHandler,
+  declineVideoCallHandler,
+  leaveVideoCallHandler,
 } from '../controllers/videoCall.controller';
 
 const router = Router();
@@ -30,7 +32,8 @@ router.get('/history', authenticate, validate(getCallHistorySchema), getCallHist
 // 2. GET /api/v1/calls/video/active or /api/v1/calls/active - Active ongoing call
 router.get('/active', authenticate, getActiveVideoCallHandler);
 
-// 3. POST /api/v1/calls/video/initiate or /api/v1/calls/initiate - Initiate call
+// 3. POST /api/v1/calls and /initiate — start an audio or video call
+router.post('/', authenticate, validate(initiateVideoCallSchema), initiateVideoCallHandler);
 router.post('/initiate', authenticate, validate(initiateVideoCallSchema), initiateVideoCallHandler);
 
 // 4. DELETE /api/v1/calls/:callId - Delete call log entry
@@ -41,12 +44,16 @@ router.delete('/', authenticate, validate(callIdParamSchema), deleteCallHandler)
 router.post('/:callId/accept', authenticate, validate(callIdParamSchema), acceptVideoCallHandler);
 router.post('/accept', authenticate, validate(callIdParamSchema), acceptVideoCallHandler);
 
-// 6. POST /api/v1/calls/video/:callId/reject & /reject
+// 6. POST /api/v1/calls/video/:callId/reject & /reject & /decline
 router.post('/:callId/reject', authenticate, validate(callIdParamSchema), rejectVideoCallHandler);
 router.post('/reject', authenticate, validate(callIdParamSchema), rejectVideoCallHandler);
+router.post('/:callId/decline', authenticate, validate(callIdParamSchema), declineVideoCallHandler);
+router.post('/decline', authenticate, validate(callIdParamSchema), declineVideoCallHandler);
 
-// 7. POST /api/v1/calls/video/:callId/end & /end
+// 7. POST /api/v1/calls/video/:callId/end & /end & /leave
 router.post('/:callId/end', authenticate, validate(callIdParamSchema), endVideoCallHandler);
 router.post('/end', authenticate, validate(callIdParamSchema), endVideoCallHandler);
+router.post('/:callId/leave', authenticate, validate(callIdParamSchema), leaveVideoCallHandler);
+router.post('/leave', authenticate, validate(callIdParamSchema), leaveVideoCallHandler);
 
 export default router;

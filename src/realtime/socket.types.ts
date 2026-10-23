@@ -159,9 +159,28 @@ export interface ServerToClientEvents {
     conversationId: string;
     messageId: string;
     isPinned: boolean;
+    pinned?: boolean;
     pinnedBy: string;
     pinnedAt: string;
+    message?: any;
   }) => void;
+
+  /**
+   * Mobile contract. Emitted to the open conversation and both participants
+   * when a message is pinned or unpinned. `pinned` is the canonical flag.
+   */
+  'chat:message:pin:updated': (data: {
+    conversationId: string;
+    messageId: string;
+    pinned: boolean;
+    isPinned: boolean;
+    pinnedBy: string | null;
+    pinnedAt: string | null;
+    message: any;
+  }) => void;
+  'chat:message:pin:ack': (data: { success: boolean; requestId?: string | null; data?: any; error?: string }) => void;
+  'message:pinned': (data: any) => void;
+  'message:unpinned': (data: any) => void;
 
   /**
    * Emitted to authorized conversation participants when a message is unpinned.
@@ -170,6 +189,8 @@ export interface ServerToClientEvents {
     conversationId: string;
     messageId: string;
     isPinned: boolean;
+    pinned?: boolean;
+    message?: any;
   }) => void;
 
   /**
@@ -326,8 +347,24 @@ export interface ClientToServerEvents {
     data: {
       conversationId: string;
       messageId: string;
-      isPinned: boolean;
+      isPinned?: boolean;
+      pinned?: boolean;
       scope?: 'user' | 'conversation';
+      requestId?: string;
+    },
+    callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  'chat:message:pin': (
+    data: {
+      conversationId?: string;
+      conversation_id?: string;
+      messageId?: string;
+      message_id?: string;
+      isPinned?: boolean;
+      pinned?: boolean;
+      scope?: 'user' | 'conversation';
+      requestId?: string;
     },
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
   ) => void;

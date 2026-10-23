@@ -183,6 +183,8 @@ export interface ChatMessageDTO {
   isMine: boolean;
   isSender?: boolean;
   isPinned?: boolean;
+  /** Same value as isPinned. Mobile pin events read this flag. */
+  pinned?: boolean;
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
   isEdited?: boolean;
@@ -1073,9 +1075,8 @@ export class ChatService {
           where: {
             conversationId: actualConversationId,
             messageId: { [Op.in]: messageIds },
-            userId: currentUserId,
           },
-          attributes: ['messageId', 'pinnedBy', 'createdAt'],
+          attributes: ['messageId', 'userId', 'pinnedBy', 'createdAt'],
         }),
         ChatMessageReaction.findAll({
           where: {
@@ -1091,7 +1092,15 @@ export class ChatService {
           order: [['createdAt', 'ASC']],
         }),
       ]);
-      pinsMap = new Map(pinRows.map((p) => [p.messageId, p]));
+      pinsMap = new Map();
+      for (const pin of pinRows) {
+        const existing = pinsMap.get(pin.messageId);
+        const isViewer =
+          String(pin.userId || '').trim().toLowerCase() === normCurrentUserId;
+        if (!existing || isViewer) {
+          pinsMap.set(pin.messageId, pin);
+        }
+      }
       for (const r of reactionRows) {
         const list = reactionsMap.get(r.messageId) || [];
         list.push(r);
@@ -1229,6 +1238,7 @@ export class ChatService {
         isMine,
         isSender: isMine,
         isPinned: !!pinInfo,
+        pinned: !!pinInfo,
         pinnedAt: pinInfo?.createdAt || null,
         pinnedBy: pinInfo?.pinnedBy || null,
         isEdited: !!parsedMetadata?.isEdited,
@@ -4633,6 +4643,7 @@ export class ChatService {
         isMine,
         isSender: isMine,
         isPinned,
+        pinned: isPinned,
         pinnedAt: isPinned ? pinnedAtIso : null,
         pinnedBy: isPinned ? pinnedBy : null,
         isEdited: !!parsedMetadata?.isEdited,
@@ -4643,16 +4654,13 @@ export class ChatService {
       };
     };
 
-    const actorMessage = isPinned ? buildMessage(actorId) : null;
+    const actorMessage = buildMessage(actorId);
 
     try {
       const io = getSocketServer();
       const legacyEvent = isPinned ? 'chat:message_pinned' : 'chat:message_unpinned';
       const aliasEvent = isPinned ? 'message:pinned' : 'message:unpinned';
       const eventNames = ['chat:message:pin:updated', legacyEvent, aliasEvent];
-
-      const notifyUserIds =
-        scope === 'conversation' ? [conversation.user1Id, conversation.user2Id] : [actorId];
 
       const buildPayload = (viewerId: string) => ({
         conversationId,
@@ -4661,21 +4669,18 @@ export class ChatService {
         pinned: isPinned,
         pinnedBy: isPinned ? pinnedBy || actorId : null,
         pinnedAt: isPinned ? pinnedAtIso : null,
-        scope,
-        message: isPinned ? buildMessage(viewerId) : null,
+        scope: 'conversation' as const,
+        message: buildMessage(viewerId),
       });
 
-      // Open chat screens join these rooms and apply pin updates without a refetch.
-      if (scope === 'conversation') {
-        const sharedPayload = buildPayload(actorId);
-        for (const room of [`conversation:${conversationId}`, `chat:${conversationId}`]) {
-          for (const eventName of eventNames) {
-            io.to(room).emit(eventName as any, sharedPayload);
-          }
+      const emitPayload = (room: string, payload: ReturnType<typeof buildPayload>) => {
+        for (const eventName of eventNames) {
+          io.to(room).emit(eventName as any, payload);
         }
-      }
+      };
 
-      for (const userId of notifyUserIds) {
+      // Each participant gets a message shaped for their own side of the chat.
+      for (const userId of [conversation.user1Id, conversation.user2Id]) {
         if (!userId) continue;
         const payload = buildPayload(userId);
         const rooms = new Set([
@@ -4683,8 +4688,29 @@ export class ChatService {
           getUserRoomName(String(userId).toLowerCase()),
         ]);
         for (const room of rooms) {
+          emitPayload(room, payload);
+        }
+      }
+
+      // Open chats join these rooms. Deliver a per-viewer payload so isMine stays correct.
+      for (const room of [`conversation:${conversationId}`, `chat:${conversationId}`]) {
+        let sockets: any[] = [];
+        try {
+          sockets = await io.in(room).fetchSockets();
+        } catch {
+          sockets = [];
+        }
+
+        if (sockets.length === 0) {
+          emitPayload(room, buildPayload(actorId));
+          continue;
+        }
+
+        for (const remote of sockets) {
+          const viewerId = remote.data?.user?.userId || actorId;
+          const payload = buildPayload(viewerId);
           for (const eventName of eventNames) {
-            io.to(room).emit(eventName as any, payload);
+            remote.emit(eventName, payload);
           }
         }
       }

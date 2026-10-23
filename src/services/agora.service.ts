@@ -158,6 +158,53 @@ export class AgoraService {
       );
     }
   }
+
+  /**
+   * Agora user-account token. The client joins with `joinChannelWithUserAccount`
+   * using the same account string (the FlirtTime user id). This is the audio/video
+   * join path used by the call socket (`call:create` / `call:join`).
+   */
+  public generateRtcTokenWithUserAccount(channelName: string, userAccount: string): string {
+    const appId = this.getAppId();
+    const appCertificate = this.getAppCertificate();
+    const account = (userAccount || '').trim();
+
+    if (!channelName || !channelName.trim()) {
+      throw new AgoraServiceError('Channel name is required for RTC token generation', 400, 'INVALID_CHANNEL_NAME');
+    }
+    if (!account) {
+      throw new AgoraServiceError('A user account is required for RTC token generation', 400, 'INVALID_UID');
+    }
+
+    const tokenExpire = env.AGORA_TOKEN_EXPIRATION_SECONDS || 3600;
+
+    try {
+      const token = RtcTokenBuilder.buildTokenWithUserAccount(
+        appId,
+        appCertificate,
+        channelName,
+        account,
+        RtcRole.PUBLISHER,
+        tokenExpire,
+        tokenExpire
+      );
+
+      if (!token || typeof token !== 'string' || !token.trim()) {
+        throw new Error('Agora token builder returned an empty token');
+      }
+
+      return token;
+    } catch (error: any) {
+      if (error instanceof AgoraServiceError) {
+        throw error;
+      }
+      throw new AgoraServiceError(
+        `Failed to generate Agora RTC token: ${error.message || 'Unknown error'}`,
+        500,
+        'TOKEN_GENERATION_FAILED'
+      );
+    }
+  }
 }
 
 export const agoraService = new AgoraService();

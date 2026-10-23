@@ -6,6 +6,7 @@ import {
   Conversation,
   UserBlock,
   VideoCall,
+  ChatMessage,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
@@ -48,6 +49,7 @@ describe('FlirtTime Agora Video Calling APIs', () => {
     env.AGORA_APP_CERTIFICATE = TEST_AGORA_CERTIFICATE;
 
     await VideoCall.destroy({ where: {} });
+    await ChatMessage.destroy({ where: {} });
     await UserBlock.destroy({ where: {} });
     await Conversation.destroy({ where: {} });
     await User.destroy({ where: {} });
@@ -576,6 +578,137 @@ describe('FlirtTime Agora Video Calling APIs', () => {
       expect(data.rtc_token).toBeUndefined();
       expect(data.app_id).toBeUndefined();
       expect(data.expires_at).toBeUndefined();
+    });
+  });
+
+  describe('9. Audio call and OneVibe-style session', () => {
+    it('starts an audio call from a conversation and returns a user-account Agora session', async () => {
+      const res = await request(app)
+        .post('/api/v1/calls')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({
+          conversationId: conversation.id,
+          type: 'audio',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.message).toMatch(/audio call initiated/i);
+
+      const data = res.body.data;
+      expect(data.callType).toBe('audio');
+      expect(data.account).toBe(userCaller.id);
+      expect(typeof data.accountToken).toBe('string');
+      expect(data.accountToken.length).toBeGreaterThan(20);
+      expect(data.uid).not.toBe(0);
+      expect(data.call.type).toBe('audio');
+      expect(data.call.status).toBe('ringing');
+      expect(data.call.conversationType).toBe('direct');
+      expect(data.call.callerId).toBe(userCaller.id);
+      expect(data.call.calleeId).toBe(userCallee.id);
+      expect(data.call.channelName).toMatch(/^call_/);
+      expect(data.session.uid).toBe(userCaller.id);
+      expect(data.session.token).toBe(data.accountToken);
+      expect(data.session.appId).toBe(TEST_AGORA_APP_ID);
+      expect(data.session.call.caller.id).toBe(userCaller.id);
+
+      const dbCall = await VideoCall.findByPk(data.callId);
+      expect(dbCall?.callType).toBe('audio');
+      expect(dbCall?.conversationId).toBe(conversation.id);
+    });
+
+    it('declines a ringing audio call and writes a voice-call message in the chat', async () => {
+      const initRes = await request(app)
+        .post('/api/v1/calls/initiate')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({
+          calleeId: userCallee.id,
+          conversationId: conversation.id,
+          callType: 'audio',
+        });
+      const callId = initRes.body.data.callId;
+
+      const res = await request(app)
+        .post(`/api/v1/calls/${callId}/decline`)
+        .set('Authorization', `Bearer ${tokenCallee}`)
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('rejected');
+      expect(res.body.data.callEnded).toBe(true);
+      expect(res.body.data.call.status).toBe('declined');
+      expect(res.body.data.call.type).toBe('audio');
+
+      const log = await ChatMessage.findOne({
+        where: { conversationId: conversation.id, messageType: 'call' },
+      });
+      expect(log).not.toBeNull();
+      expect(log?.content).toBe('Declined voice call');
+      expect(log?.senderId).toBe(userCaller.id);
+      expect(log?.recipientId).toBe(userCallee.id);
+    });
+
+    it('ends a connected video call for both people on leave and logs the duration', async () => {
+      const initRes = await request(app)
+        .post('/api/v1/calls/video/initiate')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({
+          calleeId: userCallee.id,
+          conversationId: conversation.id,
+          type: 'video',
+        });
+      const callId = initRes.body.data.callId;
+
+      const acceptRes = await request(app)
+        .post(`/api/v1/calls/${callId}/accept`)
+        .set('Authorization', `Bearer ${tokenCallee}`)
+        .send();
+      expect(acceptRes.status).toBe(200);
+      expect(acceptRes.body.data.status).toBe('accepted');
+      expect(acceptRes.body.data.call.status).toBe('ongoing');
+      expect(acceptRes.body.data.session.uid).toBe(userCallee.id);
+      expect(typeof acceptRes.body.data.accountToken).toBe('string');
+
+      const res = await request(app)
+        .post(`/api/v1/calls/${callId}/leave`)
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('ended');
+      expect(res.body.data.reason).toBe('ended');
+      expect(res.body.data.callEnded).toBe(true);
+
+      const log = await ChatMessage.findOne({
+        where: { conversationId: conversation.id, messageType: 'call' },
+      });
+      expect(log).not.toBeNull();
+      expect(log?.content).toMatch(/Video call/);
+    });
+
+    it('cancels a still-ringing call when the caller hangs up', async () => {
+      const initRes = await request(app)
+        .post('/api/v1/calls/initiate')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({
+          conversationId: conversation.id,
+          type: 'audio',
+        });
+      const callId = initRes.body.data.callId;
+
+      const res = await request(app)
+        .post(`/api/v1/calls/${callId}/end`)
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send();
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.status).toBe('missed');
+      expect(res.body.data.reason).toBe('cancelled');
+
+      const log = await ChatMessage.findOne({
+        where: { conversationId: conversation.id, messageType: 'call' },
+      });
+      expect(log?.content).toBe('Cancelled voice call');
     });
   });
 });

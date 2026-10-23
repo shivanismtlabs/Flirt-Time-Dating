@@ -23,7 +23,8 @@ export const initiateVideoCallHandler = async (
   try {
     const callerId = req.user!.id;
     const result = await videoCallService.initiateCall(callerId, req.body);
-    return sendSuccess(res, 'Video call initiated successfully', result, 201);
+    const label = result.callType === 'audio' ? 'Audio call' : 'Video call';
+    return sendSuccess(res, `${label} initiated successfully`, result, 201);
   } catch (error: any) {
     if (error instanceof VideoCallServiceError || error instanceof AgoraServiceError) {
       return sendError(res, error.message, error.statusCode);
@@ -44,7 +45,8 @@ export const acceptVideoCallHandler = async (
     const calleeId = req.user!.id;
     const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
     const result = await videoCallService.acceptCall(calleeId, callId);
-    return sendSuccess(res, 'Video call accepted successfully', result, 200);
+    const label = result.callType === 'audio' ? 'Audio call' : 'Video call';
+    return sendSuccess(res, `${label} accepted successfully`, result, 200);
   } catch (error: any) {
     if (error instanceof VideoCallServiceError || error instanceof AgoraServiceError) {
       return sendError(res, error.message, error.statusCode);
@@ -105,7 +107,9 @@ export const getActiveVideoCallHandler = async (
 ) => {
   try {
     const userId = req.user!.id;
-    const result = await videoCallService.getActiveCall(userId);
+    const conversationId =
+      typeof req.query.conversationId === 'string' ? req.query.conversationId : undefined;
+    const result = await videoCallService.getActiveCall(userId, conversationId);
     const message = result
       ? 'Active call retrieved successfully'
       : 'No active call found';
@@ -156,6 +160,49 @@ export const deleteCallHandler = async (
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Failed to delete call log', 500);
+  }
+};
+
+/**
+ * POST /api/v1/calls/:callId/decline
+ * Same as reject. Direct calls end as declined for both people.
+ */
+export const declineVideoCallHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const calleeId = req.user!.id;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
+    const reason = typeof req.body?.reason === 'string' ? req.body.reason : undefined;
+    const result = await videoCallService.rejectCall(calleeId, callId, reason);
+    return sendSuccess(res, 'Call declined successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof VideoCallServiceError || error instanceof AgoraServiceError) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return sendError(res, error.message || 'Failed to decline call', 500);
+  }
+};
+
+/**
+ * POST /api/v1/calls/:callId/leave
+ * Direct leave ends the call for both people.
+ */
+export const leaveVideoCallHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user!.id;
+    const callId = (req.params.callId || req.params.id || req.body?.callId || req.body?.id) as string;
+    const result = await videoCallService.leaveCall(userId, callId);
+    return sendSuccess(res, 'Call left successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof VideoCallServiceError || error instanceof AgoraServiceError) {
+      return sendError(res, error.message || 'Failed to leave call', error.statusCode);
+    }
+    return sendError(res, error.message || 'Failed to leave call', 500);
   }
 };
 

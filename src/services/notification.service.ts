@@ -165,7 +165,8 @@ export class NotificationService {
    * Checks whether push notifications are enabled for the recipient and this event type.
    * Rules:
    * 1. Global master pushNotifications switch: When false, NOT a single notification is triggered.
-   * 2. Calls are explicitly blocked from push.
+   * 2. Incoming call pushes (`incoming_call`) follow the master push switch.
+   *    Other types whose name contains "call" stay out of likes/comments.
    * 3. Category checks:
    *    - New messages (newMessages)
    *    - New matches (newMatches)
@@ -193,7 +194,16 @@ export class NotificationService {
 
     const normalizedType = (type || '').toLowerCase();
 
-    // Calls are explicitly excluded
+    // Incoming audio/video call ring. Not part of likes & comments.
+    if (
+      normalizedType === 'incoming_call' ||
+      normalizedType === 'video_call' ||
+      normalizedType === 'audio_call'
+    ) {
+      return true;
+    }
+
+    // Other "*call*" types are not likes/comments and are not call signaling.
     if (normalizedType.includes('call')) {
       return false;
     }

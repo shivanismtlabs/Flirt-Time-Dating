@@ -10,6 +10,7 @@ import {
   Conversation,
   UserBlock,
   VideoCall,
+  ChatMessage,
 } from '../models';
 import { agoraService, AgoraServiceError } from './agora.service';
 import { formatMediaUrl } from './s3.service';
@@ -22,6 +23,7 @@ import {
   emitVideoCallEnded,
   emitVideoCallBusy,
   emitVideoCallMissed,
+  emitCallChatMessage,
 } from '../realtime/socket.videoCall';
 import { InitiateVideoCallInput, GetCallHistoryQuery } from '../schemas/videoCall.schema';
 import { env } from '../config/env';
@@ -37,6 +39,47 @@ export class VideoCallServiceError extends Error {
     this.errorCode = errorCode;
     Object.setPrototypeOf(this, VideoCallServiceError.prototype);
   }
+}
+
+export interface CallUserSummary {
+  id: string;
+  username: string;
+  fullName: string | null;
+  profilePicture: string | null;
+  isVerified: boolean;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface PublicCallDto {
+  id: string;
+  conversationId: string | null;
+  conversationType: 'direct';
+  type: 'audio' | 'video';
+  status: string;
+  channelName: string;
+  callerId: string;
+  calleeId: string;
+  caller: CallUserSummary | null;
+  callee: CallUserSummary | null;
+  participants: Array<{
+    userId: string;
+    role: 'caller' | 'member';
+    state: string;
+    user: CallUserSummary | null;
+  }>;
+  appId: string;
+  startedAt: string | null;
+  endedAt: string | null;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
+export interface CallSessionPayload {
+  call: PublicCallDto;
+  token: string;
+  uid: string;
+  appId: string;
 }
 
 export interface InitiateVideoCallResponseDTO {
@@ -55,6 +98,11 @@ export interface InitiateVideoCallResponseDTO {
   };
   status: string;
   expiresAt: string;
+  callType: 'audio' | 'video';
+  account: string;
+  accountToken: string;
+  call: PublicCallDto;
+  session: CallSessionPayload;
 }
 
 export interface AcceptVideoCallResponseDTO {
@@ -68,17 +116,26 @@ export interface AcceptVideoCallResponseDTO {
   uid: number;
   status: string;
   startedAt: string;
+  callType: 'audio' | 'video';
+  account: string;
+  accountToken: string;
+  call: PublicCallDto;
+  session: CallSessionPayload;
 }
 
 export interface RejectVideoCallResponseDTO {
   callId: string;
   status: string;
+  callEnded: boolean;
+  call: PublicCallDto | null;
 }
 
 export interface EndVideoCallResponseDTO {
   callId: string;
   status: string;
   endedAt: string;
+  reason: 'cancelled' | 'rejected' | 'missed' | 'ended';
+  callEnded: boolean;
 }
 
 export interface ActiveVideoCallResponseDTO {
@@ -98,6 +155,11 @@ export interface ActiveVideoCallResponseDTO {
     avatarUrl: string | null;
   };
   startedAt: string | null;
+  callType: 'audio' | 'video';
+  account: string;
+  accountToken: string;
+  call: PublicCallDto;
+  session: CallSessionPayload;
 }
 
 export interface CallHistoryUserDTO {
@@ -131,12 +193,258 @@ export class VideoCallService {
   /**
    * Helper to safely retrieve the Socket.IO server without crashing if offline (e.g. in test runner).
    */
+  private readonly ringTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   private getIoSafe() {
     try {
       return getSocketServer();
     } catch {
       return null;
     }
+  }
+
+  private clearRingTimeout(callId: string): void {
+    const timer = this.ringTimers.get(callId);
+    if (timer) {
+      clearTimeout(timer);
+      this.ringTimers.delete(callId);
+    }
+  }
+
+  private scheduleRingTimeout(callId: string, expiresAt: Date): void {
+    this.clearRingTimeout(callId);
+    const delay = Math.max(0, expiresAt.getTime() - Date.now());
+    const timer = setTimeout(() => {
+      this.ringTimers.delete(callId);
+      void this.expireRingingCall(callId).catch(() => undefined);
+    }, delay);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+    this.ringTimers.set(callId, timer);
+  }
+
+  private wireStatus(status: string, reason?: string): string {
+    if (reason === 'cancelled') return 'cancelled';
+    if (status === 'accepted') return 'ongoing';
+    if (status === 'rejected') return 'declined';
+    return status;
+  }
+
+  private toCallUser(user: any): CallUserSummary | null {
+    if (!user) return null;
+    const name = resolveChatDisplayName(user);
+    const avatarUrl = user.profilePicture ? formatMediaUrl(user.profilePicture) : null;
+    return {
+      id: user.id,
+      username: user.username || '',
+      fullName: user.fullName || name || null,
+      profilePicture: avatarUrl,
+      isVerified: false,
+      name,
+      avatarUrl,
+    };
+  }
+
+  private participantState(call: VideoCall, userId: string): string {
+    const isCaller = call.callerId === userId;
+    if (call.status === 'ringing') return isCaller ? 'joined' : 'ringing';
+    if (call.status === 'accepted') return 'joined';
+    if (call.status === 'rejected') return isCaller ? 'left' : 'declined';
+    if (call.status === 'missed') return isCaller ? 'left' : 'missed';
+    return 'left';
+  }
+
+  private toCallDto(
+    call: VideoCall,
+    caller: any,
+    callee: any,
+    reason?: string
+  ): PublicCallDto {
+    const callType = call.callType === 'audio' ? 'audio' : 'video';
+    const callerSummary = this.toCallUser(caller);
+    const calleeSummary = this.toCallUser(callee);
+    return {
+      id: call.id,
+      conversationId: call.conversationId || null,
+      conversationType: 'direct',
+      type: callType,
+      status: this.wireStatus(call.status, reason),
+      channelName: call.channelName,
+      callerId: call.callerId,
+      calleeId: call.calleeId,
+      caller: callerSummary,
+      callee: calleeSummary,
+      participants: [
+        {
+          userId: call.callerId,
+          role: 'caller',
+          state: this.participantState(call, call.callerId),
+          user: callerSummary,
+        },
+        {
+          userId: call.calleeId,
+          role: 'member',
+          state: this.participantState(call, call.calleeId),
+          user: calleeSummary,
+        },
+      ],
+      appId: agoraService.getAppId(),
+      startedAt: call.startedAt ? new Date(call.startedAt).toISOString() : null,
+      endedAt: call.endedAt ? new Date(call.endedAt).toISOString() : null,
+      createdAt: call.createdAt ? new Date(call.createdAt).toISOString() : new Date().toISOString(),
+      expiresAt: call.expiresAt ? new Date(call.expiresAt).toISOString() : null,
+    };
+  }
+
+  private buildSession(
+    call: VideoCall,
+    actorId: string,
+    caller: any,
+    callee: any,
+    reason?: string
+  ): CallSessionPayload {
+    return {
+      call: this.toCallDto(call, caller, callee, reason),
+      token: agoraService.generateRtcTokenWithUserAccount(call.channelName, actorId),
+      uid: actorId,
+      appId: agoraService.getAppId(),
+    };
+  }
+
+  private async loadCallUsers(call: VideoCall): Promise<{ caller: any; callee: any }> {
+    const [caller, callee] = await Promise.all([
+      User.findByPk(call.callerId, {
+        attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture'],
+      }),
+      User.findByPk(call.calleeId, {
+        attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture'],
+      }),
+    ]);
+    return { caller, callee };
+  }
+
+  private async notifyIncomingCall(
+    calleeId: string,
+    call: VideoCall,
+    caller: any,
+    callType: 'audio' | 'video'
+  ): Promise<void> {
+    if (process.env.NODE_ENV === 'test') return;
+    const callerName = resolveChatDisplayName(caller);
+    try {
+      const { notificationService } = await import('./notification.service');
+      await notificationService.dispatchNotification(calleeId, {
+        type: 'incoming_call',
+        title: callerName || 'Incoming call',
+        body: callType === 'video' ? 'Incoming video call' : 'Incoming voice call',
+        senderId: call.callerId,
+        entityId: call.id,
+        idempotencyKey: `incoming_call:${call.id}`,
+        data: {
+          type: 'incoming_call',
+          callId: call.id,
+          conversationId: call.conversationId || '',
+          callType,
+          callerId: call.callerId,
+          calleeId,
+          callerName: callerName || '',
+          channelName: call.channelName,
+        },
+        navigation: { type: 'incoming_call', targetId: call.id },
+      });
+    } catch {
+      // A missing push provider must not fail the call itself.
+    }
+  }
+
+  private async insertCallHistoryMessage(call: VideoCall, reason: string): Promise<void> {
+    if (!call.conversationId) return;
+    try {
+      const existing = await ChatMessage.findOne({
+        where: {
+          conversationId: call.conversationId,
+          messageType: 'call',
+          metadata: { [Op.like]: `%${call.id}%` },
+        },
+        attributes: ['id'],
+      });
+      if (existing) return;
+
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
+      const wire = this.wireStatus(call.status, reason);
+      let durationSec = 0;
+      const start = call.acceptedAt || call.startedAt;
+      if (start && call.endedAt && wire !== 'missed' && wire !== 'declined' && wire !== 'cancelled') {
+        durationSec = Math.max(
+          0,
+          Math.round((new Date(call.endedAt).getTime() - new Date(start).getTime()) / 1000)
+        );
+      }
+      const kind = callType === 'video' ? 'Video call' : 'Voice call';
+      let body = kind;
+      if (wire === 'missed') body = callType === 'video' ? 'Missed video call' : 'Missed voice call';
+      else if (wire === 'declined') body = callType === 'video' ? 'Declined video call' : 'Declined voice call';
+      else if (wire === 'cancelled') body = callType === 'video' ? 'Cancelled video call' : 'Cancelled voice call';
+      else if (durationSec > 0) {
+        const minutes = Math.floor(durationSec / 60);
+        const seconds = durationSec % 60;
+        body = `${kind} · ${minutes}:${String(seconds).padStart(2, '0')}`;
+      }
+
+      const saved = await ChatMessage.create({
+        conversationId: call.conversationId,
+        senderId: call.callerId,
+        recipientId: call.calleeId,
+        content: body,
+        messageType: 'call',
+        metadata: JSON.stringify({
+          call: {
+            id: call.id,
+            callType,
+            status: wire,
+            durationSec,
+            isGroup: false,
+          },
+        }),
+        isDelivered: false,
+        isRead: false,
+      });
+
+      await Conversation.update(
+        { lastMessage: body, lastMessageAt: saved.createdAt || new Date() },
+        { where: { id: call.conversationId } }
+      );
+
+      const io = this.getIoSafe();
+      if (io) {
+        emitCallChatMessage(io, [call.callerId, call.calleeId], {
+          id: saved.id,
+          conversationId: call.conversationId,
+          senderId: call.callerId,
+          recipientId: call.calleeId,
+          content: body,
+          messageType: 'call',
+          metadata: saved.metadata,
+          createdAt: saved.createdAt ? new Date(saved.createdAt).toISOString() : new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Call state is already saved. A chat-log failure must not roll the call back.
+    }
+  }
+
+  private async expireRingingCall(callId: string): Promise<void> {
+    const call = await VideoCall.findByPk(callId);
+    if (!call || call.status !== 'ringing') return;
+    const now = new Date();
+    await call.update({ status: 'missed', endedAt: now });
+    const io = this.getIoSafe();
+    if (io) {
+      emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed' });
+      emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed' });
+    }
+    await this.insertCallHistoryMessage(call, 'missed');
   }
 
   /**
@@ -178,13 +486,30 @@ export class VideoCallService {
     callerId: string,
     input: InitiateVideoCallInput
   ): Promise<InitiateVideoCallResponseDTO> {
-    const calleeId =
+    let calleeId =
       input.calleeId ||
       (input as any).userId ||
       (input as any).receiverId ||
       (input as any).callee_id ||
       (input as any).recipientId;
     const conversationId = input.conversationId;
+
+    if (!calleeId && conversationId) {
+      const seedConv = await Conversation.findByPk(conversationId, {
+        attributes: ['id', 'user1Id', 'user2Id'],
+      });
+      if (!seedConv) {
+        throw new VideoCallServiceError('Conversation not found', 404, 'CONVERSATION_NOT_FOUND');
+      }
+      if (seedConv.user1Id !== callerId && seedConv.user2Id !== callerId) {
+        throw new VideoCallServiceError('Not a participant', 403, 'FORBIDDEN');
+      }
+      calleeId = seedConv.user1Id === callerId ? seedConv.user2Id : seedConv.user1Id;
+    }
+
+    if (!calleeId) {
+      throw new VideoCallServiceError('calleeId or conversationId is required', 400, 'VALIDATION');
+    }
 
     // 1. Prevent self-call
     if (callerId === calleeId) {
@@ -329,7 +654,10 @@ export class VideoCallService {
     const expiresAt = new Date(Date.now() + ringingSeconds * 1000);
 
     // Create call record to obtain canonical call ID
-    const callType = (input as any)?.callType === 'audio' ? 'audio' : 'video';
+    const rawCallType = String(
+      (input as any)?.callType || (input as any)?.call_type || (input as any)?.type || 'video'
+    ).toLowerCase();
+    const callType = rawCallType === 'audio' ? 'audio' : 'video';
     const call = await VideoCall.create({
       callerId,
       calleeId,
@@ -346,38 +674,38 @@ export class VideoCallService {
     call.channelName = channelName;
     await call.save();
 
-    // 9. Generate Caller's Agora RTC token
-    // Using uid 0 creates a wildcard token so mobile clients that join with uid 0 (standard Flutter default)
-    // or with callerUid can both join successfully without token rejection.
+    // 9. Numeric token matches `uid`. User-account token is `session.token` (join with user id).
     let rtcToken: string;
+    let session: CallSessionPayload;
     try {
       rtcToken = agoraService.generateRtcToken({
         channelName,
-        uid: 0,
+        uid: callerUid,
       });
+      session = this.buildSession(call, callerId, caller, callee);
     } catch (tokenErr) {
-      // If token generation fails (e.g. unconfigured Agora secrets), cleanup DB record & fail safely
       await call.destroy();
       throw tokenErr;
     }
 
-    // 10. Real-time signaling to callee
+    this.scheduleRingTimeout(call.id, call.expiresAt);
+
+    const callerSummary = this.toCallUser(caller);
     const io = this.getIoSafe();
-    if (io) {
+    if (io && callerSummary) {
       emitVideoCallIncoming(io, calleeId, {
         callId: call.id,
         channelName,
-        caller: {
-          id: caller.id,
-          name: resolveChatDisplayName(caller),
-          avatarUrl: caller.profilePicture ? formatMediaUrl(caller.profilePicture) : null,
-        },
+        caller: callerSummary,
         status: 'ringing',
         expiresAt: call.expiresAt.toISOString(),
+        callType,
+        call: session.call as unknown as Record<string, unknown>,
       });
     }
 
-    // 11. Return clean DTO
+    void this.notifyIncomingCall(calleeId, call, caller, callType);
+
     return {
       callId: call.id,
       channelName: call.channelName,
@@ -394,6 +722,11 @@ export class VideoCallService {
       },
       status: 'ringing',
       expiresAt: call.expiresAt.toISOString(),
+      callType,
+      account: callerId,
+      accountToken: session.token,
+      call: session.call,
+      session,
     };
   }
 
@@ -431,12 +764,14 @@ export class VideoCallService {
     // Check if call has expired
     const now = new Date();
     if (call.status === 'ringing' && call.expiresAt && call.expiresAt < now) {
-      await call.update({ status: 'missed' });
+      this.clearRingTimeout(call.id);
+      await call.update({ status: 'missed', endedAt: now });
       const io = this.getIoSafe();
       if (io) {
-        emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed' });
-        emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed' });
+        emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed' });
+        emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed' });
       }
+      await this.insertCallHistoryMessage(call, 'missed');
       throw new VideoCallServiceError('Call has expired', 410, 'CALL_EXPIRED');
     }
 
@@ -472,19 +807,23 @@ export class VideoCallService {
     }
 
     await call.reload();
+    this.clearRingTimeout(call.id);
 
-    // Generate Callee's Agora RTC token (wildcard uid 0 so mobile callee can join with 0 or calleeUid)
+    const { caller, callee } = await this.loadCallUsers(call);
     const rtcToken = agoraService.generateRtcToken({
       channelName: call.channelName,
-      uid: 0,
+      uid: call.calleeUid,
     });
+    const session = this.buildSession(call, calleeId, caller, callee);
+    const callerSession = this.buildSession(call, call.callerId, caller, callee);
 
-    // Notify caller through Socket.IO
     const io = this.getIoSafe();
     if (io) {
       emitVideoCallAccepted(io, call.callerId, {
         callId: call.id,
         status: 'accepted',
+        participantJoined: calleeId,
+        session: callerSession,
       });
     }
 
@@ -499,6 +838,11 @@ export class VideoCallService {
       uid: call.calleeUid,
       status: 'accepted',
       startedAt: call.startedAt!.toISOString(),
+      callType: call.callType === 'audio' ? 'audio' : 'video',
+      account: calleeId,
+      accountToken: session.token,
+      call: session.call,
+      session,
     };
   }
 
@@ -508,7 +852,8 @@ export class VideoCallService {
    */
   public async rejectCall(
     calleeId: string,
-    callId: string
+    callId: string,
+    reason?: string
   ): Promise<RejectVideoCallResponseDTO> {
     const call = await VideoCall.findByPk(callId);
     if (!call) {
@@ -526,9 +871,12 @@ export class VideoCallService {
 
     // Idempotent rejection: if already rejected, ended, or missed, return current state safely
     if (call.status === 'rejected' || call.status === 'ended' || call.status === 'missed') {
+      const { caller, callee } = await this.loadCallUsers(call);
       return {
         callId: call.id,
         status: call.status,
+        callEnded: true,
+        call: this.toCallDto(call, caller, callee),
       };
     }
 
@@ -541,24 +889,35 @@ export class VideoCallService {
     }
 
     const now = new Date();
+    this.clearRingTimeout(call.id);
     await call.update({
       status: 'rejected',
       endedAt: now,
       endedBy: calleeId,
     });
 
-    // Notify caller through Socket.IO
+    const declineReason = String(reason || '').trim().toLowerCase() === 'busy' ? 'busy' : 'rejected';
+    const { caller, callee } = await this.loadCallUsers(call);
+    const callDto = this.toCallDto(call, caller, callee);
+
     const io = this.getIoSafe();
     if (io) {
       emitVideoCallRejected(io, call.callerId, {
         callId: call.id,
         status: 'rejected',
+        by: calleeId,
+        reason: declineReason,
+        call: callDto as unknown as Record<string, unknown>,
       });
     }
+
+    await this.insertCallHistoryMessage(call, 'declined');
 
     return {
       callId: call.id,
       status: 'rejected',
+      callEnded: true,
+      call: callDto,
     };
   }
 
@@ -588,16 +947,22 @@ export class VideoCallService {
 
     // Idempotency: if call is already terminated, return gracefully
     if (['ended', 'rejected', 'missed', 'failed'].includes(call.status)) {
+      const reason =
+        call.status === 'rejected' ? 'rejected' : call.status === 'missed' ? 'missed' : 'ended';
       return {
         callId: call.id,
         status: call.status,
         endedAt: call.endedAt ? call.endedAt.toISOString() : now.toISOString(),
+        reason,
+        callEnded: true,
       };
     }
 
-    // Transition call to ended or missed
+    this.clearRingTimeout(call.id);
     const isCaller = call.callerId === userId;
-    const finalStatus = call.status === 'ringing' && isCaller ? 'missed' : 'ended';
+    const cancelWhileRinging = call.status === 'ringing' && isCaller;
+    const finalStatus = cancelWhileRinging ? 'missed' : 'ended';
+    const reason = cancelWhileRinging ? 'cancelled' : 'ended';
 
     await call.update({
       status: finalStatus,
@@ -605,25 +970,33 @@ export class VideoCallService {
       endedBy: userId,
     });
 
-    // Notify the other participant through Socket.IO
     const otherUserId = isCaller ? call.calleeId : call.callerId;
     const io = this.getIoSafe();
     if (io) {
       if (finalStatus === 'missed') {
-        emitVideoCallMissed(io, otherUserId, { callId: call.id, status: 'missed' });
+        emitVideoCallMissed(io, otherUserId, {
+          callId: call.id,
+          status: 'missed',
+          reason: 'cancelled',
+        });
       } else {
         emitVideoCallEnded(io, otherUserId, {
           callId: call.id,
           status: 'ended',
           endedBy: userId,
+          reason: 'ended',
         });
       }
     }
+
+    await this.insertCallHistoryMessage(call, reason);
 
     return {
       callId: call.id,
       status: finalStatus,
       endedAt: now.toISOString(),
+      reason,
+      callEnded: true,
     };
   }
 
@@ -632,23 +1005,31 @@ export class VideoCallService {
    * Retrieves user's currently ongoing call session and returns refreshed Agora token.
    */
   public async getActiveCall(
-    userId: string
+    userId: string,
+    conversationId?: string | null
   ): Promise<ActiveVideoCallResponseDTO | null> {
+    if (conversationId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(conversationId)) {
+      throw new VideoCallServiceError('conversationId must be a valid UUID', 400, 'VALIDATION');
+    }
+
     await this.cleanupStaleRingingCalls(userId);
 
     const now = new Date();
-    const call = await VideoCall.findOne({
-      where: {
-        [Op.and]: [
-          { [Op.or]: [{ callerId: userId }, { calleeId: userId }] },
-          {
-            [Op.or]: [
-              { status: 'accepted' },
-              { status: 'ringing', expiresAt: { [Op.gt]: now } },
-            ],
-          },
+    const andConditions: any[] = [
+      { [Op.or]: [{ callerId: userId }, { calleeId: userId }] },
+      {
+        [Op.or]: [
+          { status: 'accepted' },
+          { status: 'ringing', expiresAt: { [Op.gt]: now } },
         ],
       },
+    ];
+    if (conversationId) {
+      andConditions.push({ conversationId });
+    }
+
+    const call = await VideoCall.findOne({
+      where: { [Op.and]: andConditions },
       include: [
         {
           model: User,
@@ -671,11 +1052,11 @@ export class VideoCallService {
     const isCaller = call.callerId === userId;
     const myUid = isCaller ? call.callerUid : call.calleeUid;
     const otherUser = isCaller ? call.callee : call.caller;
+    const session = this.buildSession(call, userId, call.caller, call.callee);
 
-    // Generate refreshed RTC token for participant (wildcard uid 0 for reliable connection)
     const rtcToken = agoraService.generateRtcToken({
       channelName: call.channelName,
-      uid: 0,
+      uid: myUid,
     });
 
     return {
@@ -695,7 +1076,47 @@ export class VideoCallService {
         avatarUrl: otherUser?.profilePicture ? formatMediaUrl(otherUser.profilePicture) : null,
       },
       startedAt: call.startedAt ? call.startedAt.toISOString() : null,
+      callType: call.callType === 'audio' ? 'audio' : 'video',
+      account: userId,
+      accountToken: session.token,
+      call: session.call,
+      session,
     };
+  }
+
+  /**
+   * 1:1 leave is the same as ending the call for both people.
+   */
+  public async leaveCall(userId: string, callId: string): Promise<EndVideoCallResponseDTO> {
+    return this.endCall(userId, callId);
+  }
+
+  /**
+   * Socket dropped and did not reconnect. Direct calls end for both people.
+   * A callee who never picked up is treated as a decline.
+   */
+  public async leaveActiveCallOnDisconnect(userId: string): Promise<EndVideoCallResponseDTO | RejectVideoCallResponseDTO | null> {
+    const now = new Date();
+    const call = await VideoCall.findOne({
+      where: {
+        [Op.and]: [
+          { [Op.or]: [{ callerId: userId }, { calleeId: userId }] },
+          {
+            [Op.or]: [
+              { status: 'accepted' },
+              { status: 'ringing', expiresAt: { [Op.gt]: now } },
+            ],
+          },
+        ],
+      },
+      order: [['createdAt', 'DESC']],
+    });
+    if (!call) return null;
+
+    if (call.status === 'ringing' && call.calleeId === userId) {
+      return this.rejectCall(userId, call.id);
+    }
+    return this.endCall(userId, call.id);
   }
 
   /**

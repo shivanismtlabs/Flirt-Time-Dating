@@ -3,7 +3,7 @@ import { z } from 'zod';
 export const initiateVideoCallSchema = z.object({
   body: z.preprocess((val: any) => {
     if (val && typeof val === 'object') {
-      const calleeId =
+      const rawCallee =
         val.calleeId ||
         val.userId ||
         val.receiverId ||
@@ -12,6 +12,7 @@ export const initiateVideoCallSchema = z.object({
         val.recipientId ||
         val.recipient_id ||
         val.targetUserId;
+      const calleeId = typeof rawCallee === 'string' && rawCallee.trim() ? rawCallee.trim() : undefined;
       const rawConv = val.conversationId !== undefined ? val.conversationId : val.conversation_id;
       const conversationId =
         typeof rawConv === 'string' && rawConv.trim() ? rawConv.trim() : null;
@@ -27,9 +28,11 @@ export const initiateVideoCallSchema = z.object({
     }
     return val;
   }, z.object({
-    calleeId: z.string({ required_error: 'calleeId is required' }).uuid({ message: 'calleeId must be a valid UUID' }),
+    calleeId: z.string().uuid({ message: 'calleeId must be a valid UUID' }).optional(),
     conversationId: z.string().uuid({ message: 'conversationId must be a valid UUID' }).optional().nullable(),
     callType: z.enum(['video', 'audio']).optional().default('video'),
+  }).refine((data) => Boolean(data.calleeId || data.conversationId), {
+    message: 'calleeId or conversationId is required',
   })),
 });
 

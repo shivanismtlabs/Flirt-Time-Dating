@@ -617,38 +617,46 @@ export const registerChatSocketHandlers = (
     }
   });
 
-  // 6. Event: chat:pin_message (Message Pin / Unpin Synchronization)
-  socket.on('chat:pin_message', async (payload: any, callback?: Function) => {
+  // 6. Event: chat:pin_message / chat:message:pin (Message Pin / Unpin Synchronization)
+  const handlePinMessage = async (payload: any, callback?: Function) => {
+    const conversationId = payload?.conversationId || payload?.conversation_id;
+    const messageId = payload?.messageId || payload?.message_id;
     try {
-      if (!payload || typeof payload !== 'object' || !payload.conversationId || !payload.messageId) {
+      if (!payload || typeof payload !== 'object' || !conversationId || !messageId) {
+        const error = 'conversationId and messageId are required';
         if (typeof callback === 'function') {
-          return callback({
-            success: false,
-            error: 'conversationId and messageId are required',
-          });
+          return callback({ success: false, error });
         }
+        socket.emit('chat:message:pin:ack', {
+          success: false,
+          requestId: payload?.requestId || null,
+          error,
+        });
         return;
       }
 
-      const isPinned = payload.isPinned !== undefined ? !!payload.isPinned : true;
-      const scope = payload.scope === 'conversation' ? 'conversation' : 'user';
+      const rawPinned = payload.isPinned !== undefined ? payload.isPinned : payload.pinned;
+      const isPinned = rawPinned !== undefined ? !!rawPinned : true;
+      const scope = payload.scope === 'user' ? 'user' : 'conversation';
 
       const result = await chatService.pinMessage(
         currentUserId,
-        payload.conversationId,
-        payload.messageId,
+        conversationId,
+        messageId,
         isPinned,
         scope
       );
 
+      const ack = { success: true, requestId: payload.requestId || null, data: result };
       if (typeof callback === 'function') {
         callback({ success: true, data: result });
       }
+      socket.emit('chat:message:pin:ack', ack);
     } catch (err: any) {
       socketLogger.error('Error handling chat:pin_message event', err, {
         userId: currentUserId,
-        conversationId: payload?.conversationId,
-        messageId: payload?.messageId,
+        conversationId,
+        messageId,
       });
 
       const errorMessage =
@@ -659,8 +667,17 @@ export const registerChatSocketHandlers = (
       if (typeof callback === 'function') {
         callback({ success: false, error: errorMessage });
       }
+      socket.emit('chat:message:pin:ack', {
+        success: false,
+        requestId: payload?.requestId || null,
+        error: errorMessage,
+      });
     }
-  });
+  };
+
+  socket.on('chat:pin_message', handlePinMessage);
+  socket.on('chat:message:pin' as any, handlePinMessage);
+  socket.on('message:pin' as any, handlePinMessage);
 
   // 7. Event: chat:edit_message & message:edit
   const handleEditMessage = async (payload: any, callback?: Function) => {

@@ -966,7 +966,7 @@ export const pinMessageSchema = z.object({
       scope: z.enum(['user', 'conversation']).optional().default('conversation'),
     })
     .optional()
-    .default({ isPinned: true, scope: 'user' }),
+    .default({ isPinned: true, scope: 'conversation' }),
 });
 
 export const getPinnedMessagesSchema = z.object({

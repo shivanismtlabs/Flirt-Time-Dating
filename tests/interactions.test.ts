@@ -53,6 +53,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       latitude: 19.076,
       longitude: 72.8777,
       isActive: true,
+      isSubscribed: true,
       role: 'user',
     });
 
@@ -188,7 +189,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(item.interaction.action).toBe('like');
     });
 
-    it('should exclude mutual matches from Likes tab', async () => {
+    it('should include mutual matches with isMatched: true in Likes tab by default, and exclude when excludeMatched=true', async () => {
       // User B and currentUser liked each other -> Match created
       await SwipeAction.create({
         userId: userB.id,
@@ -216,13 +217,24 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
         action: 'like',
       });
 
-      const res = await request(app)
+      // Default: both User C and matched User B are returned
+      const resAll = await request(app)
         .get('/api/v1/interactions?type=likes')
         .set('Authorization', `Bearer ${tokenCurrent}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.items).toHaveLength(1);
-      expect(res.body.data.items[0].user.id).toBe(userC.id);
+      expect(resAll.status).toBe(200);
+      expect(resAll.body.data.items).toHaveLength(2);
+      const bItem = resAll.body.data.items.find((i: any) => i.user.id === userB.id);
+      expect(bItem.interaction.isMatched).toBe(true);
+
+      // When excludeMatched=true
+      const resFiltered = await request(app)
+        .get('/api/v1/interactions?type=likes&excludeMatched=true')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(resFiltered.status).toBe(200);
+      expect(resFiltered.body.data.items).toHaveLength(1);
+      expect(resFiltered.body.data.items[0].user.id).toBe(userC.id);
     });
 
     it('should exclude inactive or blocked users from Likes tab', async () => {
@@ -443,7 +455,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toEqual({
-        likes: 1, // User C (User B is already matched)
+        likes: 2, // User C + User B (incoming likes preserved)
         you_liked: 2, // User D + User B
         matches: 1, // User B
         compliments: 1, // User B

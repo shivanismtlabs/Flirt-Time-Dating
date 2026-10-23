@@ -3647,6 +3647,28 @@ export class ChatService {
           status: 'success',
           message: primaryRecipientDto,
         });
+
+        // Asynchronously dispatch FCM Push Notification to recipient
+        (async () => {
+          try {
+            const senderDisplayName = senderUser ? resolveChatDisplayName(senderUser) : 'Someone';
+            const preview =
+              lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
+                ? lastMessagePreview
+                : uploadedImages.length > 0
+                ? 'Sent an image 📷'
+                : uploadedAudios.length > 0
+                ? 'Sent a voice message 🎤'
+                : 'Sent you a message';
+
+            await notificationService.sendMessageNotification(recipientId, {
+              senderId,
+              senderName: senderDisplayName,
+              message: preview,
+              conversationId,
+            });
+          } catch {}
+        })();
       } catch (err: any) {
         await t.rollback();
         results.push({

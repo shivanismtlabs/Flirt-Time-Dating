@@ -125,6 +125,16 @@ describe('Free Tier Rules & Limits Specification Tests', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.likes.limit).toBe(10);
     });
+
+    it('works on parameterized route GET /api/v1/users/:userId/limits', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${freeUser.id}/limits`)
+        .set('Authorization', `Bearer ${freeToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.likes.limit).toBe(10);
+    });
   });
 
   describe('2. Like Quota: 10 / day & Nopes Unlimited', () => {

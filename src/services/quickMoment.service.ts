@@ -658,7 +658,16 @@ export class QuickMomentService {
         }),
         reactors: viewerUserId === targetUserId
           ? (m.reactions || []).map((r: any) => mapQuickMomentReaction(r))
-          : [],
+          : viewerReactionRecord
+            ? [
+                {
+                  emoji: viewerReactionRecord.emoji,
+                  reaction: viewerReactionRecord.emoji,
+                  isMine: true,
+                  userId: viewerUserId,
+                },
+              ]
+            : [],
       };
     });
 

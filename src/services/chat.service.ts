@@ -308,14 +308,24 @@ export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMess
     return `${msg.senderId}|${raw}`;
   };
 
-  const out: ChatMessageDTO[] = [];
-  for (const msg of messages) {
-    const key = groupKey(msg);
-    const prev = out.length > 0 ? out[out.length - 1] : undefined;
-    if (!key || !prev || groupKey(prev) !== key) {
-      out.push(msg);
-      continue;
-    }
+  const metaOf = (msg: ChatMessageDTO): Record<string, any> =>
+    msg.metadata && typeof msg.metadata === 'object' ? msg.metadata : {};
+
+  const isLegacySplit = (msg: ChatMessageDTO): boolean => {
+    const count = Number(metaOf(msg).galleryCount);
+    return String(msg.messageType || '').toLowerCase() === 'image' && count > 1 && (msg.images?.length || 0) === 1;
+  };
+
+  const sameLegacyBurst = (prev: ChatMessageDTO, msg: ChatMessageDTO): boolean => {
+    if (!isLegacySplit(prev) || !isLegacySplit(msg)) return false;
+    if (prev.senderId !== msg.senderId) return false;
+    if (Number(metaOf(prev).galleryCount) !== Number(metaOf(msg).galleryCount)) return false;
+    const prevTime = new Date(prev.sentAt || prev.createdAt || 0).getTime();
+    const msgTime = new Date(msg.sentAt || msg.createdAt || 0).getTime();
+    return Math.abs(msgTime - prevTime) < 15000 && (prev.images?.length || 0) < Number(metaOf(msg).galleryCount);
+  };
+
+  const mergeInto = (prev: ChatMessageDTO, msg: ChatMessageDTO) => {
     const images = dedupeChatImages([...(prev.images || []), ...(msg.images || [])]).map(decorateChatGalleryImage);
     const imageUrls = images.map((img: any) => img.imageUrl || img.url).filter(Boolean);
     prev.images = images;
@@ -332,6 +342,18 @@ export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMess
         galleryCount: images.length,
       };
     }
+  };
+
+  const out: ChatMessageDTO[] = [];
+  for (const msg of messages) {
+    const key = groupKey(msg);
+    const prev = out.length > 0 ? out[out.length - 1] : undefined;
+    const sameGroup = !!key && !!prev && groupKey(prev) === key;
+    if (!prev || (!sameGroup && !sameLegacyBurst(prev, msg))) {
+      out.push(msg);
+      continue;
+    }
+    mergeInto(prev, msg);
   }
   return out;
 };
@@ -348,16 +370,43 @@ const firstContactString = (...values: unknown[]): string | null => {
   return null;
 };
 
-/** Copies phone/name aliases onto the canonical contact fields before save. */
+const CONTACT_ALIAS_KEYS = [
+  'displayName',
+  'contactName',
+  'phone',
+  'mobile',
+  'number',
+  'phones',
+  'phoneNumbers',
+  'contacts',
+  'contact',
+  'emails',
+  'allContacts',
+  'selectedContacts',
+];
+
+const contactRecord = (value: unknown): Record<string, any> =>
+  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {};
+
+/** Copies phone/name aliases onto one contact, then drops the extra copies. */
 export const normalizeContactMetadata = (meta: Record<string, any>): Record<string, any> => {
-  const nested = meta.contact && typeof meta.contact === 'object' ? meta.contact : {};
+  const nested = contactRecord(meta.contact);
+  const listed = Array.isArray(meta.contacts)
+    ? meta.contacts
+    : Array.isArray(meta.contact)
+      ? meta.contact
+      : [];
+  const first = contactRecord(listed.find((item) => item && typeof item === 'object'));
   const name = firstContactString(
     meta.name,
     meta.displayName,
     meta.contactName,
     nested.name,
     nested.displayName,
-    nested.contactName
+    nested.contactName,
+    first.name,
+    first.displayName,
+    first.contactName
   );
   const phoneNumber = firstContactString(
     meta.phoneNumber,
@@ -367,13 +416,144 @@ export const normalizeContactMetadata = (meta: Record<string, any>): Record<stri
     nested.phoneNumber,
     nested.phone,
     nested.mobile,
-    nested.number
+    nested.number,
+    first.phoneNumber,
+    first.phone,
+    first.mobile,
+    first.number
   );
-  const email = firstContactString(meta.email, nested.email);
+  const email = firstContactString(meta.email, nested.email, first.email);
+  for (const key of CONTACT_ALIAS_KEYS) delete meta[key];
   if (name) meta.name = name;
   if (phoneNumber) meta.phoneNumber = phoneNumber;
   if (email) meta.email = email;
+  else delete meta.email;
   return meta;
+};
+
+const normalizeContactPhone = (phone: string): string => phone.replace(/\D/g, '');
+
+const contactSendLockKey = (senderId: string, recipientId: string, phone: string): string => {
+  const digits = normalizeContactPhone(phone);
+  if (!digits) return '';
+  return `contact:${String(senderId).toLowerCase()}:${String(recipientId).toLowerCase()}:${digits}`;
+};
+
+const contactSendTails = new Map<string, Promise<void>>();
+
+/** Serializes two taps of the same contact so only the first insert wins. */
+const acquireChatSendLock = async (key: string): Promise<() => void> => {
+  if (!key) return () => undefined;
+  const previous = contactSendTails.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  contactSendTails.set(key, tail);
+  await previous;
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    release();
+    if (contactSendTails.get(key) === tail) contactSendTails.delete(key);
+  };
+};
+
+const CONTACT_REPEAT_WINDOW_MS = 8000;
+
+const findRecentDuplicateContact = async (
+  conversationId: string,
+  senderId: string,
+  phone: string,
+  transaction?: any
+): Promise<ChatMessage | null> => {
+  const digits = normalizeContactPhone(phone);
+  if (!digits) return null;
+  const since = new Date(Date.now() - CONTACT_REPEAT_WINDOW_MS);
+  const rows = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      messageType: 'contact',
+      createdAt: { [Op.gte]: since },
+    },
+    order: [['createdAt', 'DESC']],
+    limit: 8,
+    transaction,
+  });
+  for (const row of rows) {
+    let meta: any = {};
+    try {
+      meta = JSON.parse(row.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    if (normalizeContactPhone(String(meta.phoneNumber || '')) === digits) return row;
+  }
+  return null;
+};
+
+/**
+ * One socket can sit in the user room and the open conversation room.
+ * Separate emits deliver the same event once per room, so the chat appends
+ * the contact again. Chained rooms deliver it once.
+ */
+const emitChatEventOnce = (
+  io: { to: (room: string) => any },
+  event: string,
+  payload: unknown,
+  rooms: Array<string | null | undefined>,
+  exceptRooms: string[] = []
+): void => {
+  const unique = [...new Set(rooms.map((room) => String(room || '').trim()).filter(Boolean))];
+  if (unique.length === 0) return;
+  let op = io.to(unique[0]);
+  for (let i = 1; i < unique.length; i++) op = op.to(unique[i]);
+  for (const room of exceptRooms) {
+    if (room) op = op.except(room);
+  }
+  op.emit(event, payload);
+};
+
+const userSocketRooms = (userId: string): string[] => {
+  const rooms = [getUserRoomName(userId)];
+  if (userId && userId.toLowerCase() !== userId) rooms.push(getUserRoomName(userId.toLowerCase()));
+  return rooms;
+};
+
+const threadSocketRooms = (conversationId: string): string[] => [
+  `conversation:${conversationId}`,
+  `chat:${conversationId}`,
+];
+
+const clientMessageIdFromMetadata = (metadata: unknown): string | null => {
+  if (!metadata) return null;
+  let meta: any = metadata;
+  if (typeof metadata === 'string') {
+    try {
+      meta = JSON.parse(metadata);
+    } catch {
+      return null;
+    }
+  }
+  if (!meta || typeof meta !== 'object') return null;
+  const id = meta.clientMessageId;
+  return typeof id === 'string' && id.trim() ? id : null;
+};
+
+/** Socket payload for one delivered or seen update. Held until the new bubble is emitted. */
+type ChatReceiptEmit = {
+  kind: 'delivered' | 'read';
+  conversationId: string;
+  actorId: string;
+  notifyUserId: string;
+  messageIds: string[];
+  cursorId?: string | null;
+  at: Date;
+  markedCount?: number;
+  clientMessageIds?: Record<string, string>;
 };
 
 /** Contact card fields the chat screen reads beside metadata. */
@@ -626,13 +806,17 @@ export interface ConversationSummaryDTO {
   lastMessageSenderName?: string | null;
   messageType?: ChatMessageType;
   metadata?: any;
+  isMine?: boolean;
+  direction?: 'sent' | 'received';
+  contact?: { name: string | null; phoneNumber: string | null; email: string | null; sharedByUserId?: string | null };
+  contactName?: string | null;
+  phoneNumber?: string | null;
   status?: 'sent' | 'delivered' | 'read';
   isDelivered?: boolean;
   deliveredAt?: Date | string | null;
   isRead?: boolean;
   readAt?: Date | string | null;
   sentAt?: Date | string;
-  isMine?: boolean;
   isPinned?: boolean;
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
@@ -780,7 +964,9 @@ export class ChatService {
     for (const row of rows) {
       if (!latest.has(row.conversationId)) {
         let metadata: any = null;
-        if (row.metadata) {
+        if (row.metadata && typeof row.metadata === 'object') {
+          metadata = row.metadata;
+        } else if (typeof row.metadata === 'string' && row.metadata.trim()) {
           try {
             metadata = JSON.parse(row.metadata);
           } catch {
@@ -2790,12 +2976,34 @@ export class ChatService {
       });
     }
 
-    // 7. Execute database write inside an atomic transaction
+    // 7. Execute database write inside an atomic transaction.
+    // Same contact tapped twice waits here, then reuses the row the first tap saved.
+    const releaseContactLock = await acquireChatSendLock(
+      msgType === 'contact'
+        ? contactSendLockKey(senderId, recipientId, String(metadataObj.phoneNumber || ''))
+        : ''
+    );
+    let reusedContact = false;
     const t = await sequelize.transaction();
     const savedMessages: ChatMessage[] = [];
     let lastMessagePreview: string = '';
 
     try {
+      if (msgType === 'contact') {
+        const duplicateContact = await findRecentDuplicateContact(
+          conversationId,
+          senderId,
+          String(metadataObj.phoneNumber || ''),
+          t
+        );
+        if (duplicateContact) {
+          reusedContact = true;
+          savedMessages.push(duplicateContact);
+          lastMessagePreview = metadataObj.name ? `👤 ${metadataObj.name}` : '👤 Contact';
+        }
+      }
+
+      if (!reusedContact) {
       for (let i = 0; i < itemsToCreate.length; i++) {
         const item = itemsToCreate[i];
         const clientMsgId =
@@ -2873,11 +3081,14 @@ export class ChatService {
           transaction: t,
         });
       }
+      }
 
       await t.commit();
     } catch (err) {
       await t.rollback();
       throw err;
+    } finally {
+      releaseContactLock();
     }
 
     // 8. Build DTOs for all created messages
@@ -2972,22 +3183,26 @@ export class ChatService {
     const recipientMessages = allDtos.map((item) => buildViewerChatMessage(item, false));
     const senderMessages = allDtos.map((item) => buildViewerChatMessage(item, true));
 
+    const receiptSink: ChatReceiptEmit[] = [];
     const liveStatus = await this.applyLiveReceipts(
       senderId,
       recipientId,
       conversationId,
-      allDtos.map((d) => d.id)
+      allDtos.map((d) => d.id),
+      receiptSink
     );
     if (liveStatus !== 'sent') {
       const at = new Date().toISOString();
       for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
     }
 
-    // 9. Real-Time Delivery via Socket.IO for every created message
+    // 9. Real-Time Delivery via Socket.IO for every created message.
+    // A repeated contact tap reuses the saved row and must not be broadcast again.
+    if (!reusedContact) {
     try {
       const io = getSocketServer();
-      const recipientRoom = getUserRoomName(recipientId);
-      const senderRoom = getUserRoomName(senderId);
+      const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
+      const outgoingRooms = userSocketRooms(senderId);
 
       for (let i = 0; i < allDtos.length; i++) {
         const recipientPayload = {
@@ -2999,33 +3214,13 @@ export class ChatService {
           totalCount: Math.max(allDtos.length, galleryImages.length),
         };
 
-        // Deliver to recipient's multi-device room across all standard event names.
-        // Every nested message is isMine:false so the other user renders the full gallery.
-        io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
-        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
-        io.to(recipientRoom).emit('message:received' as any, recipientPayload);
-        io.to(recipientRoom).emit('new_message' as any, recipientPayload);
-        if (recipientId && recipientId.toLowerCase() !== recipientId) {
-          io.to(getUserRoomName(recipientId.toLowerCase())).emit('chat:message_received' as any, recipientPayload);
-          io.to(getUserRoomName(recipientId.toLowerCase())).emit('message:received' as any, recipientPayload);
+        // One delivery per event, even when the open chat is also in the conversation room.
+        for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message']) {
+          emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
         }
-
-        // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
-        io.to(senderRoom).emit('chat:message_sent' as any, senderPayload);
-        io.to(senderRoom).emit('message:sent' as any, senderPayload);
-        io.to(senderRoom).emit('new_message' as any, senderPayload);
-        if (senderId && senderId.toLowerCase() !== senderId) {
-          io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, senderPayload);
-          io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, senderPayload);
+        for (const event of ['chat:message_sent', 'message:sent', 'new_message']) {
+          emitChatEventOnce(io, event, senderPayload, outgoingRooms);
         }
-
-        // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
-        io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
-        io.to(`conversation:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
-        io.to(`conversation:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
-        io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
-        io.to(`chat:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
-        io.to(`chat:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
       }
 
       // If multiple messages (e.g. multi-image burst), also emit plural batch events so clients listening for batch updates get all messages at once
@@ -3041,12 +3236,8 @@ export class ChatService {
           medias: toChatMedias(viewerGallery || recipientMessages[0].images),
           totalCount: Math.max(allDtos.length, galleryImages.length),
         };
-        io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
-        io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
-        io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
-        io.to(`conversation:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
-        io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
-        io.to(`chat:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
+        emitChatEventOnce(io, 'chat:messages_received', batchRecipientPayload, incomingRooms, outgoingRooms);
+        emitChatEventOnce(io, 'messages:received', batchRecipientPayload, incomingRooms, outgoingRooms);
 
         const batchSenderPayload = {
           conversationId,
@@ -3059,9 +3250,12 @@ export class ChatService {
           medias: toChatMedias(viewerGallery || senderMessages[0].images),
           totalCount: Math.max(allDtos.length, galleryImages.length),
         };
-        io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
-        io.to(senderRoom).emit('messages:sent' as any, batchSenderPayload);
+        emitChatEventOnce(io, 'chat:messages_sent', batchSenderPayload, outgoingRooms);
+        emitChatEventOnce(io, 'messages:sent', batchSenderPayload, outgoingRooms);
       }
+
+      // Ticks go out after the bubble exists, before the slower chat-list refresh.
+      this.flushReceipts(receiptSink);
 
       // Real-time conversation list updates for both sender and recipient
       await this.emitConversationUpdate(
@@ -3074,6 +3268,8 @@ export class ChatService {
     } catch {
       // Socket server may not be bound in isolated test contexts; continue gracefully
     }
+    }
+    this.flushReceipts(receiptSink);
 
     const primaryDto: ChatMessageDTO = {
       ...senderMessages[0],
@@ -3092,7 +3288,9 @@ export class ChatService {
       primaryDto.durationMs = uploadedAudios[0].durationMs;
     }
 
-    this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
+    if (!reusedContact) {
+      this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
+    }
     return primaryDto;
   }
 
@@ -3771,10 +3969,17 @@ export class ChatService {
         data.clientMessageIds?.[recipientId] ||
         (data.clientMessageId ? (targetRecipientIds.length === 1 ? data.clientMessageId : `${data.clientMessageId}:${recipientId}`) : undefined);
 
-      // Execute database write inside an atomic transaction
+      // Execute database write inside an atomic transaction.
+      // A second tap of the same contact waits until the first row is saved.
+      const releaseContactLock = await acquireChatSendLock(
+        msgType === 'contact'
+          ? contactSendLockKey(senderId, recipientId, String(metadataObj.phoneNumber || ''))
+          : ''
+      );
       const t = await sequelize.transaction();
       let savedMessage: ChatMessage | null = null;
       let lastMessagePreview: string = '';
+      let reusedMultiContact = false;
       try {
         let conv = conversationMap.get(recipientId);
         if (!conv) {
@@ -4020,7 +4225,22 @@ export class ChatService {
 
         const savedMessages: ChatMessage[] = [];
         let lastMessagePreview: string = '';
+        if (msgType === 'contact') {
+          const duplicateContact = await findRecentDuplicateContact(
+            conversationId,
+            senderId,
+            String(metadataObj.phoneNumber || ''),
+            t
+          );
+          if (duplicateContact) {
+            reusedMultiContact = true;
+            savedMessages.push(duplicateContact);
+            lastMessagePreview = metadataObj.name ? `👤 ${metadataObj.name}` : '👤 Contact';
+          }
+        }
 
+        let lastSaved: ChatMessage | undefined;
+        if (!reusedMultiContact) {
         for (let i = 0; i < itemsToCreate.length; i++) {
           const item = itemsToCreate[i];
           const clientMsgId =
@@ -4054,7 +4274,7 @@ export class ChatService {
           lastMessagePreview = item.preview;
         }
 
-        const lastSaved = savedMessages[savedMessages.length - 1];
+        lastSaved = savedMessages[savedMessages.length - 1];
         conv.lastMessage = lastMessagePreview;
         conv.lastMessageAt = lastSaved.createdAt;
         await conv.save({ transaction: t });
@@ -4097,6 +4317,7 @@ export class ChatService {
             },
             transaction: t,
           });
+        }
         }
 
         await t.commit();
@@ -4184,22 +4405,25 @@ export class ChatService {
         const receiverViews = recipientDtos.map((item) => buildViewerChatMessage(item, false));
         const senderViews = recipientDtos.map((item) => buildViewerChatMessage(item, true));
 
+        const receiptSink: ChatReceiptEmit[] = [];
         const liveStatus = await this.applyLiveReceipts(
           senderId,
           recipientId,
           conversationId,
-          recipientDtos.map((d) => d.id)
+          recipientDtos.map((d) => d.id),
+          receiptSink
         );
         if (liveStatus !== 'sent') {
           const at = new Date().toISOString();
           for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
         }
 
-        // Real-Time Delivery via Socket.IO
+        // Real-Time Delivery via Socket.IO. A repeated contact is not broadcast again.
+        if (!reusedMultiContact) {
         try {
           const io = getSocketServer();
-          const recipientRoom = getUserRoomName(recipientId);
-          const senderRoom = getUserRoomName(senderId);
+          const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
+          const outgoingRooms = userSocketRooms(senderId);
 
           for (let i = 0; i < recipientDtos.length; i++) {
             const recipientPayload = {
@@ -4211,33 +4435,12 @@ export class ChatService {
               totalCount: Math.max(recipientDtos.length, galleryImages.length),
             };
 
-            // Deliver to recipient's multi-device room across all standard event names.
-            // Nested messages stay isMine:false so the other user shows every image.
-            io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
-        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
-            io.to(recipientRoom).emit('message:received' as any, recipientPayload);
-            io.to(recipientRoom).emit('new_message' as any, recipientPayload);
-            if (recipientId && recipientId.toLowerCase() !== recipientId) {
-              io.to(getUserRoomName(recipientId.toLowerCase())).emit('chat:message_received' as any, recipientPayload);
-              io.to(getUserRoomName(recipientId.toLowerCase())).emit('message:received' as any, recipientPayload);
+            for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message']) {
+              emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
             }
-
-            // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
-            io.to(senderRoom).emit('chat:message_sent' as any, senderPayload);
-            io.to(senderRoom).emit('message:sent' as any, senderPayload);
-            io.to(senderRoom).emit('new_message' as any, senderPayload);
-            if (senderId && senderId.toLowerCase() !== senderId) {
-              io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, senderPayload);
-              io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, senderPayload);
+            for (const event of ['chat:message_sent', 'message:sent', 'new_message']) {
+              emitChatEventOnce(io, event, senderPayload, outgoingRooms);
             }
-
-            // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
-            io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
-            io.to(`conversation:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
-            io.to(`conversation:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
-            io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, recipientPayload);
-            io.to(`chat:${conversationId}`).except(senderRoom).emit('message:received' as any, recipientPayload);
-            io.to(`chat:${conversationId}`).except(senderRoom).emit('new_message' as any, recipientPayload);
           }
 
           // If multiple messages, emit plural batch events for multi-message listeners
@@ -4253,12 +4456,8 @@ export class ChatService {
               medias: toChatMedias(viewerGallery || receiverViews[0].images),
               totalCount: Math.max(recipientDtos.length, galleryImages.length),
             };
-            io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
-            io.to(recipientRoom).emit('messages:received' as any, batchRecipientPayload);
-            io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
-            io.to(`conversation:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
-            io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batchRecipientPayload);
-            io.to(`chat:${conversationId}`).emit('messages:received' as any, batchRecipientPayload);
+            emitChatEventOnce(io, 'chat:messages_received', batchRecipientPayload, incomingRooms, outgoingRooms);
+            emitChatEventOnce(io, 'messages:received', batchRecipientPayload, incomingRooms, outgoingRooms);
 
             const batchSenderPayload = {
               conversationId,
@@ -4271,14 +4470,17 @@ export class ChatService {
               medias: toChatMedias(viewerGallery || senderViews[0].images),
               totalCount: Math.max(recipientDtos.length, galleryImages.length),
             };
-            io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
-            io.to(senderRoom).emit('messages:sent' as any, batchSenderPayload);
+            emitChatEventOnce(io, 'chat:messages_sent', batchSenderPayload, outgoingRooms);
+            emitChatEventOnce(io, 'messages:sent', batchSenderPayload, outgoingRooms);
           }
 
-          if (lastSaved) {
+          this.flushReceipts(receiptSink);
+
+          const latestSaved = savedMessages[savedMessages.length - 1];
+          if (latestSaved) {
             await this.emitConversationUpdate(
               conversationId,
-              lastSaved,
+              latestSaved,
               lastMessagePreview,
               senderId,
               recipientId
@@ -4287,6 +4489,8 @@ export class ChatService {
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
+        }
+        this.flushReceipts(receiptSink);
 
         const primaryRecipientDto: ChatMessageDTO = {
           ...senderViews[0],
@@ -4321,7 +4525,9 @@ export class ChatService {
           message: primaryRecipientDto,
         });
 
-        this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
+        if (!reusedMultiContact) {
+          this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
+        }
       } catch (err: any) {
         await t.rollback();
         results.push({
@@ -4331,6 +4537,8 @@ export class ChatService {
           error: err.message || 'Failed to deliver message',
           errorCode: 'DELIVERY_ERROR',
         });
+      } finally {
+        releaseContactLock();
       }
     }
 
@@ -4347,25 +4555,47 @@ export class ChatService {
    * Delivered → chat:delivery_receipt. Seen → chat:read_receipt.
    * Each event carries the message `id` the bubble was stored with.
    */
-  private emitMessageReceipt(input: {
-    kind: 'delivered' | 'read';
-    conversationId: string;
-    actorId: string;
-    notifyUserId: string;
-    messageIds: string[];
-    cursorId?: string | null;
-    at: Date;
-    markedCount?: number;
-  }): void {
+  private queueReceipt(input: ChatReceiptEmit, sink?: ChatReceiptEmit[]): void {
+    if (sink) {
+      sink.push(input);
+      return;
+    }
+    try {
+      this.emitMessageReceipt(input);
+    } catch {
+      // receipt side effects must not fail the send
+    }
+  }
+
+  private flushReceipts(sink: ChatReceiptEmit[]): void {
+    const pending = sink.splice(0, sink.length);
+    for (const input of pending) {
+      try {
+        this.emitMessageReceipt(input);
+      } catch {
+        // receipt side effects must not fail the send
+      }
+    }
+  }
+
+  private emitMessageReceipt(input: ChatReceiptEmit): void {
     const io = getSocketServer();
     const ids = input.messageIds.filter(Boolean);
     const cursorId = input.cursorId || ids[ids.length - 1] || null;
     const atIso = input.at.toISOString();
     const status = input.kind === 'delivered' ? 'delivered' : 'seen';
+    const clientMessageIds = input.clientMessageIds || {};
+    // The message just sent is first, so its tick is not stuck behind older bubbles.
+    const orderedIds = [...ids];
+    if (cursorId && orderedIds.includes(cursorId)) {
+      orderedIds.splice(orderedIds.indexOf(cursorId), 1);
+      orderedIds.unshift(cursorId);
+    }
 
     const messages = ids.map((id) => ({
       id,
       messageId: id,
+      ...(clientMessageIds[id] ? { clientMessageId: clientMessageIds[id] } : {}),
       conversationId: input.conversationId,
       status,
       receiptStatus: input.kind === 'read' ? 'read' : 'delivered',
@@ -4453,16 +4683,20 @@ export class ChatService {
       }
     };
 
-    for (const id of ids) {
+    for (const id of orderedIds) {
       emitPayload({
         ...legacy,
         id,
         messageId: id,
+        ...(clientMessageIds[id] ? { clientMessageId: clientMessageIds[id] } : {}),
         messageIds: [id],
         messages: messages.filter((message) => message.id === id),
       });
     }
-    emitPayload(legacy);
+    emitPayload({
+      ...legacy,
+      ...(cursorId && clientMessageIds[cursorId] ? { clientMessageId: clientMessageIds[cursorId] } : {}),
+    });
 
     const inbox = {
       conversationId: input.conversationId,
@@ -4530,7 +4764,8 @@ export class ChatService {
     senderId: string,
     recipientId: string,
     conversationId: string,
-    messageIds: string[]
+    messageIds: string[],
+    receiptSink?: ChatReceiptEmit[]
   ): Promise<'sent' | 'delivered' | 'read'> {
     if (!recipientId || !conversationId || messageIds.length === 0) return 'sent';
     if (String(recipientId).trim().toLowerCase() === String(senderId).trim().toLowerCase()) {
@@ -4540,11 +4775,16 @@ export class ChatService {
       const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
       const latestId = ids[ids.length - 1];
       if (isUserViewingConversation(recipientId, conversationId)) {
-        const read = await this.markMessagesAsRead(recipientId, conversationId, latestId);
+        const read = await this.markMessagesAsRead(recipientId, conversationId, latestId, {
+          receiptSink,
+          skipListFanout: !!receiptSink,
+        });
         return read.markedCount > 0 ? 'read' : 'sent';
       }
       if (isUserConnected(recipientId)) {
-        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, ids);
+        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, ids, {
+          receiptSink,
+        });
         return delivery.deliveredCount > 0 ? 'delivered' : 'sent';
       }
     } catch {
@@ -4570,7 +4810,8 @@ export class ChatService {
   public async markMessagesAsRead(
     currentUserId: string,
     conversationId: string,
-    lastReadMessageId?: string | null
+    lastReadMessageId?: string | null,
+    options?: { receiptSink?: ChatReceiptEmit[]; skipListFanout?: boolean }
   ): Promise<{
     conversationId: string;
     lastReadMessageId: string | null;
@@ -4673,14 +4914,19 @@ export class ChatService {
     const t = await sequelize.transaction();
     let markedCount = 0;
     let pendingIds: string[] = [];
+    const readClientMessageIds: Record<string, string> = {};
     try {
       const pendingRows = await ChatMessage.findAll({
         where: whereCondition,
-        attributes: ['id'],
+        attributes: ['id', 'metadata'],
         order: [['createdAt', 'ASC']],
         transaction: t,
       });
       pendingIds = pendingRows.map((row) => row.id);
+      for (const row of pendingRows) {
+        const clientId = clientMessageIdFromMetadata(row.metadata);
+        if (clientId) readClientMessageIds[row.id] = clientId;
+      }
       const [updatedRows] = await ChatMessage.update(
         {
           isRead: true,
@@ -4700,12 +4946,14 @@ export class ChatService {
       throw err;
     }
 
-    // Calculate updated unread count for requesting user in this conversation
-    const unreadCount = await this.getConversationUnreadCount(currentUserId, conversationId);
+    // The send path already refreshes the chat list, so it skips this lookup.
+    const unreadCount = options?.skipListFanout
+      ? 0
+      : await this.getConversationUnreadCount(currentUserId, conversationId);
 
     // Notify other user via real-time read receipt and sync unread count to reader's devices
     let resolvedLastReadId = lastReadMessageId || boundaryMessage?.id || null;
-    if (!resolvedLastReadId && markedCount > 0) {
+    if (!resolvedLastReadId && markedCount > 0 && !options?.skipListFanout) {
       const latestRead = await ChatMessage.findOne({
         where: { conversationId, recipientId: currentUserId, isRead: true },
         order: [['createdAt', 'DESC']],
@@ -4715,11 +4963,10 @@ export class ChatService {
     }
 
     if (markedCount > 0 || lastReadMessageId) {
-      try {
-        const io = getSocketServer();
-        const readIds =
-          pendingIds.length > 0 ? pendingIds : resolvedLastReadId ? [resolvedLastReadId] : [];
-        this.emitMessageReceipt({
+      const readIds =
+        pendingIds.length > 0 ? pendingIds : resolvedLastReadId ? [resolvedLastReadId] : [];
+      this.queueReceipt(
+        {
           kind: 'read',
           conversationId,
           actorId: currentUserId,
@@ -4728,7 +4975,15 @@ export class ChatService {
           cursorId: resolvedLastReadId || readIds[readIds.length - 1] || null,
           at: now,
           markedCount,
-        });
+          clientMessageIds: readClientMessageIds,
+        },
+        options?.receiptSink
+      );
+    }
+
+    if ((markedCount > 0 || lastReadMessageId) && !options?.skipListFanout) {
+      try {
+        const io = getSocketServer();
 
         // Synchronize updated unread badge to reader's own active sessions
         io.to(getUserRoomName(currentUserId)).emit('conversation:unread_updated' as any, {
@@ -4814,7 +5069,8 @@ export class ChatService {
   public async acknowledgeDelivery(
     currentUserId: string,
     conversationId: string,
-    messageIds: string[]
+    messageIds: string[],
+    options?: { receiptSink?: ChatReceiptEmit[] }
   ): Promise<{
     conversationId: string;
     messageIds: string[];
@@ -4871,7 +5127,7 @@ export class ChatService {
         conversationId,
         recipientId: currentUserId,
       },
-      attributes: ['id', 'isDelivered'],
+      attributes: ['id', 'isDelivered', 'isRead', 'readAt', 'metadata'],
     });
 
     if (eligibleMessages.length === 0) {
@@ -4887,7 +5143,7 @@ export class ChatService {
               metadata: { [Op.like]: `%"clientMessageId":"${id}"%` },
             })),
           },
-          attributes: ['id', 'isDelivered'],
+          attributes: ['id', 'isDelivered', 'isRead', 'readAt', 'metadata'],
         });
       }
     }
@@ -4900,10 +5156,24 @@ export class ChatService {
       };
     }
 
-    // Filter messages that have not yet been marked delivered
-    const undeliveredIds = eligibleMessages
-      .filter((msg) => !msg.isDelivered)
-      .map((msg) => msg.id);
+    const clientIdsByMessage: Record<string, string> = {};
+    for (const msg of eligibleMessages) {
+      const clientId = clientMessageIdFromMetadata(msg.metadata);
+      if (clientId) clientIdsByMessage[msg.id] = clientId;
+    }
+    const idsFor = (rows: typeof eligibleMessages) => {
+      const picked: Record<string, string> = {};
+      for (const row of rows) {
+        if (clientIdsByMessage[row.id]) picked[row.id] = clientIdsByMessage[row.id];
+      }
+      return picked;
+    };
+
+    // A later delivery ack must not turn blue ticks back into grey ones.
+    const alreadyRead = eligibleMessages.filter((msg) => msg.isRead);
+    const notYetDelivered = eligibleMessages.filter((msg) => !msg.isDelivered && !msg.isRead);
+    const deliveredUnread = eligibleMessages.filter((msg) => msg.isDelivered && !msg.isRead);
+    const undeliveredIds = notYetDelivered.map((msg) => msg.id);
 
     const now = new Date();
     let deliveredCount = 0;
@@ -4919,6 +5189,7 @@ export class ChatService {
           {
             where: {
               id: { [Op.in]: undeliveredIds },
+              isRead: false,
             },
             transaction: t,
           }
@@ -4931,22 +5202,51 @@ export class ChatService {
       }
     }
 
-    // Dispatch delivery receipt to sender's active sessions
-    const deliveredMessageIds = undeliveredIds.length > 0 ? undeliveredIds : eligibleMessages.map((m) => m.id);
-    if (deliveredCount > 0 || eligibleMessages.length > 0) {
-      try {
-        this.emitMessageReceipt({
+    const refreshUnread = deliveredCount > 0 ? notYetDelivered : deliveredUnread;
+    if (refreshUnread.length > 0) {
+      const ids = refreshUnread.map((msg) => msg.id);
+      this.queueReceipt(
+        {
           kind: 'delivered',
           conversationId,
           actorId: currentUserId,
           notifyUserId: otherUserId,
-          messageIds: deliveredMessageIds,
-          cursorId: deliveredMessageIds[deliveredMessageIds.length - 1] || null,
+          messageIds: ids,
+          cursorId: ids[ids.length - 1] || null,
           at: now,
-          markedCount: deliveredCount > 0 ? deliveredCount : eligibleMessages.length,
-        });
-      } catch { }
+          markedCount: deliveredCount > 0 ? deliveredCount : ids.length,
+          clientMessageIds: idsFor(refreshUnread),
+        },
+        options?.receiptSink
+      );
     }
+
+    if (alreadyRead.length > 0) {
+      const ids = alreadyRead.map((msg) => msg.id);
+      const readAt = alreadyRead.reduce<Date>((latest, msg) => {
+        const at = msg.readAt ? new Date(msg.readAt) : now;
+        return at > latest ? at : latest;
+      }, now);
+      this.queueReceipt(
+        {
+          kind: 'read',
+          conversationId,
+          actorId: currentUserId,
+          notifyUserId: otherUserId,
+          messageIds: ids,
+          cursorId: ids[ids.length - 1] || null,
+          at: readAt,
+          markedCount: ids.length,
+          clientMessageIds: idsFor(alreadyRead),
+        },
+        options?.receiptSink
+      );
+    }
+
+    const deliveredMessageIds =
+      undeliveredIds.length > 0
+        ? undeliveredIds
+        : (alreadyRead.length > 0 ? alreadyRead : deliveredUnread).map((msg) => msg.id);
 
     return {
       conversationId,
@@ -5016,7 +5316,7 @@ export class ChatService {
 
     const eligibleMessages = await ChatMessage.findAll({
       where: whereBase,
-      attributes: ['id', 'conversationId', 'senderId', 'isDelivered'],
+      attributes: ['id', 'conversationId', 'senderId', 'isDelivered', 'isRead', 'metadata'],
     });
 
     const now = new Date();
@@ -5030,7 +5330,8 @@ export class ChatService {
       };
     }
 
-    const undeliveredMessages = eligibleMessages.filter((m) => !m.isDelivered);
+    const undeliveredMessages = eligibleMessages.filter((m) => !m.isDelivered && !m.isRead);
+    const alreadyReadMessages = eligibleMessages.filter((m) => m.isRead);
     const undeliveredIds = undeliveredMessages.map((m) => m.id);
     let deliveredCount = 0;
 
@@ -5069,6 +5370,12 @@ export class ChatService {
       try {
         for (const [key, group] of groupedBySender.entries()) {
           const senderId = key.slice(0, key.indexOf(':'));
+          const clientMessageIds: Record<string, string> = {};
+          for (const msg of undeliveredMessages) {
+            if (!group.messageIds.includes(msg.id)) continue;
+            const clientId = clientMessageIdFromMetadata(msg.metadata);
+            if (clientId) clientMessageIds[msg.id] = clientId;
+          }
           this.emitMessageReceipt({
             kind: 'delivered',
             conversationId: group.conversationId,
@@ -5078,6 +5385,37 @@ export class ChatService {
             cursorId: group.messageIds[group.messageIds.length - 1] || null,
             at: now,
             markedCount: group.messageIds.length,
+            clientMessageIds,
+          });
+        }
+      } catch {}
+    }
+
+    if (alreadyReadMessages.length > 0) {
+      const groupedRead = new Map<string, { conversationId: string; messageIds: string[]; clientMessageIds: Record<string, string> }>();
+      for (const msg of alreadyReadMessages) {
+        const key = `${msg.senderId}:${msg.conversationId}`;
+        if (!groupedRead.has(key)) {
+          groupedRead.set(key, { conversationId: msg.conversationId, messageIds: [], clientMessageIds: {} });
+        }
+        const group = groupedRead.get(key)!;
+        group.messageIds.push(msg.id);
+        const clientId = clientMessageIdFromMetadata(msg.metadata);
+        if (clientId) group.clientMessageIds[msg.id] = clientId;
+      }
+      try {
+        for (const [key, group] of groupedRead.entries()) {
+          const senderId = key.slice(0, key.indexOf(':'));
+          this.emitMessageReceipt({
+            kind: 'read',
+            conversationId: group.conversationId,
+            actorId: currentUserId,
+            notifyUserId: senderId,
+            messageIds: group.messageIds,
+            cursorId: group.messageIds[group.messageIds.length - 1] || null,
+            at: now,
+            markedCount: group.messageIds.length,
+            clientMessageIds: group.clientMessageIds,
           });
         }
       } catch {}
@@ -5348,7 +5686,9 @@ export class ChatService {
       attributes: ['id', 'senderId', 'messageType', 'content', 'metadata', 'createdAt'],
     });
     let latestMeta: any = null;
-    if (latestMessage?.metadata) {
+    if (latestMessage?.metadata && typeof latestMessage.metadata === 'object') {
+      latestMeta = latestMessage.metadata;
+    } else if (typeof latestMessage?.metadata === 'string' && latestMessage.metadata.trim()) {
       try {
         latestMeta = JSON.parse(latestMessage.metadata);
       } catch {
@@ -6769,6 +7109,12 @@ export class ChatService {
         lastMessageSenderId: latest?.senderId || null,
         lastMessageSenderName: senderName,
         messageType: (latest?.messageType || 'text') as ChatMessageType,
+        isMine: !!senderIsViewer,
+        direction: senderIsViewer ? 'sent' : 'received',
+        ...contactFieldsFromMeta(latest?.messageType, latest?.metadata, {
+          senderId: latest?.senderId,
+          isMine: !!senderIsViewer,
+        }),
         unreadCount,
         isMatched: Boolean(match),
         isPinned: pinnedConversationIdSet.has(conv.id),
@@ -8426,43 +8772,49 @@ return {
           recipientDtos.push(dto);
         }
 
+        const receiptSink: ChatReceiptEmit[] = [];
+        const liveStatus = await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id),
+          receiptSink
+        );
+        if (liveStatus !== 'sent') {
+          const at = new Date().toISOString();
+          for (const dto of recipientDtos) this.applyReceiptStatus(dto, liveStatus, at);
+        }
+
         // Real-Time Delivery via Socket.IO after database persistence succeeds
         try {
           const io = getSocketServer();
           if (io) {
-            const recipientRoom = getUserRoomName(recipientId);
-            const senderRoom = getUserRoomName(senderId);
-
             for (const dto of recipientDtos) {
               const recipientPayload = {
                 ...dto,
                 isMine: false,
                 isSender: false,
+                status: 'sent' as const,
+                receiptStatus: 'sent' as const,
+                messageStatus: 'sent' as const,
+                seen: false,
+                isDelivered: false,
+                deliveredAt: null,
+                isRead: false,
+                readAt: null,
               };
 
-              // Emit to recipient's multi-device room
-              io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
-        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
-              io.to(recipientRoom).emit('message:received' as any, recipientPayload);
-              io.to(recipientRoom).emit('new_message' as any, recipientPayload);
-              io.to(recipientRoom).emit('chat:message_forwarded' as any, recipientPayload);
-
-              // Synchronize sender's other connected devices
-              io.to(senderRoom).emit('chat:message_sent' as any, dto);
-              io.to(senderRoom).emit('message:sent' as any, dto);
-              io.to(senderRoom).emit('new_message' as any, dto);
-              io.to(senderRoom).emit('chat:message_forwarded' as any, dto);
-
-              // Broadcast to conversation room subscribers
-              io.to(`conversation:${conversationId}`).emit('chat:message_received' as any, recipientPayload);
-              io.to(`conversation:${conversationId}`).emit('message:received' as any, recipientPayload);
-              io.to(`conversation:${conversationId}`).emit('new_message' as any, recipientPayload);
-              io.to(`conversation:${conversationId}`).emit('chat:message_forwarded' as any, recipientPayload);
-              io.to(`chat:${conversationId}`).emit('chat:message_received' as any, recipientPayload);
-              io.to(`chat:${conversationId}`).emit('message:received' as any, recipientPayload);
-              io.to(`chat:${conversationId}`).emit('new_message' as any, recipientPayload);
-              io.to(`chat:${conversationId}`).emit('chat:message_forwarded' as any, recipientPayload);
+              const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
+              const outgoingRooms = userSocketRooms(senderId);
+              for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message', 'chat:message_forwarded']) {
+                emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
+              }
+              for (const event of ['chat:message_sent', 'message:sent', 'new_message', 'chat:message_forwarded']) {
+                emitChatEventOnce(io, event, dto, outgoingRooms);
+              }
             }
+
+            this.flushReceipts(receiptSink);
 
             if (lastSaved) {
               await this.emitConversationUpdate(
@@ -8477,13 +8829,7 @@ return {
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
-
-        await this.applyLiveReceipts(
-          senderId,
-          recipientId,
-          conversationId,
-          recipientDtos.map((d) => d.id)
-        );
+        this.flushReceipts(receiptSink);
 
         this.dispatchChatPush(
           recipientId,

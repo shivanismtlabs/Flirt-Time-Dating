@@ -398,6 +398,40 @@ describe('FlirtTime Chat Attachments — Photo, Camera, Location & Contact', () 
       const updatedConv = await Conversation.findByPk(convAB.id);
       expect(updatedConv?.lastMessage).toBe('👤 Sarah Connor');
     });
+
+    it('should keep a single bubble when the same contact is sent twice at once', async () => {
+      const body = {
+        messageType: 'contact',
+        metadata: {
+          name: 'Aasha',
+          phone: '+917974038791',
+          contact: { name: 'Aasha', phoneNumber: '+917974038791' },
+        },
+      };
+
+      const [first, second] = await Promise.all([
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send(body),
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send(body),
+      ]);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).toBe(first.body.data.id);
+      expect(first.body.data.metadata.contact).toBeUndefined();
+      expect(first.body.data.metadata.phone).toBeUndefined();
+      expect(first.body.data.metadata.phoneNumber).toBe('+917974038791');
+
+      const count = await ChatMessage.count({
+        where: { conversationId: convAB.id, messageType: 'contact' },
+      });
+      expect(count).toBe(1);
+    });
   });
 
   // =========================================================================

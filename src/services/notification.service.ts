@@ -453,7 +453,19 @@ export class NotificationService {
         order: [['createdAt', 'DESC']],
         limit: 25,
       });
-      const existing = candidates.find((row) => row.data?.idempotencyKey === idempotencyKey);
+      const existing = candidates.find((row) => {
+        const payload =
+          row.data && typeof row.data === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(row.data);
+                } catch {
+                  return null;
+                }
+              })()
+            : row.data;
+        return payload?.idempotencyKey === idempotencyKey;
+      });
 
       if (existing) {
         return {
@@ -1237,10 +1249,10 @@ export class NotificationService {
         actor,
         sender: senderSummary,
         data: {
+          ...(n.data || {}),
           notify_type: resolvedType,
           type: resolvedType,
           user_id: actorUserId,
-          ...(n.data || {}),
           ...(momentId ? { momentId } : {}),
           ...(quickMomentId ? { quickMomentId } : {}),
         },

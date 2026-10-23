@@ -528,11 +528,10 @@ export class ComplimentService {
         {
           requesterId,
           targetUserId,
-          status: deliverToChat ? 'accepted' : 'pending',
+          status: 'pending',
           message: finalMessage,
           reason: finalReason,
           momentId,
-          ...(deliverToChat ? { respondedAt: now } : {}),
         },
         { transaction: t }
       );

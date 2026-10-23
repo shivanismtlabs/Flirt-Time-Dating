@@ -208,6 +208,7 @@ export const getAllMomentsSchema = z.object({
     limit: z.string().regex(/^\d+$/).transform(Number).optional().default('20'),
     type: z.enum(['feed', 'stories']).optional().default('feed'),
     scope: z.enum(['all', 'others', 'self', 'matches', 'friends']).optional().default('all'),
+    momentId: z.string().uuid('Invalid moment ID format').optional(),
   }),
 });
 

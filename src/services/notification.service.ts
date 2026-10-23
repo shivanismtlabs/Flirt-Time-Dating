@@ -96,6 +96,12 @@ export const resolveNotifyType = (rawType: string): string => {
   return rawType || 'like';
 };
 
+/** Ringing audio/video pushes stay data-only so the OS does not play a sound or show a banner. */
+const SILENT_CALL_NOTIFY_TYPES = new Set(['incoming_call', 'video_call', 'audio_call']);
+
+export const isSilentCallNotification = (type: string): boolean =>
+  SILENT_CALL_NOTIFY_TYPES.has((type || '').toLowerCase().trim());
+
 export class NotificationServiceError extends Error {
   public statusCode: number;
   public errorCode?: string;
@@ -384,9 +390,15 @@ export class NotificationService {
       navigation?: NotificationNavigationDTO;
       idempotencyKey?: string;
       isForeground?: boolean;
+      /** Data-only push: no alert and no sound. Incoming calls always use this. */
+      silent?: boolean;
+      /** How long a silent call push stays deliverable, in milliseconds. */
+      ttlMs?: number;
     }
   ): Promise<PushNotificationResult> {
     const { type, title, body, senderId, entityId, navigation, idempotencyKey, isForeground } = input;
+    const silentPush =
+      Boolean(input.silent) || isSilentCallNotification(type) || isSilentCallNotification(String(input.data?.type || ''));
     const resolvedNotifyType = resolveNotifyType(input.data?.notify_type || type);
     const actorUserId = String(input.data?.user_id || senderId || '');
 
@@ -497,6 +509,10 @@ export class NotificationService {
     try {
       const messaging = getFirebaseMessaging();
       const isAppForeground = Boolean(isForeground);
+      const dataOnly = isAppForeground || silentPush;
+      const callTtlMs = silentPush
+        ? Math.max(1000, Math.min(input.ttlMs ?? 60_000, 5 * 60 * 1000))
+        : undefined;
 
       const fcmData: Record<string, string> = {
         notify_type: resolvedNotifyType,
@@ -522,11 +538,14 @@ export class NotificationService {
       }
       fcmData.notify_type = resolvedNotifyType;
       fcmData.type = resolvedNotifyType;
+      if (silentPush) {
+        fcmData.silent = 'true';
+      }
 
       const message: MulticastMessage = {
         tokens,
-        ...(isAppForeground
-          ? {} // When foregrounded: data-only FCM to prevent duplicate system tray popup
+        ...(dataOnly
+          ? {} // Foreground and incoming calls: data-only so the OS does not show a banner or play a sound
           : {
               notification: {
                 title,
@@ -534,8 +553,13 @@ export class NotificationService {
               },
             }),
         data: fcmData,
-        android: isAppForeground
-          ? { priority: 'high' }
+        android: dataOnly
+          ? {
+              priority: 'high',
+              ...(silentPush
+                ? { ttl: callTtlMs, collapseKey: 'incoming_call' }
+                : {}),
+            }
           : {
               priority: 'high',
               notification: {
@@ -547,11 +571,17 @@ export class NotificationService {
                 defaultVibrateTimings: true,
               },
             },
-        apns: isAppForeground
+        apns: dataOnly
           ? {
               headers: {
                 'apns-priority': '5',
                 'apns-push-type': 'background',
+                ...(silentPush
+                  ? {
+                      'apns-collapse-id': 'incoming-call',
+                      'apns-expiration': String(Math.floor(Date.now() / 1000) + Math.ceil((callTtlMs || 60_000) / 1000)),
+                    }
+                  : {}),
               },
               payload: {
                 aps: {
@@ -559,6 +589,7 @@ export class NotificationService {
                 },
                 notify_type: resolvedNotifyType,
                 type: resolvedNotifyType,
+                ...(silentPush ? { silent: 'true' } : {}),
                 ...(actorUserId ? { user_id: actorUserId } : {}),
               },
             }

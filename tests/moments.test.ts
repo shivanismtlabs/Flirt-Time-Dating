@@ -446,6 +446,73 @@ describe('Permanent Moments Feature APIs', () => {
       expect(found.media).toHaveLength(1);
     });
 
+    it('should place the requested moment first in the feed when momentId is visible', async () => {
+      await Moment.update(
+        { publishedAt: new Date(Date.now() - 30 * 60 * 1000) },
+        { where: { id: momentId } }
+      );
+      const newest = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Newest moment',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(),
+      });
+      const middle = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Middle moment',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(Date.now() - 60 * 60 * 1000),
+      });
+      const oldest = await Moment.create({
+        userId: viewerUser.id,
+        caption: 'Oldest moment',
+        audience: 'everyone',
+        status: 'active',
+        publishedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      });
+
+      const page1 = await request(app)
+        .get(`/api/v1/moments?limit=2&page=1&type=feed&momentId=${oldest.id}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(page1.status).toBe(200);
+      expect(page1.body.data.moments.map((m: any) => m.momentId)).toEqual([
+        oldest.id,
+        newest.id,
+      ]);
+
+      const page2 = await request(app)
+        .get(`/api/v1/moments?limit=2&page=2&type=feed&momentId=${oldest.id}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(page2.status).toBe(200);
+      const page2Ids = page2.body.data.moments.map((m: any) => m.momentId);
+      expect(page2Ids).toEqual([momentId, middle.id]);
+      expect(page2Ids).not.toContain(oldest.id);
+      expect(page1.body.data.totalCount).toBe(page2.body.data.totalCount);
+    });
+
+    it('should keep normal feed order when the requested moment is not visible', async () => {
+      const hidden = await Moment.create({
+        userId: creatorUser.id,
+        caption: 'Matches only',
+        audience: 'matches_only',
+        status: 'active',
+        publishedAt: new Date(Date.now() - 3 * 60 * 60 * 1000),
+      });
+
+      const res = await request(app)
+        .get(`/api/v1/moments?limit=20&page=1&type=feed&momentId=${hidden.id}`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const ids = res.body.data.moments.map((m: any) => m.momentId);
+      expect(ids).not.toContain(hidden.id);
+      expect(ids[0]).toBe(momentId);
+    });
+
     it('should retrieve authenticated user individual moments via GET /api/v1/moments/me and /my', async () => {
       const resMe = await request(app)
         .get('/api/v1/moments/me')

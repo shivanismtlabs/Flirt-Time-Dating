@@ -622,6 +622,7 @@ export const handleUploadChatMedia = (
         !req.body.audio &&
         !req.body.voiceUrl &&
         !req.body.images &&
+        !req.body.medias &&
         !req.body.imageUrls
       ) {
         req.body.content = '__FILE_ATTACHMENT__';
@@ -641,6 +642,12 @@ export const handleUploadChatMedia = (
     if (typeof req.body.images === 'string') {
       try {
         req.body.images = JSON.parse(req.body.images);
+      } catch {}
+    }
+
+    if (typeof req.body.medias === 'string') {
+      try {
+        req.body.medias = JSON.parse(req.body.medias);
       } catch {}
     }
 

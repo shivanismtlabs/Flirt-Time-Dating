@@ -148,13 +148,14 @@ export const getAllMomentsHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const { page, limit, type, scope } = req.query as any;
+    const { page, limit, type, scope, momentId } = req.query as any;
 
     const result = await momentService.getAllMoments(viewerId, {
       page: page ? Number(page) : undefined,
       limit: limit ? Number(limit) : undefined,
       type: type as 'feed' | 'stories',
       scope: scope as 'all' | 'others' | 'self' | 'matches' | 'friends',
+      momentId: typeof momentId === 'string' ? momentId : undefined,
     });
 
     return sendSuccess(res, 'Moments retrieved successfully', result, 200);

@@ -11,6 +11,7 @@ import {
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import * as firebaseConfig from '../src/config/firebase';
+import { notificationService } from '../src/services/notification.service';
 
 describe('FlirtTime Notifications & FCM APIs', () => {
   let userA: User;
@@ -436,6 +437,74 @@ describe('FlirtTime Notifications & FCM APIs', () => {
       });
       expect(notif).not.toBeNull();
       expect(notif?.title).toBe('New Like');
+    });
+  });
+
+  describe('7. Silent incoming call pushes', () => {
+    it('sends audio and video call pushes as data-only with no sound or banner', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_call_token_user_b',
+        platform: 'android',
+        isActive: true,
+      });
+
+      for (const callType of ['audio', 'video'] as const) {
+        mockSendEachForMulticast.mockClear();
+        const result = await notificationService.dispatchNotification(userB.id, {
+          type: 'incoming_call',
+          title: 'Cindy Crawford',
+          body: callType === 'video' ? 'Incoming video call' : 'Incoming voice call',
+          senderId: userA.id,
+          entityId: `call-${callType}`,
+          idempotencyKey: `incoming_call:call-${callType}`,
+          data: {
+            type: 'incoming_call',
+            callId: `call-${callType}`,
+            callType,
+            callerId: userA.id,
+            channelName: `channel-${callType}`,
+          },
+          navigation: { type: 'incoming_call', targetId: `call-${callType}` },
+        });
+
+        expect(result.pushStatus).toBe('sent_to_fcm');
+        expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
+        const message = mockSendEachForMulticast.mock.calls[0][0];
+        expect(message.notification).toBeUndefined();
+        expect(message.android.notification).toBeUndefined();
+        expect(message.android.priority).toBe('high');
+        expect(message.apns.payload.aps.alert).toBeUndefined();
+        expect(message.apns.payload.aps.sound).toBeUndefined();
+        expect(message.apns.payload.aps.contentAvailable).toBe(true);
+        expect(message.apns.headers['apns-push-type']).toBe('background');
+        expect(message.data.silent).toBe('true');
+        expect(message.data.callType).toBe(callType);
+        expect(message.data.type).toBe('incoming_call');
+      }
+    });
+
+    it('keeps a normal alert with sound for non-call notifications', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_like_token_user_b',
+        platform: 'ios',
+        isActive: true,
+      });
+
+      await notificationService.dispatchNotification(userB.id, {
+        type: 'like',
+        title: 'New Like',
+        body: 'Someone liked you',
+        senderId: userA.id,
+        entityId: 'like-1',
+      });
+
+      const message = mockSendEachForMulticast.mock.calls[0][0];
+      expect(message.notification).toEqual({ title: 'New Like', body: 'Someone liked you' });
+      expect(message.android.notification.sound).toBe('default');
+      expect(message.apns.payload.aps.sound).toBe('default');
+      expect(message.data.silent).toBeUndefined();
     });
   });
 });

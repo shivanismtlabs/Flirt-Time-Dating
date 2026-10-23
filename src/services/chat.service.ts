@@ -190,6 +190,33 @@ export const decorateChatGalleryImage = (img: any): any => {
   };
 };
 
+/**
+ * Shape the open chat screen reads for a multi-photo bubble.
+ * `images` stays for older clients. `medias` is what the receiver renders.
+ */
+export const toChatMedias = (images: any[] | undefined | null): any[] => {
+  if (!Array.isArray(images) || images.length === 0) return [];
+  return images
+    .map((img, index) => {
+      const decorated = decorateChatGalleryImage(img);
+      const url = decorated?.imageUrl || decorated?.url || '';
+      if (!url) return null;
+      return {
+        id: decorated?.key || url || `image-${index}`,
+        kind: 'image',
+        url,
+        thumbnailUrl: decorated?.thumbnailUrl || url,
+        mimeType: decorated?.mimeType || img?.mimeType || 'image/jpeg',
+        width: decorated?.width ?? img?.width ?? null,
+        height: decorated?.height ?? img?.height ?? null,
+        key: decorated?.key,
+        imageUrl: url,
+        mediaUrl: url,
+      };
+    })
+    .filter(Boolean);
+};
+
 export const dedupeChatImages = <T extends { key?: string; imageUrl?: string; url?: string }>(
   images: T[]
 ): T[] => {
@@ -224,6 +251,7 @@ export const buildViewerChatMessage = (
     messages?: ChatMessageDTO[];
     results?: any[];
   };
+  const medias = toChatMedias(images);
   return {
     ...rest,
     isMine,
@@ -231,6 +259,7 @@ export const buildViewerChatMessage = (
     images,
     imageUrls,
     mediaUrls: imageUrls,
+    ...(medias.length > 0 ? { medias } : {}),
   };
 };
 
@@ -326,6 +355,8 @@ export interface ChatMessageDTO {
   images?: any[];
   imageUrls?: string[];
   mediaUrls?: string[];
+  /** Receiver gallery. Same photos as `images`, in the shape the chat screen reads. */
+  medias?: any[];
   messages?: ChatMessageDTO[];
   reactions?: MessageReactionDTO[];
   reactionCounts?: Record<string, number>;
@@ -1460,6 +1491,7 @@ export class ChatService {
           msgItem.imageUrls = resolvedUrl ? [resolvedUrl] : [];
         }
         msgItem.mediaUrls = msgItem.imageUrls;
+        msgItem.medias = toChatMedias(msgItem.images);
       } else if (msg.messageType === 'audio') {
         const cleanKey = s3Service.extractKey(msg.content);
         const resolvedAudio =
@@ -1781,15 +1813,24 @@ export class ChatService {
       metadataObj.replyTo = replyToRef;
     }
 
-    let rawImages = coerceMediaList((data as any).images || metadataObj.images || metadataObj.photos || metadataObj.attachments);
-    let rawImageUrls = coerceMediaList(
-      (data as any).imageUrls ||
-      (data as any).mediaUrls ||
-      metadataObj.imageUrls ||
-      metadataObj.mediaUrls ||
-      metadataObj.photos ||
-      metadataObj.attachments
-    );
+    let rawImages = [
+      ...coerceMediaList((data as any).images),
+      ...coerceMediaList((data as any).medias),
+      ...coerceMediaList(metadataObj.images),
+      ...coerceMediaList(metadataObj.medias),
+    ];
+    if (rawImages.length === 0) {
+      rawImages = [
+        ...coerceMediaList(metadataObj.photos),
+        ...coerceMediaList(metadataObj.attachments),
+      ];
+    }
+    let rawImageUrls = [
+      ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.mediaUrls),
+    ];
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
     if (!data.messageType && !data.type) {
@@ -2343,6 +2384,7 @@ export class ChatService {
           durationMs: meta?.durationMs,
           images: meta?.images,
           imageUrls: meta?.imageUrls || (meta?.images ? meta.images.map((i: any) => i.url || i.imageUrl) : undefined),
+          medias: toChatMedias(meta?.images || meta?.medias),
         };
       }
     }
@@ -2372,6 +2414,7 @@ export class ChatService {
         images: galleryImages,
         imageUrls: galleryUrls,
         mediaUrls: galleryUrls,
+        medias: toChatMedias(galleryImages),
       };
       if ((data as any).caption && i === 0) {
         itemMeta.caption = (data as any).caption;
@@ -2668,6 +2711,7 @@ export class ChatService {
           images: viewerGallery || recipientMessages[0].images,
           imageUrls: viewerUrls || recipientMessages[0].imageUrls,
           mediaUrls: viewerUrls || recipientMessages[0].mediaUrls,
+          medias: recipientMessages[0].medias,
           totalCount: allDtos.length,
         };
         io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -2685,6 +2729,7 @@ export class ChatService {
           images: viewerGallery || senderMessages[0].images,
           imageUrls: viewerUrls || senderMessages[0].imageUrls,
           mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
+          medias: senderMessages[0].medias,
           totalCount: allDtos.length,
         };
         io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
@@ -2825,15 +2870,24 @@ export class ChatService {
       }
     }
 
-    let rawImages = coerceMediaList((data as any).images || metadataObj.images || metadataObj.photos || metadataObj.attachments);
-    let rawImageUrls = coerceMediaList(
-      (data as any).imageUrls ||
-      (data as any).mediaUrls ||
-      metadataObj.imageUrls ||
-      metadataObj.mediaUrls ||
-      metadataObj.photos ||
-      metadataObj.attachments
-    );
+    let rawImages = [
+      ...coerceMediaList((data as any).images),
+      ...coerceMediaList((data as any).medias),
+      ...coerceMediaList(metadataObj.images),
+      ...coerceMediaList(metadataObj.medias),
+    ];
+    if (rawImages.length === 0) {
+      rawImages = [
+        ...coerceMediaList(metadataObj.photos),
+        ...coerceMediaList(metadataObj.attachments),
+      ];
+    }
+    let rawImageUrls = [
+      ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.mediaUrls),
+    ];
 
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
     if (!data.messageType && !data.type) {
@@ -3500,6 +3554,7 @@ export class ChatService {
               url,
               duration: meta?.duration,
               images: meta?.images,
+              medias: toChatMedias(meta?.images || meta?.medias),
             };
 
             results.push({
@@ -3537,6 +3592,7 @@ export class ChatService {
             images: galleryImages,
             imageUrls: galleryUrls,
             mediaUrls: galleryUrls,
+            medias: toChatMedias(galleryImages),
           };
           if ((data as any).caption && i === 0) {
             itemMeta.caption = (data as any).caption;
@@ -3816,6 +3872,7 @@ export class ChatService {
               images: viewerGallery || receiverViews[0].images,
               imageUrls: viewerUrls || receiverViews[0].imageUrls,
               mediaUrls: viewerUrls || receiverViews[0].mediaUrls,
+              medias: receiverViews[0].medias,
               totalCount: recipientDtos.length,
             };
             io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -3833,6 +3890,7 @@ export class ChatService {
               images: viewerGallery || senderViews[0].images,
               imageUrls: viewerUrls || senderViews[0].imageUrls,
               mediaUrls: viewerUrls || senderViews[0].mediaUrls,
+              medias: senderViews[0].medias,
               totalCount: recipientDtos.length,
             };
             io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);

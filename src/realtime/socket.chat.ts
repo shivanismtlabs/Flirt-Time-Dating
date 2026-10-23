@@ -5,7 +5,7 @@
  */
 
 import { AppSocket, AppSocketServer } from './socket.types';
-import { chatService, ChatServiceError } from '../services/chat.service';
+import { chatService, ChatServiceError, coerceMediaList } from '../services/chat.service';
 import { Conversation, UserBlock } from '../models';
 import { Op } from 'sequelize';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
@@ -35,31 +35,23 @@ export const registerChatSocketHandlers = (
         return;
       }
 
-      let normalizedImages: any[] = [];
-      let rawImages = payload.images || payload.metadata?.images;
-      if (typeof rawImages === 'string') {
-        try {
-          rawImages = JSON.parse(rawImages);
-        } catch {}
-      }
-      if (Array.isArray(rawImages)) {
-        normalizedImages = rawImages;
-      }
+      const normalizedImages = [
+        ...coerceMediaList(payload.images),
+        ...coerceMediaList(payload.medias),
+        ...coerceMediaList(payload.photos),
+        ...coerceMediaList(payload.attachments),
+        ...coerceMediaList(payload.metadata?.images),
+        ...coerceMediaList(payload.metadata?.medias),
+        ...coerceMediaList(payload.metadata?.photos),
+        ...coerceMediaList(payload.metadata?.attachments),
+      ];
 
-      let normalizedImageUrls: string[] = [];
-      let rawImageUrls =
-        payload.imageUrls ||
-        payload.mediaUrls ||
-        payload.metadata?.imageUrls ||
-        payload.metadata?.mediaUrls;
-      if (typeof rawImageUrls === 'string') {
-        try {
-          rawImageUrls = JSON.parse(rawImageUrls);
-        } catch {}
-      }
-      if (Array.isArray(rawImageUrls)) {
-        normalizedImageUrls = rawImageUrls.filter((u: any) => typeof u === 'string' && u.trim());
-      }
+      const normalizedImageUrls = [
+        ...coerceMediaList(payload.imageUrls),
+        ...coerceMediaList(payload.mediaUrls),
+        ...coerceMediaList(payload.metadata?.imageUrls),
+        ...coerceMediaList(payload.metadata?.mediaUrls),
+      ];
 
       let msgType = payload.messageType || payload.type;
       if (!msgType) {

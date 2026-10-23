@@ -768,6 +768,7 @@ export class MomentService {
       limit?: number;
       type?: 'feed' | 'stories';
       scope?: 'all' | 'others' | 'self' | 'matches' | 'friends';
+      momentId?: string;
     } = {}
   ) {
     const page = Math.max(1, options.page || 1);
@@ -995,41 +996,86 @@ export class MomentService {
     }
 
     // 5. Handle 'feed' mode (flat chronological stream)
-    const { count, rows: moments } = await Moment.findAndCountAll({
-      where: whereClause,
-      include: [
-        {
-          model: User,
-          as: 'user',
-          where: { isActive: true },
-          attributes: [
-            'id',
-            'username',
-            'fullName',
-            'firstName',
-            'nickName',
-            'profilePicture',
-            'isFaceVerified',
-            'city',
-          ],
+    const feedInclude = [
+      {
+        model: User,
+        as: 'user',
+        where: { isActive: true },
+        attributes: [
+          'id',
+          'username',
+          'fullName',
+          'firstName',
+          'nickName',
+          'profilePicture',
+          'isFaceVerified',
+          'city',
+        ],
+      },
+      {
+        model: MomentMedia,
+        as: 'media',
+      },
+      {
+        model: MomentReaction,
+        as: 'reactions',
+      },
+    ];
+
+    const feedOrder: any[] = [
+      ['publishedAt', 'DESC'],
+      [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+    ];
+
+    // Pin a requested moment to the front only when it already belongs in this feed.
+    let priorityMoment: any = null;
+    if (options.momentId) {
+      priorityMoment = await Moment.findOne({
+        where: {
+          [Op.and]: [...whereConditions, { id: options.momentId }],
         },
-        {
-          model: MomentMedia,
-          as: 'media',
-        },
-        {
-          model: MomentReaction,
-          as: 'reactions',
-        },
-      ],
-      distinct: true,
-      order: [
-        ['publishedAt', 'DESC'],
-        [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
-      ],
-      limit,
-      offset,
-    });
+        include: feedInclude,
+      });
+    }
+
+    const listWhere = priorityMoment
+      ? { [Op.and]: [...whereConditions, { id: { [Op.ne]: priorityMoment.id } }] }
+      : whereClause;
+    const listLimit = priorityMoment && page === 1 ? limit - 1 : limit;
+    const listOffset = priorityMoment ? (page === 1 ? 0 : offset - 1) : offset;
+
+    let otherCount = 0;
+    let otherMoments: any[] = [];
+
+    if (listLimit <= 0) {
+      otherCount = await Moment.count({
+        where: listWhere,
+        include: [
+          {
+            model: User,
+            as: 'user',
+            where: { isActive: true },
+            attributes: [],
+          },
+        ],
+        distinct: true,
+      });
+    } else {
+      const listed = await Moment.findAndCountAll({
+        where: listWhere,
+        include: feedInclude,
+        distinct: true,
+        order: feedOrder,
+        limit: listLimit,
+        offset: Math.max(0, listOffset),
+      });
+      otherCount = listed.count;
+      otherMoments = listed.rows;
+    }
+
+    const count = priorityMoment ? Number(otherCount) + 1 : otherCount;
+    const moments =
+      priorityMoment && page === 1 ? [priorityMoment, ...otherMoments] : otherMoments;
 
     // Batch query comment/reply counts and gifts counts for all moments in page
     const momentIds = moments.map((m: any) => m.id);

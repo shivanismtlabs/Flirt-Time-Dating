@@ -335,6 +335,9 @@ export class VideoCallService {
   ): Promise<void> {
     if (process.env.NODE_ENV === 'test') return;
     const callerName = resolveChatDisplayName(caller);
+    const ttlMs = call.expiresAt
+      ? Math.max(1000, new Date(call.expiresAt).getTime() - Date.now())
+      : undefined;
     try {
       const { notificationService } = await import('./notification.service');
       await notificationService.dispatchNotification(calleeId, {
@@ -344,6 +347,8 @@ export class VideoCallService {
         senderId: call.callerId,
         entityId: call.id,
         idempotencyKey: `incoming_call:${call.id}`,
+        silent: true,
+        ttlMs,
         data: {
           type: 'incoming_call',
           callId: call.id,
@@ -353,6 +358,7 @@ export class VideoCallService {
           calleeId,
           callerName: callerName || '',
           channelName: call.channelName,
+          silent: 'true',
         },
         navigation: { type: 'incoming_call', targetId: call.id },
       });

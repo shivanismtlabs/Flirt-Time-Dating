@@ -56,7 +56,9 @@ const router = Router();
 // All moments endpoints require authentication
 router.use(authenticate);
 
-// 1. All Active Moments Feed / Stories (GET /api/v1/moments?page=1&limit=20&type=feed|stories&scope=all|others|self|matches)
+// 1. All Active Moments Feed / Stories
+// GET /api/v1/moments?page=1&limit=20&type=feed|stories&scope=all|others|self|matches&momentId=<uuid>
+// When momentId is visible in the feed, that moment is returned first.
 router.get(
   '/',
   validate(getAllMomentsSchema),

@@ -856,6 +856,9 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(received.messageType).toBe('image');
       expect(Array.isArray(received.images)).toBe(true);
       expect(received.images.length).toBe(3);
+      expect(Array.isArray(received.medias)).toBe(true);
+      expect(received.medias.length).toBe(3);
+      expect(received.medias.every((m: any) => m.kind === 'image' && String(m.url).startsWith('http'))).toBe(true);
 
       // Verify both sender and recipient see all 3 images in history
       const [histSender, histRecipient] = await Promise.all([
@@ -874,6 +877,8 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       for (const m of histRecipient.body.data.messages) {
         expect(m.messageType).toBe('image');
         expect(m.images.length).toBe(3);
+        expect(m.isMine).toBe(false);
+        expect(m.medias.length).toBe(3);
       }
     });
 

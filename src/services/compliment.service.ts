@@ -317,6 +317,11 @@ export class ComplimentService {
           },
           transaction: t,
         });
+        if (!createdMatch.isActive) {
+          createdMatch.isActive = true;
+          createdMatch.matchedBy = 'super_like';
+          await createdMatch.save({ transaction: t });
+        }
         match = createdMatch;
 
         await SwipeAction.upsert(

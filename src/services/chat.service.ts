@@ -236,8 +236,12 @@ export const buildViewerChatMessage = (
 
 export interface ChatParticipantDTO {
   userId: string;
+  id?: string;
   displayName: string;
+  /** Same value as displayName. The chat list reads this field. */
+  name?: string;
   profileImageUrl: string | null;
+  profilePhotoUrl?: string | null;
   isOnline: boolean;
   age?: number | null;
   distanceKm?: number | null;
@@ -248,6 +252,7 @@ export interface LastMessageDTO {
   content: string | null;
   sentAt: string | Date;
   senderId?: string;
+  senderName?: string | null;
   messageType?: string;
 }
 
@@ -263,6 +268,8 @@ export interface ChatListItemDTO {
 export interface ChatMessageSenderDTO {
   id: string;
   displayName: string;
+  /** Same value as displayName. Message bubbles read this field. */
+  name?: string;
   profileImageUrl: string | null;
 }
 
@@ -384,6 +391,9 @@ export interface ConversationSummaryDTO {
   lastMessageAt: string | null;
   unreadCount: number;
   isMatched: boolean;
+  participant?: ChatParticipantDTO;
+  lastMessageSenderId?: string | null;
+  lastMessageSenderName?: string | null;
   messageType?: ChatMessageType;
   metadata?: any;
   status?: 'sent' | 'delivered' | 'read';
@@ -496,6 +506,36 @@ export class ChatService {
   }
 
   /**
+   * Latest message sender for each conversation, used by the chat list preview.
+   */
+  private async loadLatestMessageSenders(
+    conversationIds: string[]
+  ): Promise<Map<string, { senderId: string; messageType: string }>> {
+    const latest = new Map<string, { senderId: string; messageType: string }>();
+    if (conversationIds.length === 0) return latest;
+
+    const rows = await ChatMessage.findAll({
+      attributes: ['conversationId', 'senderId', 'messageType', 'createdAt', 'id'],
+      where: { conversationId: { [Op.in]: conversationIds } },
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+    });
+
+    for (const row of rows) {
+      if (!latest.has(row.conversationId)) {
+        latest.set(row.conversationId, {
+          senderId: row.senderId,
+          messageType: row.messageType || 'text',
+        });
+      }
+    }
+
+    return latest;
+  }
+
+  /**
    * 1. GET CHAT LIST (Chat List Screen)
    * Fetches conversation threads for the current user, separated into pinned and standard lists.
    */
@@ -517,26 +557,11 @@ export class ChatService {
     const limit = query.limit || 20;
     const offset = (page - 1) * limit;
 
-    // 1. Fetch blocked users to exclude from list
+    // 1. Fetch blocked users to exclude from list.
+    // A previous nope must not hide a chat the user just opened from a profile.
+    // Nope already marks that old thread deleted for everyone.
     const blockedUserIds = await this.getBlockedUserIds(currentUserId);
     const blockedArray = Array.from(blockedUserIds);
-
-    // Fetch noped users to exclude from chat list
-    const nopedSwipes = await SwipeAction.findAll({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, action: 'nope' },
-          { targetUserId: currentUserId, action: 'nope' },
-        ],
-      },
-      attributes: ['userId', 'targetUserId'],
-      raw: true,
-    });
-    const nopedUserIds = new Set<string>();
-    nopedSwipes.forEach((s) => {
-      if (s.userId === currentUserId) nopedUserIds.add(s.targetUserId);
-      if (s.targetUserId === currentUserId) nopedUserIds.add(s.userId);
-    });
 
     // 2. Fetch pinned conversations for current user
     const pins = await ConversationPin.findAll({
@@ -620,12 +645,12 @@ export class ChatService {
         {
           model: User,
           as: 'user1',
-          attributes: ['id', 'fullName', 'firstName', 'nickName', 'username', 'profilePicture', 'isActive'],
+          attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture', 'isActive'],
         },
         {
           model: User,
           as: 'user2',
-          attributes: ['id', 'fullName', 'firstName', 'nickName', 'username', 'profilePicture', 'isActive'],
+          attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture', 'isActive'],
         },
       ],
       order: [
@@ -663,9 +688,6 @@ export class ChatService {
       // Safely resolve the other participant using case-insensitive check
       const otherUser = normU1 === normCurrentUserId ? conv.user2 : conv.user1;
       if (!otherUser || otherUser.isActive === false) return false;
-
-      // Exclude noped users
-      if (nopedUserIds.has(otherUser.id)) return false;
 
       // Ensure other participant is NOT the current user
       const normOtherUserId = String(otherUser.id || '').trim().toLowerCase();
@@ -723,6 +745,7 @@ export class ChatService {
     }
 
     const conversationIds = validConversations.map((c) => c.id);
+    const latestSenders = await this.loadLatestMessageSenders(conversationIds);
 
     // 6. Compute unread message counts considering per-user cleared timestamps and deleted messages
     const unreadRecords = await ChatMessage.findAll({
@@ -762,20 +785,32 @@ export class ChatService {
       const unreadCount = unreadMap.get(conv.id) || 0;
       const state = userStateMap.get(conv.id);
 
+      const displayName = resolveChatDisplayName(otherUser);
+      const photo = otherUser.profilePicture ? formatMediaUrl(otherUser.profilePicture) : null;
+      const latest = latestSenders.get(conv.id);
+      const senderIsViewer =
+        latest &&
+        String(latest.senderId || '').trim().toLowerCase() === normCurrentUserId;
+      const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
+
       const item: ChatListItemDTO = {
         conversationId: conv.id,
         participant: {
           userId: otherUser.id,
-          displayName: resolveChatDisplayName(otherUser),
-          profileImageUrl: otherUser.profilePicture
-            ? formatMediaUrl(otherUser.profilePicture)
-            : null,
+          id: otherUser.id,
+          displayName,
+          name: displayName,
+          profileImageUrl: photo,
+          profilePhotoUrl: photo,
           isOnline: isUserConnected(otherUser.id),
         },
         lastMessage: conv.lastMessage
           ? {
             content: conv.lastMessage,
             sentAt: conv.lastMessageAt || conv.updatedAt,
+            senderId: latest?.senderId,
+            senderName,
+            messageType: latest?.messageType || 'text',
           }
           : null,
         unreadCount,
@@ -1143,28 +1178,27 @@ export class ChatService {
     // Batch resolve sender profiles for participant details without N+1 queries
     const [user1, user2] = await Promise.all([
       User.findByPk(conversation.user1Id, {
-        attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+        attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'nickName', 'profilePicture'],
       }),
       User.findByPk(conversation.user2Id, {
-        attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+        attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'nickName', 'profilePicture'],
       }),
     ]);
 
     const senderMap = new Map<string, ChatMessageSenderDTO>();
-    if (user1) {
-      senderMap.set(user1.id, {
-        id: user1.id,
-        displayName: resolveChatDisplayName(user1),
-        profileImageUrl: formatMediaUrl(user1.profilePicture),
+    const senderKey = (id: string) => String(id || '').trim().toLowerCase();
+    const rememberSender = (user: User | null) => {
+      if (!user) return;
+      const displayName = resolveChatDisplayName(user);
+      senderMap.set(senderKey(user.id), {
+        id: user.id,
+        displayName,
+        name: displayName,
+        profileImageUrl: formatMediaUrl(user.profilePicture),
       });
-    }
-    if (user2) {
-      senderMap.set(user2.id, {
-        id: user2.id,
-        displayName: resolveChatDisplayName(user2),
-        profileImageUrl: formatMediaUrl(user2.profilePicture),
-      });
-    }
+    };
+    rememberSender(user1);
+    rememberSender(user2);
 
     // Safety filter to exclude any deleted messages
     const visibleRows = rows.filter((msg) => {
@@ -1339,9 +1373,10 @@ export class ChatService {
         originalSenderId: parsedMetadata?.originalSenderId || null,
         originalSenderName: parsedMetadata?.originalSenderName || null,
         originalCreatedAt: parsedMetadata?.originalCreatedAt || null,
-        sender: senderMap.get(msg.senderId) || {
+        sender: senderMap.get(senderKey(msg.senderId)) || {
           id: msg.senderId,
           displayName: isMine ? 'You' : 'Participant',
+          name: isMine ? 'You' : 'Participant',
           profileImageUrl: null,
         },
       };
@@ -6017,23 +6052,6 @@ export class ChatService {
     const blockedUserIds = await this.getBlockedUserIds(userId);
     const blockedArray = Array.from(blockedUserIds);
 
-    // Fetch noped users to exclude from conversation list
-    const nopedSwipes = await SwipeAction.findAll({
-      where: {
-        [Op.or]: [
-          { userId, action: 'nope' },
-          { targetUserId: userId, action: 'nope' },
-        ],
-      },
-      attributes: ['userId', 'targetUserId'],
-      raw: true,
-    });
-    const nopedUserIds = new Set<string>();
-    nopedSwipes.forEach((s) => {
-      if (s.userId === userId) nopedUserIds.add(s.targetUserId);
-      if (s.targetUserId === userId) nopedUserIds.add(s.userId);
-    });
-
     const whereCondition: any = {
       [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
     };
@@ -6077,12 +6095,12 @@ export class ChatService {
         {
           model: User,
           as: 'user1',
-          include: [{ model: UserPhoto, as: 'photos', where: { status: 'approved' }, required: false }],
+          include: [{ model: UserPhoto, as: 'photos', where: { status: 'approved' }, required: false, separate: true }],
         },
         {
           model: User,
           as: 'user2',
-          include: [{ model: UserPhoto, as: 'photos', where: { status: 'approved' }, required: false }],
+          include: [{ model: UserPhoto, as: 'photos', where: { status: 'approved' }, required: false, separate: true }],
         },
       ],
       order: [['lastMessageAt', 'DESC NULLS LAST']],
@@ -6105,6 +6123,7 @@ export class ChatService {
       raw: true,
     });
     const pinnedConversationIdSet = new Set(pins.map((p) => p.conversationId));
+    const latestSenders = await this.loadLatestMessageSenders(conversations.map((c) => c.id));
 
     const results: ConversationSummaryDTO[] = [];
 
@@ -6117,9 +6136,6 @@ export class ChatService {
 
       const partner = normU1 === normViewerId ? (conv as any).user2 : (conv as any).user1;
       if (!partner || !partner.isActive) continue;
-
-      // Exclude noped users
-      if (nopedUserIds.has(partner.id)) continue;
 
       // Check Delete for Me
       const state = userStateMap.get(conv.id);
@@ -6149,18 +6165,36 @@ export class ChatService {
         attributes: ['id'],
       });
 
+      const displayName = resolveChatDisplayName(partner);
+      const photo = this.resolvePrimaryPhoto(partner.profilePicture, partner.photos);
+      const latest = latestSenders.get(conv.id);
+      const senderIsViewer =
+        latest && String(latest.senderId || '').trim().toLowerCase() === normViewerId;
+      const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
+
       results.push({
         id: conv.id,
         targetUser: {
           id: partner.id,
-          name: resolveChatDisplayName(partner),
+          name: displayName,
           username: partner.username || partner.nickName || '',
-          profilePhotoUrl: this.resolvePrimaryPhoto(partner.profilePicture, partner.photos),
+          profilePhotoUrl: photo,
           isVerified: Boolean(partner.isFaceVerified),
           isSubscribed: Boolean(partner.isSubscribed),
         },
+        participant: {
+          userId: partner.id,
+          id: partner.id,
+          displayName,
+          name: displayName,
+          profileImageUrl: photo,
+          profilePhotoUrl: photo,
+          isOnline: isUserConnected(partner.id),
+        },
         lastMessage: conv.lastMessage || null,
         lastMessageAt: conv.lastMessageAt ? conv.lastMessageAt.toISOString() : null,
+        lastMessageSenderId: latest?.senderId || null,
+        lastMessageSenderName: senderName,
         unreadCount,
         isMatched: Boolean(match),
         isPinned: pinnedConversationIdSet.has(conv.id),

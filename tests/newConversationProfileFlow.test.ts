@@ -277,6 +277,9 @@ describe('Critical Bug Fix: Profile-to-Chat Flow and Conversation Persistence', 
     expect(foundA).toBeDefined();
     expect(foundA.lastMessage.content).toBe('Hello there!');
     expect(foundA.participant.userId).toBe(userB.id);
+    expect(foundA.participant.displayName).toBe('Bob Jones');
+    expect(foundA.participant.name).toBe('Bob Jones');
+    expect(foundA.lastMessage.senderName).toBe('You');
 
     // Check GET /api/v1/chat/conversations for User A
     const listRes2 = await request(app)
@@ -327,6 +330,9 @@ describe('Critical Bug Fix: Profile-to-Chat Flow and Conversation Persistence', 
     expect(foundB).toBeDefined();
     expect(foundB.unreadCount).toBe(1);
     expect(foundB.participant.userId).toBe(userA.id);
+    expect(foundB.participant.name).toBe('Alice Smith');
+    expect(foundB.lastMessage.content).toBe('Hey Bob, checking in!');
+    expect(foundB.lastMessage.senderName).toBe('Alice Smith');
 
     // User B fetches messages
     const msgResB = await request(app)
@@ -336,6 +342,8 @@ describe('Critical Bug Fix: Profile-to-Chat Flow and Conversation Persistence', 
     expect(msgResB.status).toBe(200);
     expect(msgResB.body.data.messages).toHaveLength(1);
     expect(msgResB.body.data.messages[0].content).toBe('Hey Bob, checking in!');
+    expect(msgResB.body.data.messages[0].sender.name).toBe('Alice Smith');
+    expect(msgResB.body.data.messages[0].sender.displayName).toBe('Alice Smith');
   });
 
   it('8. Concurrency safety: concurrent getOrCreateOneToOneConversation calls resolve without duplicate conversation errors', async () => {

@@ -502,51 +502,57 @@ export class InteractionService {
     cursor: DecodedCursor | null,
     excludedUserIds: Set<string>
   ): Promise<InteractionsListResponse> {
-    const whereClause: any = {
-      [Op.or]: [{ user1Id: currentUser.id }, { user2Id: currentUser.id }],
-      isActive: true,
-    };
+    const partnerExcluded = Array.from(excludedUserIds);
+    const andClauses: any[] = [
+      {
+        [Op.or]: [
+          { user1Id: currentUser.id, user2Id: { [Op.notIn]: partnerExcluded } },
+          { user2Id: currentUser.id, user1Id: { [Op.notIn]: partnerExcluded } },
+        ],
+      },
+    ];
 
     if (cursor) {
-      whereClause[Op.and] = [
-        {
-          [Op.or]: [
-            { createdAt: { [Op.lt]: new Date(cursor.createdAt) } },
-            {
-              createdAt: new Date(cursor.createdAt),
-              id: { [Op.lt]: cursor.id },
-            },
-          ],
-        },
-      ];
+      andClauses.push({
+        [Op.or]: [
+          { createdAt: { [Op.lt]: new Date(cursor.createdAt) } },
+          {
+            createdAt: new Date(cursor.createdAt),
+            id: { [Op.lt]: cursor.id },
+          },
+        ],
+      });
     }
 
+    const approvedPhotos = {
+      model: UserPhoto,
+      as: 'photos',
+      where: { status: 'approved' },
+      required: false,
+      separate: true,
+    };
+
+    // Photos are loaded in a separate query. Joining them on both users with LIMIT
+    // drops match rows in Postgres when either person has no approved photo.
     const rows = await Match.findAll({
-      where: whereClause,
+      where: {
+        isActive: true,
+        [Op.and]: andClauses,
+      },
       include: [
         {
           model: User,
           as: 'user1',
-          include: [
-            {
-              model: UserPhoto,
-              as: 'photos',
-              where: { status: 'approved' },
-              required: false,
-            },
-          ],
+          required: true,
+          where: { isActive: true },
+          include: [approvedPhotos],
         },
         {
           model: User,
           as: 'user2',
-          include: [
-            {
-              model: UserPhoto,
-              as: 'photos',
-              where: { status: 'approved' },
-              required: false,
-            },
-          ],
+          required: true,
+          where: { isActive: true },
+          include: [{ ...approvedPhotos }],
         },
       ],
       order: [
@@ -554,41 +560,18 @@ export class InteractionService {
         ['id', 'DESC'],
       ],
       limit: limit + 1,
+      subQuery: false,
     });
 
-    // Fetch users marked as nope by or against current user
-    const nopedSwipes = await SwipeAction.findAll({
-      where: {
-        [Op.or]: [
-          { userId: currentUser.id, action: 'nope' },
-          { targetUserId: currentUser.id, action: 'nope' },
-        ],
-      },
-      attributes: ['userId', 'targetUserId'],
-      raw: true,
-    });
-    const nopedUserIds = new Set<string>();
-    nopedSwipes.forEach((s) => {
-      if (s.userId === currentUser.id) nopedUserIds.add(s.targetUserId);
-      if (s.targetUserId === currentUser.id) nopedUserIds.add(s.userId);
-    });
-
-    // Filter out blocked, noped, or inactive counterpart users
-    const validMatches = rows.filter((m) => {
-      const partner = m.user1Id === currentUser.id ? (m as any).user2 : (m as any).user1;
-      return (
-        partner &&
-        partner.isActive &&
-        !excludedUserIds.has(partner.id) &&
-        !nopedUserIds.has(partner.id)
-      );
-    });
-
-    const hasMore = validMatches.length > limit;
-    const itemsToReturn = hasMore ? validMatches.slice(0, limit) : validMatches;
+    const hasMore = rows.length > limit;
+    const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
+    const normCurrentId = String(currentUser.id).trim().toLowerCase();
 
     const items: InteractionItemDTO[] = itemsToReturn.map((match) => {
-      const partner = match.user1Id === currentUser.id ? (match as any).user2 : (match as any).user1;
+      const partner =
+        String(match.user1Id).trim().toLowerCase() === normCurrentId
+          ? (match as any).user2
+          : (match as any).user1;
       const userCard = this.formatUserCard(partner, currentUser);
       return {
         interactionId: match.id,
@@ -760,7 +743,9 @@ export class InteractionService {
     const blockedUserIds = await this.getBlockedUserIds(currentUserId);
     const excludedUserIds = new Set<string>([currentUserId, ...blockedUserIds]);
 
-    // 1. Fetch active matches and noped swipes
+    // 1. Fetch active matches and noped swipes.
+    // A nope removes someone from Likes. It must not hide an active match:
+    // unmatching already sets matches.isActive = false.
     const [allMatches, nopedSwipes] = await Promise.all([
       Match.findAll({
         where: {
@@ -782,17 +767,25 @@ export class InteractionService {
     ]);
 
     const finalExcludedUserIds = new Set<string>(excludedUserIds);
-    const nopedUserIds = new Set<string>();
     nopedSwipes.forEach((s) => {
       if (s.userId === currentUserId) {
         finalExcludedUserIds.add(s.targetUserId);
-        nopedUserIds.add(s.targetUserId);
       }
       if (s.targetUserId === currentUserId) {
         finalExcludedUserIds.add(s.userId);
-        nopedUserIds.add(s.userId);
       }
     });
+
+    const matchPartnerIds = allMatches
+      .map((m) => (m.user1Id === currentUserId ? m.user2Id : m.user1Id))
+      .filter((partnerId) => !excludedUserIds.has(partnerId));
+    const activeMatchPartners = matchPartnerIds.length
+      ? await User.findAll({
+          where: { id: { [Op.in]: matchPartnerIds }, isActive: true },
+          attributes: ['id'],
+        })
+      : [];
+    const activeMatchPartnerIds = new Set(activeMatchPartners.map((u) => u.id));
 
     // 2. Run aggregate counts concurrently
     const [likesCount, youLikedCount, complimentsCount] = await Promise.all([
@@ -842,11 +835,7 @@ export class InteractionService {
       }),
     ]);
 
-    // Filter active matches whose counterpart is active, not blocked, and not noped
-    const matchesCount = allMatches.filter((m) => {
-      const partnerId = m.user1Id === currentUserId ? m.user2Id : m.user1Id;
-      return !excludedUserIds.has(partnerId) && !nopedUserIds.has(partnerId);
-    }).length;
+    const matchesCount = matchPartnerIds.filter((partnerId) => activeMatchPartnerIds.has(partnerId)).length;
 
     return {
       likes: likesCount,

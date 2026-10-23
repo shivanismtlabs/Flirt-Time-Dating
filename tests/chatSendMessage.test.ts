@@ -1032,6 +1032,7 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(started).toBeDefined();
       expect(started.participant.userId).toBe(recipient2.id);
       expect(started.participant.displayName).toBe('Bob Second');
+      expect(started.participant.name).toBe('Bob Second');
 
       const visibleToRecipient = [
         ...recipientList.body.data.pinned,

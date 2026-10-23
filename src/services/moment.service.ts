@@ -8,7 +8,6 @@ import {
   MomentGift,
   MOMENT_GIFTS_CATALOG,
   ensureMomentGiftTables,
-  Notification,
   Conversation,
   ChatMessage,
   Match,
@@ -116,6 +115,33 @@ export const formatTimeAgoShort = (publishedAt: Date): string => {
 };
 
 export class MomentService {
+  /**
+   * Sends one in-app + push notification. Skips self and never blocks the API response.
+   */
+  private dispatchMomentNotification(
+    recipientId: string,
+    senderId: string,
+    send: (senderName: string) => Promise<unknown>
+  ): void {
+    if (!recipientId || recipientId === senderId) return;
+    void (async () => {
+      try {
+        const senderUser = await User.findByPk(senderId, {
+          attributes: ['id', 'username', 'fullName', 'firstName', 'nickName'],
+        });
+        const senderName =
+          senderUser?.fullName ||
+          senderUser?.firstName ||
+          senderUser?.nickName ||
+          senderUser?.username ||
+          'Someone';
+        await send(senderName);
+      } catch (err: any) {
+        console.warn('[Moment notification]', err?.message || err);
+      }
+    })();
+  }
+
   /**
    * Publishes a new Moment with 1 to 5 images.
    * Ensures atomic persistence and cleans up orphaned S3 uploads on failure.
@@ -1486,6 +1512,17 @@ export class MomentService {
       await reactionRecord.save();
     }
 
+    if (created) {
+      this.dispatchMomentNotification(moment.userId, viewerId, (senderName) =>
+        notificationService.sendLikeNotification(moment.userId, {
+          senderId: viewerId,
+          senderName,
+          momentId,
+          reaction,
+        })
+      );
+    }
+
     // Calculate updated reaction counts
     const allReactions = await MomentReaction.findAll({ where: { momentId } });
     const reactionCounts: Record<string, number> = {
@@ -1580,6 +1617,7 @@ export class MomentService {
 
     let action: 'liked' | 'unliked';
     let isLiked: boolean;
+    let shouldNotify = false;
 
     if (forcedAction === 'like') {
       if (!existingReaction) {
@@ -1588,6 +1626,7 @@ export class MomentService {
           userId: viewerId,
           reaction: 'like',
         });
+        shouldNotify = true;
       } else if (existingReaction.reaction !== 'like') {
         existingReaction.reaction = 'like';
         await existingReaction.save();
@@ -1614,7 +1653,18 @@ export class MomentService {
         });
         action = 'liked';
         isLiked = true;
+        shouldNotify = true;
       }
+    }
+
+    if (shouldNotify) {
+      this.dispatchMomentNotification(moment.userId, viewerId, (senderName) =>
+        notificationService.sendLikeNotification(moment.userId, {
+          senderId: viewerId,
+          senderName,
+          momentId,
+        })
+      );
     }
 
     const allReactions = await MomentReaction.findAll({ where: { momentId } });
@@ -1802,25 +1852,16 @@ export class MomentService {
     conversation.lastMessageAt = now;
     await conversation.save();
 
-    if (moment.userId !== senderId) {
-      (async () => {
-        try {
-          const senderUser = await User.findByPk(senderId, {
-            attributes: ['id', 'username', 'fullName', 'nickName'],
-          });
-          const senderDisplayName =
-            senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
-          await notificationService.sendCommentNotification(moment.userId, {
-            senderId,
-            senderName: senderDisplayName,
-            comment: trimmedMessage,
-            momentId: moment.id,
-            commentId: chatMessage.id,
-            isReply: false,
-          });
-        } catch {}
-      })();
-    }
+    this.dispatchMomentNotification(moment.userId, senderId, (senderName) =>
+      notificationService.sendCommentNotification(moment.userId, {
+        senderId,
+        senderName,
+        comment: trimmedMessage,
+        momentId: moment.id,
+        commentId: chatMessage.id,
+        isReply: false,
+      })
+    );
 
     return {
       id: chatMessage.id,
@@ -2227,29 +2268,15 @@ export class MomentService {
           reaction,
         });
 
-        // In-App Notification to comment author if not self
-        if (comment.senderId !== userId) {
-          try {
-            const sender = await User.findByPk(userId, { attributes: ['fullName', 'nickName', 'username'] });
-            const senderName = sender?.fullName || sender?.nickName || sender?.username || 'Someone';
-            const snippet = comment.content.length > 50 ? `${comment.content.slice(0, 47)}...` : comment.content;
-            await Notification.create({
-              recipientId: comment.senderId,
-              senderId: userId,
-              type: 'moment_comment_like',
-              title: 'New Comment Like ❤️',
-              body: `${senderName} liked your comment: "${snippet}"`,
-              entityId: comment.id,
-              data: {
-                commentId: comment.id,
-                momentId: resolvedMomentId || null,
-                senderId: userId,
-                senderName,
-              },
-              isRead: false,
-            });
-          } catch {}
-        }
+        this.dispatchMomentNotification(comment.senderId, userId, (senderName) =>
+          notificationService.sendCommentLikeNotification(comment.senderId, {
+            senderId: userId,
+            senderName,
+            commentId: comment.id,
+            momentId: resolvedMomentId || null,
+            commentSnippet: comment.content,
+          })
+        );
       }
       isLiked = true;
     }
@@ -2633,28 +2660,16 @@ export class MomentService {
       attributes: ['id', 'username', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
     });
 
-    // 9. Dispatch in-app notification to the recipient if not replying to self
-    if (targetRecipientId !== senderId) {
-      try {
-        const senderDisplayName =
-          replierUser?.fullName ||
-          replierUser?.nickName ||
-          replierUser?.username ||
-          'Someone';
-        const snippet =
-          trimmedMessage.length > 50
-            ? `${trimmedMessage.slice(0, 47)}...`
-            : trimmedMessage;
-        await notificationService.sendCommentNotification(targetRecipientId, {
-          senderId,
-          senderName: senderDisplayName,
-          comment: trimmedMessage,
-          momentId: moment.id,
-          commentId: chatMessage.id,
-          isReply: true,
-        });
-      } catch {}
-    }
+    this.dispatchMomentNotification(targetRecipientId, senderId, (senderName) =>
+      notificationService.sendCommentNotification(targetRecipientId, {
+        senderId,
+        senderName,
+        comment: trimmedMessage,
+        momentId: moment.id,
+        commentId: chatMessage.id,
+        isReply: true,
+      })
+    );
 
     return {
       id: chatMessage.id,
@@ -3727,31 +3742,19 @@ export class MomentService {
       );
     }
 
-    // 10. Background In-App Notification to Recipient
-    try {
-      const senderDisplayName = sender.fullName || sender.nickName || 'Someone';
-      await Notification.create({
-        recipientId: moment.userId,
+    this.dispatchMomentNotification(moment.userId, senderId, (senderName) =>
+      notificationService.sendMomentGiftNotification(moment.userId, {
         senderId,
-        type: 'moment_gift',
-        title: `New Gift Received! ${gift.icon}`,
-        body: `${senderDisplayName} sent you ${qty > 1 ? qty + 'x ' : ''}${gift.name} ${gift.icon} on your moment!`,
-        entityId: moment.id,
-        data: {
-          momentId: moment.id,
-          giftId: giftRecord.id,
-          giftCode: gift.code,
-          giftName: gift.name,
-          icon: gift.icon,
-          quantity: qty,
-          totalCoins,
-          senderName: senderDisplayName,
-        },
-        isRead: false,
-      });
-    } catch (_notifErr) {
-      // Safe to ignore notification failure
-    }
+        senderName,
+        momentId: moment.id,
+        giftName: gift.name,
+        giftIcon: gift.icon,
+        giftCode: gift.code,
+        quantity: qty,
+        totalCoins,
+        giftId: giftRecord.id,
+      })
+    );
 
     // 11. Direct Message Conversation Entry (so creator sees gift celebration in chat)
     try {
@@ -3791,33 +3794,6 @@ export class MomentService {
       conversation.lastMessage = giftMsgContent;
       conversation.lastMessageAt = new Date();
       await conversation.save();
-
-      if (moment.userId !== senderId) {
-        (async () => {
-          try {
-            const senderUser = await User.findByPk(senderId, {
-              attributes: ['id', 'username', 'fullName', 'nickName'],
-            });
-            const senderDisplayName =
-              senderUser?.fullName || senderUser?.nickName || senderUser?.username || 'Someone';
-            await notificationService.dispatchNotification(moment.userId, {
-              type: 'moment_gift',
-              title: 'Gift Received! 🎁',
-              body: `${senderDisplayName} sent you a gift (${gift.name} ${gift.icon}) on your Moment!`,
-              senderId,
-              entityId: moment.id,
-              navigation: { type: 'moment', targetId: moment.id },
-              data: {
-                type: 'gift',
-                momentId: moment.id,
-                giftCode: gift.code,
-                giftName: gift.name,
-                senderName: senderDisplayName,
-              },
-            });
-          } catch {}
-        })();
-      }
     } catch (_chatErr) {
       // Safe to ignore chat record failure
     }

@@ -430,6 +430,12 @@ export class DiscoveryActionService {
           transaction: t,
         });
 
+        if (!match.isActive) {
+          match.isActive = true;
+          match.matchedBy = action;
+          await match.save({ transaction: t });
+        }
+
         await t.commit();
         isCommitted = true;
 

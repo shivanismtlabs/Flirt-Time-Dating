@@ -183,6 +183,12 @@ export class ConnectionService {
           transaction: t,
         });
 
+        if (!match.isActive) {
+          match.isActive = true;
+          match.matchedBy = 'super_like';
+          await match.save({ transaction: t });
+        }
+
         // Ensure swipe actions reflect mutual connection
         await SwipeAction.upsert(
           { userId: requesterId, targetUserId, action: 'super_like' },

@@ -372,6 +372,64 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.items).toHaveLength(0);
     });
+
+    it('should return the matched person when both profiles have approved photos', async () => {
+      await UserPhoto.bulkCreate([
+        {
+          userId: currentUser.id,
+          imageUrl: 'https://flirttime-media.s3.amazonaws.com/profiles/alex.jpg',
+          isPrimary: true,
+          status: 'approved',
+        },
+        {
+          userId: userB.id,
+          imageUrl: 'https://flirttime-media.s3.amazonaws.com/profiles/cindy-2.jpg',
+          isPrimary: true,
+          status: 'approved',
+        },
+      ]);
+
+      const [u1, u2] = [currentUser.id, userB.id].sort();
+      await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'like',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].user.id).toBe(userB.id);
+      expect(res.body.data.items[0].user.name).toBe('Cindy');
+      expect(res.body.data.items[0].user.profilePhotoUrl).toEqual(expect.any(String));
+    });
+
+    it('should keep an active match visible when an older nope swipe still exists', async () => {
+      const [u1, u2] = [currentUser.id, userB.id].sort();
+      await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'like',
+        isActive: true,
+      });
+      await SwipeAction.create({
+        userId: currentUser.id,
+        targetUserId: userB.id,
+        action: 'nope',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].user.name).toBe('Cindy');
+    });
   });
 
   describe('5. Compliments Tab', () => {

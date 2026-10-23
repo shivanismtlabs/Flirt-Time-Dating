@@ -63,6 +63,7 @@ export interface GroupedNotificationsResponse {
 
 /**
  * Resolves raw event type to iOS tap navigation canonical notify_type:
+ * - moment_like / moment_comment / moment_comment_reply / moment_comment_like / moment_gift stay moment-specific
  * - like / favorite / super_like -> Explore -> Likes
  * - match / new_match -> Explore -> Matches
  * - compliment -> Explore -> Compliments
@@ -72,6 +73,16 @@ export interface GroupedNotificationsResponse {
  */
 export const resolveNotifyType = (rawType: string): string => {
   const t = (rawType || '').toLowerCase().trim();
+  if (
+    t === 'moment_like' ||
+    t === 'moment_comment' ||
+    t === 'moment_comment_reply' ||
+    t === 'moment_comment_like' ||
+    t === 'moment_gift'
+  ) {
+    return t;
+  }
+  if (t === 'comment_like') return 'moment_comment_like';
   if (t === 'super_like') return 'super_like';
   if (t === 'favorite') return 'favorite';
   if (t.includes('like') || t.includes('reaction')) return 'like';
@@ -232,12 +243,13 @@ export class NotificationService {
       return Boolean(allowed);
     }
 
-    // Like & comments (reactions, likes, moment comments) - NOT calls
+    // Like, comments, reactions, and moment gifts - NOT calls
     if (
       normalizedType.includes('like') ||
       normalizedType.includes('comment') ||
       normalizedType.includes('reaction') ||
-      normalizedType.includes('compliment')
+      normalizedType.includes('compliment') ||
+      normalizedType.includes('gift')
     ) {
       const allowed =
         settings.likeComments !== undefined
@@ -850,6 +862,90 @@ export class NotificationService {
         momentId: input.momentId,
         commentId: input.commentId || '',
         senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification when someone likes a moment comment or reply
+   */
+  public async sendCommentLikeNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      commentId: string;
+      momentId?: string | null;
+      commentSnippet?: string | null;
+    }
+  ): Promise<PushNotificationResult> {
+    const rawSnippet = (input.commentSnippet || '').trim();
+    const snippet =
+      rawSnippet.length > 50 ? `${rawSnippet.slice(0, 47)}...` : rawSnippet;
+    const body = snippet
+      ? `${input.senderName} liked your comment: "${snippet}"`
+      : `${input.senderName} liked your comment!`;
+    const targetId = input.momentId || input.commentId;
+
+    return this.dispatchNotification(recipientId, {
+      type: 'moment_comment_like',
+      title: 'Comment Liked ❤️',
+      body,
+      senderId: input.senderId,
+      entityId: targetId,
+      navigation: {
+        type: 'moment',
+        targetId,
+      },
+      data: {
+        momentId: input.momentId || '',
+        commentId: input.commentId,
+        senderId: input.senderId,
+        senderName: input.senderName,
+      },
+    });
+  }
+
+  /**
+   * Dispatches notification when someone sends a gift on a moment
+   */
+  public async sendMomentGiftNotification(
+    recipientId: string,
+    input: {
+      senderId: string;
+      senderName: string;
+      momentId: string;
+      giftName: string;
+      giftIcon?: string | null;
+      giftCode?: string | null;
+      quantity?: number;
+      totalCoins?: number;
+      giftId?: string | null;
+    }
+  ): Promise<PushNotificationResult> {
+    const qty = input.quantity && input.quantity > 1 ? input.quantity : 1;
+    const icon = input.giftIcon || '🎁';
+    const qtyLabel = qty > 1 ? `${qty}x ` : '';
+
+    return this.dispatchNotification(recipientId, {
+      type: 'moment_gift',
+      title: `New Gift Received! ${icon}`,
+      body: `${input.senderName} sent you ${qtyLabel}${input.giftName} ${icon} on your moment!`,
+      senderId: input.senderId,
+      entityId: input.momentId,
+      navigation: {
+        type: 'moment',
+        targetId: input.momentId,
+      },
+      data: {
+        momentId: input.momentId,
+        giftId: input.giftId || '',
+        giftCode: input.giftCode || '',
+        giftName: input.giftName,
+        icon,
+        quantity: String(qty),
+        totalCoins: String(input.totalCoins || 0),
         senderName: input.senderName,
       },
     });

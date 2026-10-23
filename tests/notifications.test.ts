@@ -12,6 +12,8 @@ import {
 import { generateToken } from '../src/utils/jwt';
 import * as firebaseConfig from '../src/config/firebase';
 import { notificationService } from '../src/services/notification.service';
+import { notifyIncomingCallPush } from '../src/services/callPush.service';
+import * as apnsVoip from '../src/services/apnsVoip.service';
 
 describe('FlirtTime Notifications & FCM APIs', () => {
   let userA: User;
@@ -136,6 +138,38 @@ describe('FlirtTime Notifications & FCM APIs', () => {
         where: { deviceToken: 'token_to_unregister' },
       });
       expect(device?.isActive).toBe(false);
+    });
+
+    it('stores a PushKit voip token and keeps it when a later register omits it', async () => {
+      const first = await request(app)
+        .post('/api/v1/devices/register')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          token: 'fcm_token_with_voip',
+          platform: 'ios',
+          deviceId: 'iphone_callkit',
+          voipToken: '<abc 123>',
+        });
+
+      expect(first.status).toBe(200);
+      expect(first.body.data.hasVoipToken).toBe(true);
+
+      const stored = await UserDevice.findOne({ where: { deviceToken: 'fcm_token_with_voip' } });
+      expect(stored?.voipToken).toBe('abc123');
+
+      const second = await request(app)
+        .post('/api/v1/devices/register')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          token: 'fcm_token_with_voip',
+          platform: 'ios',
+          deviceId: 'iphone_callkit',
+        });
+
+      expect(second.status).toBe(200);
+      expect(second.body.data.hasVoipToken).toBe(true);
+      const kept = await UserDevice.findOne({ where: { deviceToken: 'fcm_token_with_voip' } });
+      expect(kept?.voipToken).toBe('abc123');
     });
   });
 
@@ -440,7 +474,92 @@ describe('FlirtTime Notifications & FCM APIs', () => {
     });
   });
 
-  describe('7. Silent incoming call pushes', () => {
+  describe('7. Background incoming call VoIP and Android ring', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('sends an APNs VoIP push for iOS and does not also FCM that phone', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_ios_callee',
+        platform: 'ios',
+        voipToken: 'pushkit-token-1',
+        isActive: true,
+      });
+
+      const sendVoip = jest.spyOn(apnsVoip, 'sendVoipPushToTokens').mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        failedTokens: [],
+      });
+      jest.spyOn(apnsVoip, 'getApnsVoipStatus').mockReturnValue({
+        ready: true,
+        production: false,
+        topic: 'com.flirttime.app.voip',
+        missing: [],
+      });
+      mockSendEachForMulticast.mockClear();
+
+      await notifyIncomingCallPush({
+        calleeId: userB.id,
+        callId: 'call-audio-1',
+        conversationId: 'conv-1',
+        channelName: 'channel-audio',
+        callType: 'audio',
+        callerId: userA.id,
+        callerName: 'Cindy Crawford',
+        callerAvatar: '',
+      });
+
+      expect(sendVoip).toHaveBeenCalledTimes(1);
+      expect(sendVoip.mock.calls[0][0]).toEqual(['pushkit-token-1']);
+      expect(sendVoip.mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          type: 'incoming_call',
+          callType: 'audio',
+          callId: 'call-audio-1',
+          channelName: 'channel-audio',
+          callerName: 'Cindy Crawford',
+        })
+      );
+      expect(mockSendEachForMulticast).not.toHaveBeenCalled();
+    });
+
+    it('rings Android in the background on the incoming_calls channel for audio and video', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_android_callee',
+        platform: 'android',
+        isActive: true,
+      });
+
+      for (const callType of ['audio', 'video'] as const) {
+        mockSendEachForMulticast.mockClear();
+        await notifyIncomingCallPush({
+          calleeId: userB.id,
+          callId: `call-${callType}`,
+          channelName: `channel-${callType}`,
+          callType,
+          callerId: userA.id,
+          callerName: 'Cindy Crawford',
+        });
+
+        expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
+        const message = mockSendEachForMulticast.mock.calls[0][0];
+        expect(message.tokens).toEqual(['fcm_android_callee']);
+        expect(message.android.priority).toBe('high');
+        expect(message.android.notification.channelId).toBe('incoming_calls');
+        expect(message.data.type).toBe('incoming_call');
+        expect(message.data.callType).toBe(callType);
+        expect(message.data.hasVideo).toBe(callType === 'video' ? 'true' : 'false');
+        expect(message.data.silent).toBe('false');
+      }
+    });
+  });
+
+  describe('8. Silent incoming call pushes', () => {
     it('sends audio and video call pushes as data-only with no sound or banner', async () => {
       await UserDevice.create({
         userId: userB.id,
@@ -508,7 +627,7 @@ describe('FlirtTime Notifications & FCM APIs', () => {
     });
   });
 
-  describe('8. Moment notification payload includes momentId', () => {
+  describe('9. Moment notification payload includes momentId', () => {
     const momentId = '6f1c2a30-7b4e-4d2a-9c11-0a1b2c3d4e5f';
 
     beforeEach(async () => {

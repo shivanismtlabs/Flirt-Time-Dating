@@ -418,26 +418,85 @@ export class MomentService {
 
       await t.commit();
 
-      return {
+      const media = mediaRecords.map((m) => ({
+        mediaId: m.id,
+        imageKey: m.mediaUrl,
+        imageUrl: formatMediaUrl(m.mediaUrl),
+        mediaUrl: formatMediaUrl(m.mediaUrl),
+        thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
+        mediaType: m.mediaType,
+        displayOrder: m.displayOrder,
+      }));
+
+      const creatorName =
+        creator.firstName ||
+        (creator.fullName ? creator.fullName.split(' ')[0] : null) ||
+        creator.nickName ||
+        creator.username ||
+        'User';
+
+      const createdMoment = {
         momentId: moment.id,
         creatorId: moment.userId,
         caption: moment.caption,
         audience: moment.audience,
         status: moment.status,
         publishedAt: moment.publishedAt,
-        expiresAt: null,
+        expiresAt: moment.expiresAt,
         locationLabel: moment.locationLabel,
         location: moment.locationLabel ? { name: moment.locationLabel } : null,
-        media: mediaRecords.map((m) => ({
-          mediaId: m.id,
-          imageKey: m.mediaUrl,
-          imageUrl: formatMediaUrl(m.mediaUrl),
-          mediaUrl: formatMediaUrl(m.mediaUrl),
-          thumbnailUrl: formatThumbnailUrl(m.mediaUrl),
-          mediaType: m.mediaType,
-          displayOrder: m.displayOrder,
-        })),
+        media,
       };
+
+      this.emitMomentActivity({
+        type: 'created',
+        momentId: moment.id,
+        ownerId: moment.userId,
+        actorId: creatorId,
+        likesCount: 0,
+        commentsCount: 0,
+        giftsCount: 0,
+        actor: {
+          id: creator.id,
+          name: creator.fullName || creator.nickName || creatorName,
+          username: creator.username || null,
+          profilePhoto: creator.profilePicture
+            ? formatThumbnailUrl(creator.profilePicture)
+            : null,
+        },
+        moment: {
+          id: moment.id,
+          momentId: moment.id,
+          caption: moment.caption,
+          audience: moment.audience,
+          status: moment.status,
+          publishedAt: moment.publishedAt,
+          createdAt: moment.createdAt,
+          expiresAt: moment.expiresAt,
+          locationLabel: moment.locationLabel,
+          location: createdMoment.location,
+          media,
+          imageUrl: media[0] ? media[0].imageUrl : null,
+          mediaUrl: media[0] ? media[0].mediaUrl : null,
+          thumbnailUrl: media[0] ? media[0].thumbnailUrl : null,
+          mediaCount: media.length,
+          likesCount: 0,
+          commentsCount: 0,
+          giftsCount: 0,
+          creator: {
+            id: creator.id,
+            creatorId: creator.id,
+            name: creatorName,
+            fullName: creator.fullName || null,
+            username: creator.username,
+            profilePhoto: creator.profilePicture
+              ? formatThumbnailUrl(creator.profilePicture)
+              : null,
+          },
+        },
+      });
+
+      return createdMoment;
     } catch (dbErr: any) {
       await t.rollback();
       // Clean up orphaned S3 uploads on database failure
@@ -1475,7 +1534,9 @@ export class MomentService {
 
     let giftsCount = 0;
     try {
-      giftsCount = (await MomentGift.sum('quantity', { where: { momentId: moment.id } })) || 0;
+      const summed = await MomentGift.sum('quantity', { where: { momentId: moment.id } });
+      const parsed = Number(summed);
+      giftsCount = Number.isFinite(parsed) ? parsed : 0;
     } catch {}
 
     const likesCount = reactions.length;
@@ -3773,7 +3834,9 @@ export class MomentService {
 
       if (moment && moment.status !== 'deleted') {
         try {
-          totalGiftsReceived = (await MomentGift.sum('quantity', { where: { momentId } })) || 0;
+          const summed = await MomentGift.sum('quantity', { where: { momentId } });
+          const parsed = Number(summed);
+          totalGiftsReceived = Number.isFinite(parsed) ? parsed : 0;
         } catch (_err) {
           totalGiftsReceived = 0;
         }
@@ -4035,10 +4098,12 @@ export class MomentService {
       // Safe to ignore chat record failure
     }
 
-    // 12. Total gifts count on this moment
-    let totalMomentGifts = 0;
+    // 12. Total gifts count on this moment (sum of quantities, same as the feed)
+    let totalMomentGifts = qty;
     try {
-      totalMomentGifts = (await MomentGift.sum('quantity', { where: { momentId } })) || qty;
+      const summed = await MomentGift.sum('quantity', { where: { momentId } });
+      const parsed = Number(summed);
+      if (Number.isFinite(parsed)) totalMomentGifts = parsed;
     } catch (_sumErr) {
       totalMomentGifts = qty;
     }

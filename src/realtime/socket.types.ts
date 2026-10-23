@@ -266,6 +266,7 @@ export interface ServerToClientEvents {
    * `isLiked` is intentionally omitted: that flag belongs to each viewer, not the actor.
    */
   'moment:updated': (data: MomentLiveUpdate) => void;
+  'moment:created': (data: MomentLiveUpdate) => void;
   'moment:like_updated': (data: MomentLiveUpdate) => void;
   'moment:comment_created': (data: MomentLiveUpdate) => void;
   'moment:comment_deleted': (data: MomentLiveUpdate) => void;
@@ -280,6 +281,7 @@ export interface ServerToClientEvents {
  */
 export interface MomentLiveUpdate {
   type:
+    | 'created'
     | 'like'
     | 'unlike'
     | 'reaction'
@@ -291,17 +293,29 @@ export interface MomentLiveUpdate {
     | 'deleted';
   momentId: string;
   ownerId: string;
+  audience: 'everyone' | 'matches_only' | 'close_friends' | null;
   actor: {
     id: string;
     name: string;
     username: string | null;
     profilePhoto: string | null;
   };
+  /**
+   * Absolute totals. Same numbers the feed returns after refresh.
+   * Clients should replace the card counts with these values.
+   */
   likesCount: number;
   commentsCount: number;
   giftsCount: number;
+  /**
+   * Active moments from this creator that a normal feed viewer can see.
+   * Present when a moment is created or deleted so profile badges stay in sync.
+   */
+  momentCount: number | null;
   reaction: string | null;
   reactionCounts: Record<string, number> | null;
+  /** Feed card for a newly created moment. Null for other activities. */
+  moment: Record<string, unknown> | null;
   comment: Record<string, unknown> | null;
   gift: Record<string, unknown> | null;
   commentId: string | null;

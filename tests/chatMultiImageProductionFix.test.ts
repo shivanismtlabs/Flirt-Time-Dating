@@ -327,11 +327,10 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
         expect(msg.imageUrl.startsWith('http')).toBe(true);
         expect(msg.thumbnailUrl.startsWith('http')).toBe(true);
         expect(Array.isArray(msg.images)).toBe(true);
-        expect(msg.images.length).toBe(3);
-        for (const img of msg.images) {
-          expect(img.url.startsWith('http')).toBe(true);
-        }
+        expect(msg.images.length).toBe(1);
+        expect(msg.images[0].url.startsWith('http')).toBe(true);
       }
+      expect(new Set(res.body.data.messages.map((msg: any) => msg.imageUrl)).size).toBe(3);
 
       // 3. Receiver calls direct target user endpoint GET /api/v1/chat/messages/:targetUserId
       const directRes = await request(app)

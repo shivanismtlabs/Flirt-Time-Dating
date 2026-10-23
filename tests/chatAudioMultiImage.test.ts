@@ -231,12 +231,14 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       expect(res.body.success).toBe(true);
       // Both images are saved as distinct message records so all images appear in chat UI for both users
       expect(res.body.data.messages.length).toBe(2);
-      const fetchedMsg = res.body.data.messages[0];
-      expect(fetchedMsg.status).toBe('sent');
-      expect(fetchedMsg.messageType).toBe('image');
-      expect(fetchedMsg.imageUrl).toBeDefined();
-      expect(Array.isArray(fetchedMsg.images)).toBe(true);
-      expect(fetchedMsg.images.length).toBe(2);
+      const urls = new Set(res.body.data.messages.map((msg: any) => msg.imageUrl));
+      expect(urls.size).toBe(2);
+      for (const fetchedMsg of res.body.data.messages) {
+        expect(fetchedMsg.status).toBe('sent');
+        expect(fetchedMsg.messageType).toBe('image');
+        expect(fetchedMsg.imageUrl).toBeDefined();
+        expect(fetchedMsg.images.length).toBe(1);
+      }
     });
 
     it('should support sending 3-4 images and have all of them visible in chat history', async () => {

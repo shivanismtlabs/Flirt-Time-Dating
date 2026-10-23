@@ -1271,6 +1271,13 @@ export const initDb = async (force = false): Promise<void> => {
         }
 
         try {
+          await sequelize.query('ALTER TABLE "user_devices" ADD COLUMN IF NOT EXISTS "voipToken" TEXT;');
+          await sequelize.query('CREATE INDEX IF NOT EXISTS "user_devices_voip_token" ON "user_devices" ("voipToken");');
+        } catch (_voipColErr) {
+          // Safe to ignore if user_devices does not exist yet
+        }
+
+        try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastActiveAt" TIMESTAMP WITH TIME ZONE;');
         } catch (_laColErr) {
           // Safe to ignore if users does not exist yet

@@ -5,6 +5,7 @@ import {
   notificationService,
   NotificationServiceError,
 } from '../services/notification.service';
+import { readVoipToken } from '../utils/voipToken';
 
 /**
  * Fetch current user notifications with sectional date grouping
@@ -212,6 +213,7 @@ export const registerNotificationDeviceTokenHandler = async (
       deviceToken: rawToken,
       platform,
       deviceId,
+      voipToken: readVoipToken(req.body),
     });
 
     return sendSuccess(res, 'Device token registered successfully', result, 200);

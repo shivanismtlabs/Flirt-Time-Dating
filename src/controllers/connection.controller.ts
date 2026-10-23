@@ -6,6 +6,7 @@ import {
   ConnectionServiceError,
 } from '../services/connection.service';
 import { notificationService } from '../services/notification.service';
+import { readVoipToken } from '../utils/voipToken';
 import { CONNECTION_REASONS } from '../schemas/connection.schema';
 import { User } from '../models';
 
@@ -130,6 +131,7 @@ export const registerDeviceTokenHandler = async (
       deviceToken: rawToken,
       platform,
       deviceId,
+      voipToken: readVoipToken(req.body),
     });
 
     return sendSuccess(res, 'Device token registered successfully', result, 200);

@@ -826,8 +826,12 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
     });
 
     it('should support sending multiple images via Socket.IO chat:send_message and deliver to recipient and sender consistently', async () => {
-      const recipientPromise = new Promise<any>((resolve) => {
-        socketRecipient1.on('chat:message_received', (data) => resolve(data));
+      const recipientPromise = new Promise<any[]>((resolve) => {
+        const events: any[] = [];
+        socketRecipient1.on('chat:message_received', (data) => {
+          events.push(data);
+          if (events.length === 3) resolve(events);
+        });
       });
 
       const ackResponse = await new Promise<any>((resolve) => {
@@ -853,12 +857,16 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(ackResponse.data.messages.length).toBe(3);
 
       const received = await recipientPromise;
-      expect(received.messageType).toBe('image');
-      expect(Array.isArray(received.images)).toBe(true);
-      expect(received.images.length).toBe(3);
-      expect(Array.isArray(received.medias)).toBe(true);
-      expect(received.medias.length).toBe(3);
-      expect(received.medias.every((m: any) => m.kind === 'image' && String(m.url).startsWith('http'))).toBe(true);
+      expect(received).toHaveLength(3);
+      const receivedUrls = new Set(received.map((event) => event.imageUrl));
+      expect(receivedUrls.size).toBe(3);
+      for (const event of received) {
+        expect(event.messageType).toBe('image');
+        expect(event.isMine).toBe(false);
+        expect(event.images.length).toBe(1);
+        expect(event.medias.length).toBe(1);
+        expect(String(event.imageUrl).startsWith('http')).toBe(true);
+      }
 
       // Verify both sender and recipient see all 3 images in history
       const [histSender, histRecipient] = await Promise.all([
@@ -872,14 +880,17 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(histRecipient.body.data.messages.length).toBe(3);
       for (const m of histSender.body.data.messages) {
         expect(m.messageType).toBe('image');
-        expect(m.images.length).toBe(3);
+        expect(m.images.length).toBe(1);
+        expect(m.imageUrl).toBeDefined();
       }
+      expect(new Set(histSender.body.data.messages.map((m: any) => m.imageUrl)).size).toBe(3);
       for (const m of histRecipient.body.data.messages) {
         expect(m.messageType).toBe('image');
-        expect(m.images.length).toBe(3);
+        expect(m.images.length).toBe(1);
+        expect(m.medias.length).toBe(1);
         expect(m.isMine).toBe(false);
-        expect(m.medias.length).toBe(3);
       }
+      expect(new Set(histRecipient.body.data.messages.map((m: any) => m.imageUrl)).size).toBe(3);
     });
 
     it('should deliver real-time conversation:updated event to both sender and recipient when a message is sent', async () => {

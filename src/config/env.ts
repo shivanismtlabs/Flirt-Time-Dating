@@ -96,6 +96,17 @@ export const env = {
   SOCKET_MAX_CONNECTIONS_PER_IP: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_IP || '50', 10),
   SOCKET_PER_MESSAGE_DEFLATE: process.env.SOCKET_PER_MESSAGE_DEFLATE === 'true',
 
+  // Apple PushKit VoIP — rings CallKit when the app is backgrounded, locked, or killed.
+  // Topic must be the bundle id plus `.voip`. Key material falls back to the Apple IAP key.
+  APNS_ENABLED: process.env.APNS_ENABLED === 'true' || process.env.APNS_ENABLED === '1',
+  APNS_KEY_ID: (process.env.APNS_KEY_ID || '').trim(),
+  APNS_TEAM_ID: (process.env.APNS_TEAM_ID || '').trim(),
+  APNS_PRIVATE_KEY: (process.env.APNS_PRIVATE_KEY || '')
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\n/g, '\n'),
+  APNS_VOIP_TOPIC: (process.env.APNS_VOIP_TOPIC || '').trim(),
+  APNS_PRODUCTION: process.env.APNS_PRODUCTION !== 'false' && process.env.APNS_PRODUCTION !== '0',
+
   // Agora RTC Video Calling Configuration
   AGORA_APP_ID: process.env.AGORA_APP_ID || '',
   AGORA_APP_CERTIFICATE: process.env.AGORA_APP_CERTIFICATE || '',

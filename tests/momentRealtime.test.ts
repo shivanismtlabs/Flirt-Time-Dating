@@ -2,7 +2,16 @@ import http from 'http';
 import { AddressInfo } from 'net';
 import { io as ioClient, Socket as ClientSocket } from 'socket.io-client';
 import app from '../src/app';
-import { sequelize, User, Moment, Match, UserBlock, initDb } from '../src/models';
+import {
+  sequelize,
+  User,
+  Moment,
+  MomentReaction,
+  MomentGift,
+  Match,
+  UserBlock,
+  initDb,
+} from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { initSocketServer, closeSocketServer } from '../src/realtime/socket.server';
 import { publishMomentRealtime } from '../src/realtime/socket.moment';
@@ -150,6 +159,12 @@ describe('Moment realtime updates', () => {
     const ownerLike = waitForEvent(ownerSocket, 'moment:like_updated');
     const viewerLike = waitForEvent(viewerSocket, 'moment:like_updated');
 
+    await MomentReaction.create({
+      momentId: moment.id,
+      userId: viewer.id,
+      reaction: 'like',
+    });
+
     await publishMomentRealtime({
       type: 'like',
       momentId: moment.id,
@@ -232,6 +247,18 @@ describe('Moment realtime updates', () => {
     });
     expect(joined.success).toBe(true);
 
+    await MomentGift.create({
+      momentId: privateMoment.id,
+      senderId: viewer.id,
+      recipientId: owner.id,
+      giftCode: 'rose',
+      giftName: 'Rose',
+      icon: '🌹',
+      coins: 10,
+      quantity: 2,
+      totalCoins: 20,
+    });
+
     const payload = await new Promise<any>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('gift event missing')), 4000);
       viewerSocket.once('moment:gift_sent', (data) => {
@@ -255,6 +282,7 @@ describe('Moment realtime updates', () => {
     });
 
     expect(payload.giftsCount).toBe(2);
+    expect(typeof payload.giftsCount).toBe('number');
     expect(payload.gift.sender.previousBalance).toBeUndefined();
     expect(payload.gift.sender.newBalance).toBeUndefined();
     expect(payload.gift.sender.coinsDeducted).toBeUndefined();
@@ -270,5 +298,202 @@ describe('Moment realtime updates', () => {
       viewerSocket.emit('moment:join', { momentId: moment.id }, resolve);
     });
     expect(denied.success).toBe(false);
+
+    let received = false;
+    viewerSocket.on('moment:updated', () => {
+      received = true;
+    });
+    viewerSocket.on('moment:like_updated', () => {
+      received = true;
+    });
+
+    await MomentReaction.create({
+      momentId: moment.id,
+      userId: owner.id,
+      reaction: 'like',
+    });
+    await publishMomentRealtime({
+      type: 'like',
+      momentId: moment.id,
+      ownerId: owner.id,
+      actorId: owner.id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(received).toBe(false);
+  });
+
+  it('updates another user feed without joining the moment room', async () => {
+    const feedSocket = await connectClient(
+      generateToken({ id: stranger.id, email: stranger.email, role: stranger.role })
+    );
+
+    await MomentReaction.create({
+      momentId: moment.id,
+      userId: viewer.id,
+      reaction: 'heart',
+    });
+    await MomentReaction.create({
+      momentId: moment.id,
+      userId: owner.id,
+      reaction: 'like',
+    });
+    await MomentGift.create({
+      momentId: moment.id,
+      senderId: viewer.id,
+      recipientId: owner.id,
+      giftCode: 'rose',
+      giftName: 'Rose',
+      icon: '🌹',
+      coins: 1,
+      quantity: 3,
+      totalCoins: 3,
+    });
+
+    const specificEvents: string[] = [];
+    feedSocket.on('moment:like_updated', () => specificEvents.push('like'));
+    feedSocket.on('moment:gift_sent', () => specificEvents.push('gift'));
+
+    const payload = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('feed update missing')), 4000);
+      feedSocket.once('moment:updated', (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      });
+      void publishMomentRealtime({
+        type: 'gift',
+        momentId: moment.id,
+        ownerId: owner.id,
+        actorId: viewer.id,
+        giftsCount: '3' as any,
+        likesCount: '99' as any,
+      });
+    });
+
+    expect(payload.momentId).toBe(moment.id);
+    expect(payload.likesCount).toBe(2);
+    expect(payload.giftsCount).toBe(3);
+    expect(payload.commentsCount).toBe(0);
+    expect(payload.reactionCounts.like).toBe(1);
+    expect(payload.reactionCounts.heart).toBe(1);
+    expect(payload.reactionCounts.total).toBe(2);
+    expect(typeof payload.likesCount).toBe('number');
+    expect(typeof payload.giftsCount).toBe('number');
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(specificEvents).toEqual([]);
+  });
+
+  it('pushes a new moment and a deletion onto feeds that are not watching the card', async () => {
+    const feedSocket = await connectClient(
+      generateToken({ id: stranger.id, email: stranger.email, role: stranger.role })
+    );
+
+    const created = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('create event missing')), 4000);
+      feedSocket.once('moment:created', (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      });
+      void publishMomentRealtime({
+        type: 'created',
+        momentId: moment.id,
+        ownerId: owner.id,
+        actorId: owner.id,
+        moment: {
+          id: moment.id,
+          momentId: moment.id,
+          caption: moment.caption,
+          audience: 'everyone',
+          likesCount: 5,
+          giftsCount: 4,
+        },
+      });
+    });
+
+    expect(created.type).toBe('created');
+    expect(created.momentId).toBe(moment.id);
+    expect(created.likesCount).toBe(0);
+    expect(created.giftsCount).toBe(0);
+    expect(created.momentCount).toBe(1);
+    expect(created.moment.momentCount).toBe(1);
+    expect(created.moment.likesCount).toBe(0);
+    expect(created.moment.giftsCount).toBe(0);
+    expect(created.moment.caption).toBe('Public moment');
+
+    const updated = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('create mirror missing')), 4000);
+      feedSocket.once('moment:updated', (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      });
+      void publishMomentRealtime({
+        type: 'created',
+        momentId: moment.id,
+        ownerId: owner.id,
+        actorId: owner.id,
+      });
+    });
+    expect(updated.type).toBe('created');
+    expect(updated.momentCount).toBe(1);
+
+    moment.status = 'deleted';
+    await moment.save();
+
+    const deleted = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('delete event missing')), 4000);
+      feedSocket.once('moment:deleted', (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      });
+      void publishMomentRealtime({
+        type: 'deleted',
+        momentId: moment.id,
+        ownerId: owner.id,
+        actorId: owner.id,
+      });
+    });
+
+    expect(deleted.type).toBe('deleted');
+    expect(deleted.momentId).toBe(moment.id);
+    expect(deleted.momentCount).toBe(0);
+  });
+
+  it('delivers a matches-only update to a match who is only on the feed', async () => {
+    const [user1Id, user2Id] = [owner.id, viewer.id].sort();
+    await Match.create({ user1Id, user2Id, isActive: true, matchedBy: 'like' });
+
+    const matchSocket = await connectClient(
+      generateToken({ id: viewer.id, email: viewer.email, role: viewer.role })
+    );
+    const strangerSocket = await connectClient(
+      generateToken({ id: stranger.id, email: stranger.email, role: stranger.role })
+    );
+
+    let strangerReceived = false;
+    strangerSocket.on('moment:updated', () => {
+      strangerReceived = true;
+    });
+    strangerSocket.on('moment:created', () => {
+      strangerReceived = true;
+    });
+
+    const payload = await new Promise<any>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('match feed update missing')), 4000);
+      matchSocket.once('moment:updated', (data) => {
+        clearTimeout(timer);
+        resolve(data);
+      });
+      void publishMomentRealtime({
+        type: 'created',
+        momentId: privateMoment.id,
+        ownerId: owner.id,
+        actorId: owner.id,
+      });
+    });
+
+    expect(payload.audience).toBe('matches_only');
+    expect(payload.momentCount).toBe(2);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(strangerReceived).toBe(false);
   });
 });

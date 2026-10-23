@@ -80,6 +80,13 @@ export const registerDeviceTokenSchema = z.object({
         })
         .default('android'),
       deviceId: z.string().trim().max(255).optional().nullable(),
+      voipToken: z.string().trim().max(4096).optional().nullable(),
+      voip_token: z.string().trim().max(4096).optional().nullable(),
+      pushKitToken: z.string().trim().max(4096).optional().nullable(),
+      push_kit_token: z.string().trim().max(4096).optional().nullable(),
+      apnsVoipToken: z.string().trim().max(4096).optional().nullable(),
+      apns_voip_token: z.string().trim().max(4096).optional().nullable(),
+      voipPushToken: z.string().trim().max(4096).optional().nullable(),
     })
     .refine(
       (data) =>

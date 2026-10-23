@@ -339,31 +339,20 @@ export class VideoCallService {
       ? Math.max(1000, new Date(call.expiresAt).getTime() - Date.now())
       : undefined;
     try {
-      const { notificationService } = await import('./notification.service');
-      await notificationService.dispatchNotification(calleeId, {
-        type: 'incoming_call',
-        title: callerName || 'Incoming call',
-        body: callType === 'video' ? 'Incoming video call' : 'Incoming voice call',
-        senderId: call.callerId,
-        entityId: call.id,
-        idempotencyKey: `incoming_call:${call.id}`,
-        silent: true,
+      const { notifyIncomingCallPush } = await import('./callPush.service');
+      await notifyIncomingCallPush({
+        calleeId,
+        callId: call.id,
+        conversationId: call.conversationId,
+        channelName: call.channelName,
+        callType,
+        callerId: call.callerId,
+        callerName: callerName || 'Incoming call',
+        callerAvatar: caller?.profilePicture ? formatMediaUrl(caller.profilePicture) : '',
         ttlMs,
-        data: {
-          type: 'incoming_call',
-          callId: call.id,
-          conversationId: call.conversationId || '',
-          callType,
-          callerId: call.callerId,
-          calleeId,
-          callerName: callerName || '',
-          channelName: call.channelName,
-          silent: 'true',
-        },
-        navigation: { type: 'incoming_call', targetId: call.id },
       });
-    } catch {
-      // A missing push provider must not fail the call itself.
+    } catch (err: any) {
+      console.warn('[CallPush] incoming call push failed:', err?.message || err);
     }
   }
 

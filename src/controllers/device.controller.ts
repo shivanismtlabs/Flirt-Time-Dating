@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { notificationService } from '../services/notification.service';
+import { readVoipToken } from '../utils/voipToken';
 
 /**
  * Register or update device token
@@ -40,6 +41,7 @@ export const registerDeviceHandler = async (
       deviceToken: rawToken,
       platform,
       deviceId,
+      voipToken: readVoipToken(req.body),
     });
 
     return sendSuccess(res, 'Device registered successfully', result, 200);

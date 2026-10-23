@@ -1,5 +1,43 @@
 import { z } from 'zod';
 
+const VIDEO_CALL_TYPES = new Set(['video', 'video_call', 'videocall', 'video_calling']);
+const AUDIO_CALL_TYPES = new Set([
+  'audio',
+  'voice',
+  'voice_call',
+  'voicecall',
+  'audio_call',
+  'audiocall',
+  'call',
+  'calling',
+  'phone',
+]);
+
+/**
+ * OneVibe uses `type: "audio" | "video"` and treats a normal call as audio.
+ * Voice aliases (`voice`, `calling`, `phone`) are audio. Only an explicit
+ * video type starts a video call. `fallback` covers a missing type.
+ */
+export function resolveCallMediaType(
+  input: any,
+  fallback: 'audio' | 'video' = 'audio'
+): 'audio' | 'video' {
+  const raw =
+    input?.callType ??
+    input?.call_type ??
+    input?.mediaType ??
+    input?.media_type ??
+    input?.type;
+  const normalized = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (!normalized) return fallback;
+  if (VIDEO_CALL_TYPES.has(normalized)) return 'video';
+  if (AUDIO_CALL_TYPES.has(normalized)) return 'audio';
+  return fallback;
+}
+
 export const initiateVideoCallSchema = z.object({
   body: z.preprocess((val: any) => {
     if (val && typeof val === 'object') {
@@ -16,8 +54,7 @@ export const initiateVideoCallSchema = z.object({
       const rawConv = val.conversationId !== undefined ? val.conversationId : val.conversation_id;
       const conversationId =
         typeof rawConv === 'string' && rawConv.trim() ? rawConv.trim() : null;
-      const rawCallType = (val.callType || val.call_type || val.type || 'video').toString().toLowerCase();
-      const callType = rawCallType === 'audio' ? 'audio' : 'video';
+      const callType = resolveCallMediaType(val, 'video');
 
       return {
         ...val,

@@ -22,7 +22,9 @@ export const initiateVideoCallHandler = async (
 ) => {
   try {
     const callerId = req.user!.id;
-    const result = await videoCallService.initiateCall(callerId, req.body);
+    const requestPath = `${req.baseUrl || ''}${req.originalUrl || ''}`.toLowerCase();
+    const fallback = requestPath.includes('video') ? 'video' : 'audio';
+    const result = await videoCallService.initiateCall(callerId, req.body, fallback);
     const label = result.callType === 'audio' ? 'Audio call' : 'Video call';
     return sendSuccess(res, `${label} initiated successfully`, result, 201);
   } catch (error: any) {

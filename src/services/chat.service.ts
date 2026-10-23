@@ -22,7 +22,7 @@ import {
 import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge, calculateDistanceKm } from './discovery.service';
-import { isUserConnected, getUserRoomName } from '../realtime/socket.lifecycle';
+import { isUserConnected, isUserViewingConversation, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
 import { socketLogger } from '../realtime/socket.errors';
 import {
@@ -283,6 +283,8 @@ export interface ChatMessageDTO {
   messageType: ChatMessageType | 'text' | 'moment_reply' | 'moment_gift' | string;
   metadata: any;
   status?: 'sent' | 'delivered' | 'read';
+  /** Same value as status. The mobile client reads this field for ticks. */
+  receiptStatus?: 'sent' | 'delivered' | 'read';
   isDelivered?: boolean;
   deliveredAt?: Date | string | null;
   isRead: boolean;
@@ -1316,6 +1318,7 @@ export class ChatService {
         messageType: (msg.messageType as any) || 'text',
         metadata: parsedMetadata,
         status,
+        receiptStatus: status,
         isDelivered: !!msg.isDelivered,
         deliveredAt: msg.deliveredAt || null,
         isRead: !!msg.isRead,
@@ -1455,6 +1458,20 @@ export class ChatService {
     const totalPages = Math.ceil(count / limit) || 1;
     const hasMore = offset + limit < count;
 
+    // Opening the thread marks incoming messages delivered so the sender gets double ticks.
+    if (page === 1 && !query.before && !query.after && !query.cursor) {
+      const incomingIds = chronologicalMessages
+        .filter((m) => !m.isMine && m.status === 'sent')
+        .map((m) => m.id);
+      if (incomingIds.length > 0) {
+        try {
+          await this.acknowledgeDelivery(currentUserId, actualConversationId, incomingIds);
+        } catch {
+          // history must still return if the receipt update fails
+        }
+      }
+    }
+
     return {
       conversationId: actualConversationId,
       messages: chronologicalMessages,
@@ -1466,6 +1483,45 @@ export class ChatService {
         hasMore,
       },
     };
+  }
+
+  /**
+   * FCM push for a newly persisted chat message.
+   * Failures stay off the send path so a missing token or Firebase error cannot fail delivery.
+   */
+  private dispatchChatPush(
+    recipientId: string,
+    senderId: string,
+    senderUser: any,
+    conversationId: string,
+    preview: string
+  ): void {
+    const message =
+      preview && preview !== '__FILE_ATTACHMENT__' ? preview : 'Sent you a message';
+    const senderName = senderUser ? resolveChatDisplayName(senderUser) : 'Someone';
+
+    void notificationService
+      .sendMessageNotification(recipientId, {
+        senderId,
+        senderName,
+        message,
+        conversationId,
+      })
+      .then((result) => {
+        if (result.pushStatus !== 'sent_to_fcm') {
+          console.warn('[FCM] Chat push not delivered:', {
+            recipientId,
+            conversationId,
+            pushStatus: result.pushStatus,
+            successCount: result.successCount ?? 0,
+            failureCount: result.failureCount ?? 0,
+            message: result.message || null,
+          });
+        }
+      })
+      .catch((err: any) => {
+        console.warn('[FCM] Chat push failed:', err?.message || err);
+      });
   }
 
   /**
@@ -2223,6 +2279,7 @@ export class ChatService {
           messageType: existingMessage.messageType as any,
           metadata: meta,
           status,
+          receiptStatus: status,
           isDelivered: !!existingMessage.isDelivered,
           deliveredAt: existingMessage.deliveredAt || null,
           isRead: existingMessage.isRead,
@@ -2472,6 +2529,7 @@ export class ChatService {
         messageType: savedMessage.messageType as any,
         metadata: parsedMeta,
         status: 'sent',
+        receiptStatus: 'sent',
         isDelivered: false,
         deliveredAt: null,
         isRead: false,
@@ -2539,6 +2597,7 @@ export class ChatService {
         // Deliver to recipient's multi-device room across all standard event names.
         // Every nested message is isMine:false so the other user renders the full gallery.
         io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
         io.to(recipientRoom).emit('message:received' as any, recipientPayload);
         io.to(recipientRoom).emit('new_message' as any, recipientPayload);
         if (recipientId && recipientId.toLowerCase() !== recipientId) {
@@ -2624,6 +2683,14 @@ export class ChatService {
       primaryDto.duration = uploadedAudios[0].duration;
       primaryDto.durationMs = uploadedAudios[0].durationMs;
     }
+
+    this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
+    await this.applyLiveReceipts(
+      senderId,
+      recipientId,
+      conversationId,
+      allDtos.map((d) => d.id)
+    );
     return primaryDto;
   }
 
@@ -3372,6 +3439,7 @@ export class ChatService {
               messageType: existingMessage.messageType as any,
               metadata: meta,
               status,
+              receiptStatus: status,
               isDelivered: !!existingMessage.isDelivered,
               deliveredAt: existingMessage.deliveredAt || null,
               isRead: existingMessage.isRead,
@@ -3613,6 +3681,7 @@ export class ChatService {
             messageType: savedMessage.messageType as any,
             metadata: parsedMeta,
             status: 'sent',
+            receiptStatus: 'sent',
             isDelivered: false,
             deliveredAt: null,
             isRead: false,
@@ -3676,6 +3745,7 @@ export class ChatService {
             // Deliver to recipient's multi-device room across all standard event names.
             // Nested messages stay isMine:false so the other user shows every image.
             io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
             io.to(recipientRoom).emit('message:received' as any, recipientPayload);
             io.to(recipientRoom).emit('new_message' as any, recipientPayload);
             if (recipientId && recipientId.toLowerCase() !== recipientId) {
@@ -3763,6 +3833,13 @@ export class ChatService {
           primaryRecipientDto.durationMs = uploadedAudios[0].durationMs;
         }
 
+        await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id)
+        );
+
         results.push({
           recipientId,
           conversationId,
@@ -3770,27 +3847,15 @@ export class ChatService {
           message: primaryRecipientDto,
         });
 
-        // Asynchronously dispatch FCM Push Notification to recipient
-        (async () => {
-          try {
-            const senderDisplayName = senderUser ? resolveChatDisplayName(senderUser) : 'Someone';
-            const preview =
-              lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
-                ? lastMessagePreview
-                : uploadedImages.length > 0
-                ? 'Sent an image 📷'
-                : uploadedAudios.length > 0
-                ? 'Sent a voice message 🎤'
-                : 'Sent you a message';
-
-            await notificationService.sendMessageNotification(recipientId, {
-              senderId,
-              senderName: senderDisplayName,
-              message: preview,
-              conversationId,
-            });
-          } catch {}
-        })();
+        const preview =
+          lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
+            ? lastMessagePreview
+            : uploadedImages.length > 0
+            ? 'Sent an image 📷'
+            : uploadedAudios.length > 0
+            ? 'Sent a voice message 🎤'
+            : 'Sent you a message';
+        this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
       } catch (err: any) {
         await t.rollback();
         results.push({
@@ -3812,6 +3877,163 @@ export class ChatService {
   }
 
   /**
+   * Push sent / delivered / seen ticks on the names this app and older clients listen for.
+   * OneVibe mobile: chat:message:delivered, chat:message:seen, chat:message:status.
+   * Existing clients: chat:delivery_receipt, chat:read_receipt.
+   */
+  private emitMessageReceipt(input: {
+    kind: 'delivered' | 'read';
+    conversationId: string;
+    actorId: string;
+    notifyUserId: string;
+    messageIds: string[];
+    cursorId?: string | null;
+    at: Date;
+    markedCount?: number;
+  }): void {
+    const io = getSocketServer();
+    const ids = input.messageIds.filter(Boolean);
+    const cursorId = input.cursorId || ids[ids.length - 1] || null;
+    const atIso = input.at.toISOString();
+
+    const legacy =
+      input.kind === 'delivered'
+        ? {
+            conversationId: input.conversationId,
+            recipientId: input.actorId,
+            delivererId: input.actorId,
+            userId: input.actorId,
+            messageIds: ids,
+            messageId: cursorId,
+            deliveredAt: atIso,
+            status: 'delivered' as const,
+            receiptStatus: 'delivered' as const,
+            isDelivered: true,
+            deliveredCount: input.markedCount ?? ids.length,
+          }
+        : {
+            conversationId: input.conversationId,
+            readerId: input.actorId,
+            userId: input.actorId,
+            readBy: input.actorId,
+            lastReadMessageId: cursorId,
+            messageId: cursorId,
+            messageIds: ids,
+            markedCount: input.markedCount ?? ids.length,
+            readAt: atIso,
+            status: 'read' as const,
+            receiptStatus: 'read' as const,
+            isRead: true,
+            seen: true,
+          };
+
+    const oneVibe =
+      input.kind === 'delivered'
+        ? {
+            conversationId: input.conversationId,
+            delivererId: input.actorId,
+            recipientId: input.actorId,
+            userId: input.actorId,
+            messageId: cursorId,
+            messageIds: ids,
+            deliveredAt: atIso,
+            status: 'delivered' as const,
+            receiptStatus: 'delivered' as const,
+            isDelivered: true,
+          }
+        : {
+            conversationId: input.conversationId,
+            readerId: input.actorId,
+            userId: input.actorId,
+            readBy: input.actorId,
+            messageId: cursorId,
+            messageIds: ids,
+            lastReadMessageId: cursorId,
+            readAt: atIso,
+            status: 'seen' as const,
+            receiptStatus: 'read' as const,
+            isRead: true,
+            seen: true,
+            markedCount: input.markedCount ?? 0,
+          };
+
+    const rooms = [
+      getUserRoomName(input.notifyUserId),
+      getUserRoomName(input.actorId),
+      `conversation:${input.conversationId}`,
+      `chat:${input.conversationId}`,
+    ];
+    if (input.notifyUserId && input.notifyUserId.toLowerCase() !== input.notifyUserId) {
+      rooms.push(getUserRoomName(input.notifyUserId.toLowerCase()));
+    }
+    if (input.actorId && input.actorId.toLowerCase() !== input.actorId) {
+      rooms.push(getUserRoomName(input.actorId.toLowerCase()));
+    }
+
+    const legacyEvents =
+      input.kind === 'delivered'
+        ? ['chat:delivery_receipt', 'message:delivery_receipt']
+        : ['chat:read_receipt', 'message:read_receipt'];
+    const oneVibeEvents =
+      input.kind === 'delivered'
+        ? ['chat:message:delivered', 'chat:message:status', 'message:status']
+        : ['chat:message:seen', 'chat:seen', 'message:seen', 'chat:message:status', 'message:status'];
+
+    for (const room of rooms) {
+      for (const event of legacyEvents) {
+        io.to(room).emit(event as any, legacy);
+      }
+      for (const event of oneVibeEvents) {
+        io.to(room).emit(event as any, oneVibe);
+      }
+    }
+
+    if (ids.length > 1) {
+      const perEvent = input.kind === 'delivered' ? 'chat:message:delivered' : 'chat:message:seen';
+      for (const id of ids) {
+        const perMessage = { ...oneVibe, messageId: id };
+        for (const room of rooms) {
+          io.to(room).emit(perEvent as any, perMessage);
+        }
+      }
+    }
+
+    io.to(getUserRoomName(input.notifyUserId)).emit('chat:inbox:refresh' as any, {
+      conversationId: input.conversationId,
+      reason: input.kind === 'delivered' ? 'delivered' : 'read',
+      ...(input.kind === 'delivered'
+        ? { delivererId: input.actorId }
+        : { readerId: input.actorId }),
+    });
+  }
+
+  /**
+   * Online recipient → double tick. Open conversation → seen.
+   * Failures stay off the send response.
+   */
+  private async applyLiveReceipts(
+    senderId: string,
+    recipientId: string,
+    conversationId: string,
+    messageIds: string[]
+  ): Promise<void> {
+    if (!recipientId || !conversationId || messageIds.length === 0) return;
+    if (recipientId === senderId) return;
+    try {
+      const latestId = messageIds[messageIds.length - 1];
+      if (isUserViewingConversation(recipientId, conversationId)) {
+        await this.markMessagesAsRead(recipientId, conversationId, latestId);
+        return;
+      }
+      if (isUserConnected(recipientId)) {
+        await this.acknowledgeDelivery(recipientId, conversationId, messageIds);
+      }
+    } catch {
+      // receipt side effects must not fail the send
+    }
+  }
+
+  /**
    * 5. MARK MESSAGES AS READ
    * Acknowledges messages up to lastReadMessageId (or all messages if omitted)
    * as read by the current recipient. Updates receipt timestamps and unread counters.
@@ -3823,8 +4045,13 @@ export class ChatService {
   ): Promise<{
     conversationId: string;
     lastReadMessageId: string | null;
+    messageId: string | null;
+    readerId: string;
     markedCount: number;
     unreadCount: number;
+    status: 'read';
+    receiptStatus: 'read';
+    readAt: string;
   }> {
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
@@ -3923,40 +4150,29 @@ export class ChatService {
     const unreadCount = await this.getConversationUnreadCount(currentUserId, conversationId);
 
     // Notify other user via real-time read receipt and sync unread count to reader's devices
+    let resolvedLastReadId = lastReadMessageId || boundaryMessage?.id || null;
+    if (!resolvedLastReadId && markedCount > 0) {
+      const latestRead = await ChatMessage.findOne({
+        where: { conversationId, recipientId: currentUserId, isRead: true },
+        order: [['createdAt', 'DESC']],
+        attributes: ['id'],
+      });
+      resolvedLastReadId = latestRead?.id || null;
+    }
+
     if (markedCount > 0 || lastReadMessageId) {
       try {
         const io = getSocketServer();
-        const resolvedLastReadId = lastReadMessageId || boundaryMessage?.id || null;
-        const readReceiptPayload = {
+        this.emitMessageReceipt({
+          kind: 'read',
           conversationId,
-          readerId: currentUserId,
-          userId: currentUserId,
-          readBy: currentUserId,
-          lastReadMessageId: resolvedLastReadId,
-          messageId: resolvedLastReadId,
+          actorId: currentUserId,
+          notifyUserId: otherUserId,
+          messageIds: resolvedLastReadId ? [resolvedLastReadId] : [],
+          cursorId: resolvedLastReadId,
+          at: now,
           markedCount,
-          readAt: now.toISOString(),
-          status: 'read',
-          isRead: true,
-        };
-
-        // Emit to sender's active room
-        io.to(getUserRoomName(otherUserId)).emit('chat:read_receipt' as any, readReceiptPayload);
-        io.to(getUserRoomName(otherUserId)).emit('message:read_receipt' as any, readReceiptPayload);
-        if (otherUserId && otherUserId.toLowerCase() !== otherUserId) {
-          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('chat:read_receipt' as any, readReceiptPayload);
-          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('message:read_receipt' as any, readReceiptPayload);
-        }
-
-        // Broadcast to conversation room subscribers
-        io.to(`conversation:${conversationId}`).emit('chat:read_receipt' as any, readReceiptPayload);
-        io.to(`conversation:${conversationId}`).emit('message:read_receipt' as any, readReceiptPayload);
-        io.to(`chat:${conversationId}`).emit('chat:read_receipt' as any, readReceiptPayload);
-        io.to(`chat:${conversationId}`).emit('message:read_receipt' as any, readReceiptPayload);
-
-        // Also emit to reader's room for multi-device sync
-        io.to(getUserRoomName(currentUserId)).emit('chat:read_receipt' as any, readReceiptPayload);
-        io.to(getUserRoomName(currentUserId)).emit('message:read_receipt' as any, readReceiptPayload);
+        });
 
         // Synchronize updated unread badge to reader's own active sessions
         io.to(getUserRoomName(currentUserId)).emit('conversation:unread_updated' as any, {
@@ -4023,9 +4239,14 @@ export class ChatService {
 
     return {
       conversationId,
-      lastReadMessageId: lastReadMessageId || boundaryMessage?.id || null,
+      lastReadMessageId: resolvedLastReadId,
+      messageId: resolvedLastReadId,
+      readerId: currentUserId,
       markedCount,
       unreadCount,
+      status: 'read',
+      receiptStatus: 'read',
+      readAt: now.toISOString(),
     };
   }
 
@@ -4041,7 +4262,12 @@ export class ChatService {
   ): Promise<{
     conversationId: string;
     messageIds: string[];
+    messageId?: string | null;
+    delivererId?: string;
     deliveredCount: number;
+    status?: 'delivered';
+    receiptStatus?: 'delivered';
+    deliveredAt?: string;
   }> {
     if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
       return {
@@ -4129,43 +4355,31 @@ export class ChatService {
     }
 
     // Dispatch delivery receipt to sender's active sessions
+    const deliveredMessageIds = undeliveredIds.length > 0 ? undeliveredIds : eligibleMessages.map((m) => m.id);
     if (deliveredCount > 0 || eligibleMessages.length > 0) {
       try {
-        const io = getSocketServer();
-        const deliveredMessageIds = undeliveredIds.length > 0 ? undeliveredIds : eligibleMessages.map((m) => m.id);
-        const deliveryPayload = {
+        this.emitMessageReceipt({
+          kind: 'delivered',
           conversationId,
-          recipientId: currentUserId,
-          userId: currentUserId,
+          actorId: currentUserId,
+          notifyUserId: otherUserId,
           messageIds: deliveredMessageIds,
-          messageId: deliveredMessageIds[0] || null,
-          deliveredAt: now.toISOString(),
-          status: 'delivered',
-          isDelivered: true,
-          deliveredCount: deliveredCount > 0 ? deliveredCount : eligibleMessages.length,
-        };
-
-        io.to(getUserRoomName(otherUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
-        io.to(getUserRoomName(otherUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
-        if (otherUserId && otherUserId.toLowerCase() !== otherUserId) {
-          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('chat:delivery_receipt' as any, deliveryPayload);
-          io.to(getUserRoomName(otherUserId.toLowerCase())).emit('message:delivery_receipt' as any, deliveryPayload);
-        }
-
-        io.to(`conversation:${conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
-        io.to(`conversation:${conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
-        io.to(`chat:${conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
-        io.to(`chat:${conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
-
-        io.to(getUserRoomName(currentUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
-        io.to(getUserRoomName(currentUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
+          cursorId: deliveredMessageIds[deliveredMessageIds.length - 1] || null,
+          at: now,
+          markedCount: deliveredCount > 0 ? deliveredCount : eligibleMessages.length,
+        });
       } catch { }
     }
 
     return {
       conversationId,
       messageIds: eligibleMessages.map((m) => m.id),
+      messageId: deliveredMessageIds[deliveredMessageIds.length - 1] || null,
+      delivererId: currentUserId,
       deliveredCount,
+      status: 'delivered',
+      receiptStatus: 'delivered',
+      deliveredAt: now.toISOString(),
     };
   }
 
@@ -4274,32 +4488,18 @@ export class ChatService {
       }
 
       try {
-        const io = getSocketServer();
         for (const [key, group] of groupedBySender.entries()) {
-          const senderId = key.split(':')[0];
-          const deliveryPayload = {
+          const senderId = key.slice(0, key.indexOf(':'));
+          this.emitMessageReceipt({
+            kind: 'delivered',
             conversationId: group.conversationId,
-            recipientId: currentUserId,
-            userId: currentUserId,
+            actorId: currentUserId,
+            notifyUserId: senderId,
             messageIds: group.messageIds,
-            messageId: group.messageIds[0] || null,
-            deliveredAt: now.toISOString(),
-            status: 'delivered',
-            isDelivered: true,
-          };
-          io.to(getUserRoomName(senderId)).emit('chat:delivery_receipt' as any, deliveryPayload);
-          io.to(getUserRoomName(senderId)).emit('message:delivery_receipt' as any, deliveryPayload);
-          if (senderId && senderId.toLowerCase() !== senderId) {
-            io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:delivery_receipt' as any, deliveryPayload);
-            io.to(getUserRoomName(senderId.toLowerCase())).emit('message:delivery_receipt' as any, deliveryPayload);
-          }
-          io.to(`conversation:${group.conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
-          io.to(`conversation:${group.conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
-          io.to(`chat:${group.conversationId}`).emit('chat:delivery_receipt' as any, deliveryPayload);
-          io.to(`chat:${group.conversationId}`).emit('message:delivery_receipt' as any, deliveryPayload);
-
-          io.to(getUserRoomName(currentUserId)).emit('chat:delivery_receipt' as any, deliveryPayload);
-          io.to(getUserRoomName(currentUserId)).emit('message:delivery_receipt' as any, deliveryPayload);
+            cursorId: group.messageIds[group.messageIds.length - 1] || null,
+            at: now,
+            markedCount: group.messageIds.length,
+          });
         }
       } catch {}
     }
@@ -4909,6 +5109,7 @@ export class ChatService {
         messageType: (message.messageType as any) || 'text',
         metadata: parsedMetadata,
         status,
+        receiptStatus: status,
         isDelivered: !!message.isDelivered,
         deliveredAt: message.deliveredAt || null,
         isRead: !!message.isRead,
@@ -5383,6 +5584,7 @@ export class ChatService {
         messageType: (msg.messageType as any) || 'text',
         metadata: parsedMetadata,
         status,
+        receiptStatus: status,
         isDelivered: !!msg.isDelivered,
         deliveredAt: msg.deliveredAt || null,
         isRead: !!msg.isRead,
@@ -7632,6 +7834,7 @@ return {
 
               // Emit to recipient's multi-device room
               io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
+        io.to(recipientRoom).emit('chat:message:new' as any, recipientPayload);
               io.to(recipientRoom).emit('message:received' as any, recipientPayload);
               io.to(recipientRoom).emit('new_message' as any, recipientPayload);
               io.to(recipientRoom).emit('chat:message_forwarded' as any, recipientPayload);
@@ -7666,6 +7869,14 @@ return {
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
+
+        this.dispatchChatPush(
+          recipientId,
+          senderId,
+          senderUser,
+          conversationId,
+          lastMessagePreview || 'Forwarded a message'
+        );
 
         results.push({
           recipientId,

@@ -295,8 +295,15 @@ export class NotificationService {
       deviceId?: string | null;
     }
   ) {
-    const { deviceToken, platform = 'android', deviceId } = input;
+    const { deviceToken, deviceId } = input;
     const cleanToken = deviceToken.trim();
+    const rawPlatform = String(input.platform || 'android').toLowerCase().trim();
+    const platform: 'ios' | 'android' | 'web' =
+      rawPlatform === 'ios' || rawPlatform === 'iphone' || rawPlatform === 'ipad' || rawPlatform === 'apple'
+        ? 'ios'
+        : rawPlatform === 'web' || rawPlatform === 'browser'
+        ? 'web'
+        : 'android';
 
     let device = await UserDevice.findOne({ where: { deviceToken: cleanToken } });
     if (device) {
@@ -564,11 +571,18 @@ export class NotificationService {
 
       const response: BatchResponse = await messaging.sendEachForMulticast(message);
 
-      // Clean up dead/unregistered tokens
+      // Clean up dead/unregistered tokens and keep the FCM error for the caller.
       const badTokens: string[] = [];
+      const failureMessages: string[] = [];
       response.responses.forEach((resp, idx) => {
         if (!resp.success && resp.error) {
           const code = resp.error.code;
+          failureMessages.push(`${code}: ${resp.error.message}`);
+          console.warn('[FCM] Token send failed:', {
+            code,
+            message: resp.error.message,
+            tokenLength: tokens[idx]?.length || 0,
+          });
           if (
             code === 'messaging/invalid-registration-token' ||
             code === 'messaging/registration-token-not-registered'
@@ -585,12 +599,20 @@ export class NotificationService {
         );
       }
 
+      if (response.successCount === 0 && failureMessages.length > 0) {
+        console.warn('[FCM] Push failed for all tokens:', failureMessages[0]);
+      }
+
       return {
         inAppCreated: true,
         pushStatus: response.successCount > 0 ? 'sent_to_fcm' : 'failed',
         inAppNotificationId: createdRecord.id,
         successCount: response.successCount,
         failureCount: response.failureCount,
+        message:
+          response.successCount > 0
+            ? undefined
+            : failureMessages[0] || 'FCM accepted no tokens',
       };
     } catch (fcmErr: any) {
       console.warn('[FCM] Push dispatch caught safely without DB loss:', fcmErr.message);
@@ -1220,11 +1242,22 @@ export class NotificationService {
     };
 
     const response = await messaging.sendEachForMulticast(message);
+    const errors = response.responses
+      .filter((resp) => !resp.success && resp.error)
+      .map((resp) => ({
+        code: resp.error?.code || 'unknown',
+        message: resp.error?.message || 'FCM send failed',
+      }));
+
+    if (errors.length > 0) {
+      console.warn('[FCM] Test push failed:', errors[0]);
+    }
 
     return {
       success: response.successCount > 0,
       successCount: response.successCount,
       failureCount: response.failureCount,
+      errors,
     };
   }
 

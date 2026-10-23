@@ -21,12 +21,19 @@ export const registerDeviceHandler = async (
       req.body.token ||
       req.body.deviceToken ||
       req.body.fcmToken ||
-      req.body.device_token;
+      req.body.device_token ||
+      req.body.fcm_token ||
+      req.body.registrationToken ||
+      req.body.registration_token ||
+      req.body.pushToken ||
+      req.body.push_token;
 
-    const platform = (req.body.platform || 'android').toLowerCase() as
-      | 'ios'
-      | 'android'
-      | 'web';
+    const platform = (
+      req.body.platform ||
+      req.body.deviceType ||
+      req.body.device_type ||
+      'android'
+    ).toLowerCase() as 'ios' | 'android' | 'web';
     const deviceId = req.body.deviceId;
 
     const result = await notificationService.registerDeviceToken(userId, {

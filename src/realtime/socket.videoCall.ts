@@ -14,6 +14,7 @@
 import { AppSocket, AppSocketServer } from './socket.types';
 import { getUserActiveSocketCount, getUserRoomName } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
+import { resolveCallMediaType } from '../schemas/videoCall.schema';
 
 export interface VideoCallIncomingPayload {
   callId: string;
@@ -38,6 +39,7 @@ export interface CallSessionPayload {
   token: string;
   uid: string;
   appId: string;
+  type?: 'audio' | 'video';
 }
 
 export interface VideoCallAcceptedPayload {
@@ -60,6 +62,7 @@ export interface VideoCallEndedPayload {
   status: string;
   endedBy?: string;
   reason?: string;
+  callType?: 'audio' | 'video';
 }
 
 export interface VideoCallBusyPayload {
@@ -72,6 +75,7 @@ export interface VideoCallMissedPayload {
   callId: string;
   status: string;
   reason?: string;
+  callType?: 'audio' | 'video';
 }
 
 const DISCONNECT_HANGUP_GRACE_MS = 900;
@@ -85,15 +89,32 @@ function emitToUser(io: AppSocketServer, userId: string, event: string, payload:
   }
 }
 
+function asMediaType(value: unknown): 'audio' | 'video' | undefined {
+  if (value === 'audio' || value === 'video') return value;
+  return undefined;
+}
+
+/**
+ * A voice call must not emit `video_call:*`. The app treats that event as a
+ * video call. OneVibe voice calls use only `call:*` and `type: "audio"`.
+ */
+function isAudioCall(callType?: string | null, call?: { type?: string } | null): boolean {
+  return asMediaType(callType) === 'audio' || asMediaType(call?.type) === 'audio';
+}
+
 export const emitVideoCallIncoming = (
   io: AppSocketServer,
   calleeId: string,
   payload: VideoCallIncomingPayload
 ): void => {
   try {
-    emitToUser(io, calleeId, 'video_call:incoming', payload);
-    emitToUser(io, calleeId, 'call:incoming', payload);
-    socketLogger.info('Emitted video_call:incoming', { calleeId, callId: payload.callId });
+    const callType = isAudioCall(payload.callType, payload.call) ? 'audio' : 'video';
+    const outgoing = { ...payload, callType, type: callType };
+    if (callType === 'video') {
+      emitToUser(io, calleeId, 'video_call:incoming', outgoing);
+    }
+    emitToUser(io, calleeId, 'call:incoming', outgoing);
+    socketLogger.info('Emitted call:incoming', { calleeId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:incoming', error, { calleeId, callId: payload.callId });
   }
@@ -105,8 +126,11 @@ export const emitVideoCallAccepted = (
   payload: VideoCallAcceptedPayload
 ): void => {
   try {
-    const legacy = { callId: payload.callId, status: payload.status };
-    emitToUser(io, callerId, 'video_call:accepted', legacy);
+    const callType = isAudioCall(payload.session?.call?.type, payload.session?.call) ? 'audio' : 'video';
+    const legacy = { callId: payload.callId, status: payload.status, callType, type: callType };
+    if (callType === 'video') {
+      emitToUser(io, callerId, 'video_call:accepted', legacy);
+    }
     emitToUser(io, callerId, 'call:accepted', legacy);
     if (payload.session) {
       emitToUser(io, callerId, 'call:join', {
@@ -127,8 +151,11 @@ export const emitVideoCallRejected = (
   payload: VideoCallRejectedPayload
 ): void => {
   try {
-    const legacy = { callId: payload.callId, status: payload.status };
-    emitToUser(io, callerId, 'video_call:rejected', legacy);
+    const callType = isAudioCall(payload.call?.type, payload.call) ? 'audio' : 'video';
+    const legacy = { callId: payload.callId, status: payload.status, callType, type: callType };
+    if (callType === 'video') {
+      emitToUser(io, callerId, 'video_call:rejected', legacy);
+    }
     const declined = {
       callId: payload.callId,
       status: payload.status,
@@ -157,8 +184,17 @@ export const emitVideoCallEnded = (
   payload: VideoCallEndedPayload
 ): void => {
   try {
-    const legacy = { callId: payload.callId, status: payload.status, endedBy: payload.endedBy };
-    emitToUser(io, targetUserId, 'video_call:ended', legacy);
+    const callType = isAudioCall(payload.callType) ? 'audio' : 'video';
+    const legacy = {
+      callId: payload.callId,
+      status: payload.status,
+      endedBy: payload.endedBy,
+      callType,
+      type: callType,
+    };
+    if (callType === 'video') {
+      emitToUser(io, targetUserId, 'video_call:ended', legacy);
+    }
     emitToUser(io, targetUserId, 'call:ended', legacy);
     emitToUser(io, targetUserId, 'call:end:ack', {
       callId: payload.callId,
@@ -199,8 +235,12 @@ export const emitVideoCallMissed = (
   payload: VideoCallMissedPayload
 ): void => {
   try {
-    emitToUser(io, targetUserId, 'video_call:missed', payload);
-    emitToUser(io, targetUserId, 'call:missed', payload);
+    const callType = isAudioCall(payload.callType) ? 'audio' : 'video';
+    const outgoing = { ...payload, callType, type: callType };
+    if (callType === 'video') {
+      emitToUser(io, targetUserId, 'video_call:missed', outgoing);
+    }
+    emitToUser(io, targetUserId, 'call:missed', outgoing);
     emitToUser(io, targetUserId, 'call:end:ack', {
       callId: payload.callId,
       status: 'missed',
@@ -284,25 +324,28 @@ export const registerVideoCallSocketHandlers = (
 ): void => {
   const currentUserId = socket.data.user.userId;
 
-  const handleCreateCall = async (data: {
-    conversationId?: string;
-    calleeId?: string;
-    userId?: string;
-    type?: string;
-    callType?: string;
-    requestId?: string;
-  }) => {
+  const handleCreateCall = async (
+    data: {
+      conversationId?: string;
+      calleeId?: string;
+      userId?: string;
+      type?: string;
+      callType?: string;
+      mediaType?: string;
+      requestId?: string;
+    },
+    fallback: 'audio' | 'video'
+  ) => {
     const requestId = data?.requestId;
     try {
       const { videoCallService } = await import('../services/videoCall.service');
-      const callType = (data?.type || data?.callType || 'audio').toString().toLowerCase() === 'video'
-        ? 'video'
-        : 'audio';
+      const callType = resolveCallMediaType(data, fallback);
       const result = await videoCallService.initiateCall(currentUserId, {
         calleeId: data?.calleeId || data?.userId,
         conversationId: data?.conversationId,
         callType,
-      } as any);
+        type: data?.type,
+      } as any, fallback);
 
       (socket.data as { activeCallId?: string }).activeCallId = result.callId;
       socket.emit('call:create:ack' as any, {
@@ -430,8 +473,12 @@ export const registerVideoCallSocketHandlers = (
     }
   };
 
-  socket.on('call:create' as any, handleCreateCall);
-  socket.on('video_call:create' as any, handleCreateCall);
+  socket.on('call:create' as any, (data: any) => {
+    void handleCreateCall(data, 'audio');
+  });
+  socket.on('video_call:create' as any, (data: any) => {
+    void handleCreateCall(data, 'video');
+  });
 
   socket.on('call:accept' as any, handleAcceptCall);
   socket.on('video_call:accept' as any, handleAcceptCall);

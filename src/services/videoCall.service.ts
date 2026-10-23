@@ -25,7 +25,7 @@ import {
   emitVideoCallMissed,
   emitCallChatMessage,
 } from '../realtime/socket.videoCall';
-import { InitiateVideoCallInput, GetCallHistoryQuery } from '../schemas/videoCall.schema';
+import { InitiateVideoCallInput, GetCallHistoryQuery, resolveCallMediaType } from '../schemas/videoCall.schema';
 import { env } from '../config/env';
 
 export class VideoCallServiceError extends Error {
@@ -80,6 +80,7 @@ export interface CallSessionPayload {
   token: string;
   uid: string;
   appId: string;
+  type: 'audio' | 'video';
 }
 
 export interface InitiateVideoCallResponseDTO {
@@ -304,11 +305,13 @@ export class VideoCallService {
     callee: any,
     reason?: string
   ): CallSessionPayload {
+    const callType = call.callType === 'audio' ? 'audio' : 'video';
     return {
       call: this.toCallDto(call, caller, callee, reason),
       token: agoraService.generateRtcTokenWithUserAccount(call.channelName, actorId),
       uid: actorId,
       appId: agoraService.getAppId(),
+      type: callType,
     };
   }
 
@@ -441,8 +444,9 @@ export class VideoCallService {
     await call.update({ status: 'missed', endedAt: now });
     const io = this.getIoSafe();
     if (io) {
-      emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed' });
-      emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed' });
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
+      emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed', callType });
+      emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed', callType });
     }
     await this.insertCallHistoryMessage(call, 'missed');
   }
@@ -484,7 +488,8 @@ export class VideoCallService {
    */
   public async initiateCall(
     callerId: string,
-    input: InitiateVideoCallInput
+    input: InitiateVideoCallInput,
+    fallback: 'audio' | 'video' = 'video'
   ): Promise<InitiateVideoCallResponseDTO> {
     let calleeId =
       input.calleeId ||
@@ -654,10 +659,7 @@ export class VideoCallService {
     const expiresAt = new Date(Date.now() + ringingSeconds * 1000);
 
     // Create call record to obtain canonical call ID
-    const rawCallType = String(
-      (input as any)?.callType || (input as any)?.call_type || (input as any)?.type || 'video'
-    ).toLowerCase();
-    const callType = rawCallType === 'audio' ? 'audio' : 'video';
+    const callType = resolveCallMediaType(input, fallback);
     const call = await VideoCall.create({
       callerId,
       calleeId,
@@ -768,8 +770,9 @@ export class VideoCallService {
       await call.update({ status: 'missed', endedAt: now });
       const io = this.getIoSafe();
       if (io) {
-        emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed' });
-        emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed' });
+        const callType = call.callType === 'audio' ? 'audio' : 'video';
+        emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed', callType });
+        emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed', callType });
       }
       await this.insertCallHistoryMessage(call, 'missed');
       throw new VideoCallServiceError('Call has expired', 410, 'CALL_EXPIRED');
@@ -973,11 +976,13 @@ export class VideoCallService {
     const otherUserId = isCaller ? call.calleeId : call.callerId;
     const io = this.getIoSafe();
     if (io) {
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
       if (finalStatus === 'missed') {
         emitVideoCallMissed(io, otherUserId, {
           callId: call.id,
           status: 'missed',
           reason: 'cancelled',
+          callType,
         });
       } else {
         emitVideoCallEnded(io, otherUserId, {
@@ -985,6 +990,7 @@ export class VideoCallService {
           status: 'ended',
           endedBy: userId,
           reason: 'ended',
+          callType,
         });
       }
     }

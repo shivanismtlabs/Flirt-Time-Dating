@@ -175,6 +175,10 @@ router.post('/:conversationId/read', validate(markReadSchema), markReadHandler);
 router.patch('/:conversationId/read', validate(markReadSchema), markReadHandler);
 router.post('/conversations/:conversationId/read', validate(markReadSchema), markReadHandler);
 router.patch('/conversations/:conversationId/read', validate(markReadSchema), markReadHandler);
+router.post('/:conversationId/seen', validate(markReadSchema), markReadHandler);
+router.patch('/:conversationId/seen', validate(markReadSchema), markReadHandler);
+router.post('/conversations/:conversationId/seen', validate(markReadSchema), markReadHandler);
+router.patch('/conversations/:conversationId/seen', validate(markReadSchema), markReadHandler);
 
 // 9b. POST, PATCH, PUT, GET /api/v1/chats/:conversationId/delivery - Acknowledge delivery receipts
 router.post('/:conversationId/delivery', validate(deliveryReceiptSchema), deliveryReceiptHandler);

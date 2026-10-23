@@ -710,5 +710,37 @@ describe('FlirtTime Agora Video Calling APIs', () => {
       });
       expect(log?.content).toBe('Cancelled voice call');
     });
+
+    it('keeps a normal call on audio when the app sends a voice alias', async () => {
+      const res = await request(app)
+        .post('/api/v1/calls/video/initiate')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({
+          calleeId: userCallee.id,
+          conversationId: conversation.id,
+          type: 'voice',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.message).toMatch(/audio call initiated/i);
+      expect(res.body.data.callType).toBe('audio');
+      expect(res.body.data.call.type).toBe('audio');
+      expect(res.body.data.session.type).toBe('audio');
+
+      const dbCall = await VideoCall.findByPk(res.body.data.callId);
+      expect(dbCall?.callType).toBe('audio');
+    });
+
+    it('starts an audio call from POST /calls when type is omitted, like OneVibe', async () => {
+      const res = await request(app)
+        .post('/api/v1/calls')
+        .set('Authorization', `Bearer ${tokenCaller}`)
+        .send({ conversationId: conversation.id });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.callType).toBe('audio');
+      expect(res.body.data.call.type).toBe('audio');
+      expect(res.body.data.session.type).toBe('audio');
+    });
   });
 });

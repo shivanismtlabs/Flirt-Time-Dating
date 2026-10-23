@@ -19,6 +19,12 @@ import { ValidatedSocketEnv, getValidatedSocketConfig } from '../config/env.vali
 const userSocketsMap = new Map<string, Set<string>>();
 
 /**
+ * Conversations a user currently has open (chat:conversation:viewing).
+ * Map<userId, Set<conversationId>>
+ */
+const viewingConversations = new Map<string, Set<string>>();
+
+/**
  * Tracks connection count per client IP.
  * Map<clientIp, count>
  */
@@ -58,6 +64,37 @@ export const isUserConnected = (userId: string): boolean => {
   return (userSocketsMap.get(userId)?.size ?? 0) > 0;
 };
 
+/** Mark whether this user currently has a conversation open on screen. */
+export const setConversationViewing = (
+  userId: string,
+  conversationId: string,
+  active: boolean
+): void => {
+  if (!userId || !conversationId) return;
+  let open = viewingConversations.get(userId);
+  if (!open) {
+    open = new Set<string>();
+    viewingConversations.set(userId, open);
+  }
+  if (active) {
+    open.add(conversationId);
+  } else {
+    open.delete(conversationId);
+    if (open.size === 0) viewingConversations.delete(userId);
+  }
+};
+
+export const isUserViewingConversation = (
+  userId: string,
+  conversationId: string
+): boolean => {
+  return viewingConversations.get(userId)?.has(conversationId) ?? false;
+};
+
+export const clearUserViewing = (userId: string): void => {
+  viewingConversations.delete(userId);
+};
+
 /**
  * Returns total number of active authenticated sockets tracked by lifecycle.
  */
@@ -75,6 +112,7 @@ export const getTotalActiveConnections = (): number => {
 export const clearLifecycleTracking = (): void => {
   userSocketsMap.clear();
   ipSocketsMap.clear();
+  viewingConversations.clear();
   activeLifecycleConfig = null;
 };
 
@@ -171,6 +209,7 @@ export const handleSocketConnection = (
       sockets.delete(socket.id);
       if (sockets.size === 0) {
         userSocketsMap.delete(user.userId);
+        viewingConversations.delete(user.userId);
       }
     }
 

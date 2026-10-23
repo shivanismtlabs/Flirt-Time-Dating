@@ -64,19 +64,36 @@ export const registerDeviceTokenSchema = z.object({
       fcmToken: z.string().trim().min(1).optional(),
       token: z.string().trim().min(1).optional(),
       device_token: z.string().trim().min(1).optional(),
+      fcm_token: z.string().trim().min(1).optional(),
+      registrationToken: z.string().trim().min(1).optional(),
+      registration_token: z.string().trim().min(1).optional(),
+      pushToken: z.string().trim().min(1).optional(),
+      push_token: z.string().trim().min(1).optional(),
       platform: z
         .string()
         .optional()
-        .transform((val) => (val ? val.toLowerCase() : 'android'))
-        .refine((val) => ['ios', 'android', 'web'].includes(val), {
-          message: 'Invalid platform. Allowed values: ios, android, web',
+        .transform((val) => {
+          const normalized = (val || 'android').toLowerCase().trim();
+          if (['ios', 'iphone', 'ipad', 'apple'].includes(normalized)) return 'ios';
+          if (normalized === 'web' || normalized === 'browser') return 'web';
+          return 'android';
         })
         .default('android'),
       deviceId: z.string().trim().max(255).optional().nullable(),
     })
     .refine(
       (data) =>
-        Boolean(data.deviceToken || data.fcmToken || data.token || data.device_token),
+        Boolean(
+          data.deviceToken ||
+            data.fcmToken ||
+            data.token ||
+            data.device_token ||
+            data.fcm_token ||
+            data.registrationToken ||
+            data.registration_token ||
+            data.pushToken ||
+            data.push_token
+        ),
       {
         message: 'deviceToken or fcmToken is required',
         path: ['deviceToken'],

@@ -8,7 +8,7 @@ import { AppSocket, AppSocketServer } from './socket.types';
 import { chatService, ChatServiceError } from '../services/chat.service';
 import { Conversation, UserBlock } from '../models';
 import { Op } from 'sequelize';
-import { getUserRoomName } from './socket.lifecycle';
+import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
 
 export const registerChatSocketHandlers = (
@@ -19,6 +19,11 @@ export const registerChatSocketHandlers = (
 
   // 1. Event: chat:send_message & message:send
   const handleSendMessage = async (payload: any, callback?: Function) => {
+    const caller = callback;
+    callback = (response: any) => {
+      socket.emit('chat:message:send:ack' as any, response);
+      if (typeof caller === 'function') caller(response);
+    };
     try {
       if (!payload || typeof payload !== 'object') {
         if (typeof callback === 'function') {
@@ -74,6 +79,9 @@ export const registerChatSocketHandlers = (
 
       let content =
         payload.content ||
+        payload.body ||
+        payload.text ||
+        payload.message ||
         payload.audioUrl ||
         payload.audio ||
         payload.voiceUrl ||
@@ -141,7 +149,7 @@ export const registerChatSocketHandlers = (
           content,
           type: msgType,
           messageType: msgType,
-          clientMessageId: payload.clientMessageId,
+          clientMessageId: payload.clientMessageId || payload.clientMsgId,
           clientMessageIds: payload.clientMessageIds,
           metadata: payload.metadata,
           images: normalizedImages.length > 0 ? normalizedImages : undefined,
@@ -209,7 +217,7 @@ export const registerChatSocketHandlers = (
           {
             content,
             messageType: msgType,
-            clientMessageId: payload.clientMessageId,
+            clientMessageId: payload.clientMessageId || payload.clientMsgId,
             replyToMessageId,
             metadata: payload.metadata,
             images: normalizedImages.length > 0 ? normalizedImages : undefined,
@@ -242,7 +250,7 @@ export const registerChatSocketHandlers = (
           content,
           type: msgType,
           messageType: msgType,
-          clientMessageId: payload.clientMessageId,
+          clientMessageId: payload.clientMessageId || payload.clientMsgId,
           metadata: payload.metadata,
           images: normalizedImages.length > 0 ? normalizedImages : undefined,
           imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
@@ -291,6 +299,7 @@ export const registerChatSocketHandlers = (
 
   socket.on('chat:send_message', handleSendMessage);
   socket.on('message:send' as any, handleSendMessage);
+  socket.on('chat:message:send' as any, handleSendMessage);
 
   // 1b. Event: chat:forward_message & message:forward
   const handleForwardMessage = async (payload: any, callback?: Function) => {
@@ -367,6 +376,9 @@ export const registerChatSocketHandlers = (
 
   socket.on('chat:mark_read', handleMarkRead);
   socket.on('message:read' as any, handleMarkRead);
+  socket.on('chat:message:seen' as any, handleMarkRead);
+  socket.on('chat:seen' as any, handleMarkRead);
+  socket.on('message:seen' as any, handleMarkRead);
 
   // 2b. Event: chat:message_delivered & message:delivered (Delivery Acknowledgement)
   const handleMessageDelivered = async (payload: any, callback?: Function) => {
@@ -418,6 +430,7 @@ export const registerChatSocketHandlers = (
 
   socket.on('chat:message_delivered', handleMessageDelivered);
   socket.on('message:delivered' as any, handleMessageDelivered);
+  socket.on('chat:message:delivered' as any, handleMessageDelivered);
 
   // 2c. Event: chat:delivered_sync & message:delivered_sync
   const handleDeliveredSync = async (payload: any, callback?: Function) => {
@@ -985,6 +998,52 @@ export const registerChatSocketHandlers = (
 
   socket.on('conversation:join' as any, handleJoinConversation);
   socket.on('chat:join' as any, handleJoinConversation);
+  socket.on('chat:conversation:join' as any, handleJoinConversation);
   socket.on('join_conversation' as any, handleJoinConversation);
+
+  // Focused thread: blue ticks while the chat screen is open.
+  socket.on('chat:conversation:viewing' as any, async (payload: any, callback?: Function) => {
+    try {
+      const conversationId =
+        (typeof payload === 'string' ? payload : null) ||
+        payload?.conversationId ||
+        payload?.conversation_id ||
+        payload?.chatId;
+      if (!conversationId) {
+        if (typeof callback === 'function') {
+          callback({ success: false, error: 'conversationId is required' });
+        }
+        return;
+      }
+
+      const active = !(payload && typeof payload === 'object' && (payload.active === false || payload.active === 0));
+      setConversationViewing(currentUserId, conversationId, active);
+
+      if (!active) {
+        if (typeof callback === 'function') {
+          callback({ success: true, data: { conversationId, active: false } });
+        }
+        return;
+      }
+
+      const lastReadMessageId =
+        payload?.lastReadMessageId ||
+        payload?.messageId ||
+        payload?.message_id;
+      const result = await chatService.markMessagesAsRead(
+        currentUserId,
+        conversationId,
+        lastReadMessageId
+      );
+      socket.emit('chat:message:seen:ack' as any, { success: true, data: result });
+      if (typeof callback === 'function') {
+        callback({ success: true, data: result });
+      }
+    } catch (err: any) {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: err?.message || 'Failed to mark conversation seen' });
+      }
+    }
+  });
 };
 

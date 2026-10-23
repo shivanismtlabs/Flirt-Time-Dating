@@ -9,6 +9,7 @@ import {
   getQuickMomentReactionsHandler,
   reactQuickMomentHandler,
   replyQuickMomentHandler,
+  getQuickMomentRepliesHandler,
   markViewedHandler,
   getViewersHandler,
   createQuickMomentHandler,
@@ -19,6 +20,7 @@ import {
   createQuickMomentSchema,
   reactQuickMomentSchema,
   replyQuickMomentSchema,
+  getQuickMomentRepliesSchema,
   getQuickMomentReactionsSchema,
   getTargetUserQuickMomentsSchema,
   getPresignedUploadUrlSchema,
@@ -78,6 +80,14 @@ router.post(
   '/:momentId/reply',
   validate(replyQuickMomentSchema),
   (req, res) => replyQuickMomentHandler(req, res)
+);
+
+// 8b. Reply list for the owner activity sheet
+// GET /api/v1/quick-moments/:momentId/replies?page=1&limit=30
+router.get(
+  '/:momentId/replies',
+  validate(getQuickMomentRepliesSchema),
+  (req, res) => getQuickMomentRepliesHandler(req, res)
 );
 
 // 9. Mark Quick Moment as viewed / seen (POST /api/v1/quick-moments/:momentId/view)

@@ -1,8 +1,9 @@
-import { Op } from 'sequelize';
+import { Op, UniqueConstraintError } from 'sequelize';
 import {
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  QuickMomentReply,
   User,
   Notification,
   UserBlock,
@@ -80,6 +81,19 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
   return { badgeText, topEmojis, total, breakdown };
 }
 
+function parseNotificationData(data: unknown): Record<string, any> | null {
+  if (!data) return null;
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof data === 'object') return data as Record<string, any>;
+  return null;
+}
+
 function mapQuickMomentReaction(r: any) {
   return {
     id: r.id,
@@ -111,6 +125,7 @@ export async function ensureQuickMomentTables(): Promise<void> {
     await QuickMoment.sync();
     await QuickMomentReaction.sync();
     await QuickMomentView.sync();
+    await QuickMomentReply.sync();
     quickMomentTablesReady = true;
   } catch (err: any) {
     console.warn('[QuickMoment Schema Warning]:', err.message);
@@ -898,6 +913,12 @@ export class QuickMomentService {
       throw new QuickMomentServiceError('This quick moment has expired', 410, 'MOMENT_EXPIRED');
     }
 
+    await QuickMomentReply.create({
+      quickMomentId: momentId,
+      userId: viewerUserId,
+      message,
+    });
+
     // Increment repliesCount
     await moment.increment('repliesCount', { by: 1 });
 
@@ -921,6 +942,145 @@ export class QuickMomentService {
       repliedToUserId: moment.userId,
       message,
       sentAt: new Date(),
+    };
+  }
+
+  /**
+   * Older replies were only written onto the in-app notification. Link those
+   * rows into quick_moment_replies so the activity sheet can show the text.
+   */
+  private async backfillRepliesFromNotifications(momentId: string): Promise<void> {
+    const notifications = await Notification.findAll({
+      where: {
+        entityId: momentId,
+        type: { [Op.in]: ['moment_reply', 'quick_moment_reply'] },
+      },
+      order: [['createdAt', 'ASC']],
+    });
+
+    for (const notification of notifications) {
+      const data = parseNotificationData(notification.data);
+      if (!data || String(data.quickMomentId || '') !== momentId) continue;
+
+      const message = typeof data.replyText === 'string' ? data.replyText : '';
+      if (!message || !notification.senderId) continue;
+
+      const linked = await QuickMomentReply.findOne({
+        where: { notificationId: notification.id },
+      });
+      if (linked) continue;
+
+      const orphan = await QuickMomentReply.findOne({
+        where: {
+          quickMomentId: momentId,
+          userId: notification.senderId,
+          message,
+          notificationId: { [Op.is]: null },
+        },
+        order: [['createdAt', 'ASC']],
+      });
+
+      if (orphan) {
+        orphan.notificationId = notification.id;
+        await orphan.save();
+        continue;
+      }
+
+      try {
+        await QuickMomentReply.create({
+          quickMomentId: momentId,
+          userId: notification.senderId,
+          message,
+          notificationId: notification.id,
+          createdAt: notification.createdAt,
+          updatedAt: notification.updatedAt || notification.createdAt,
+        });
+      } catch (err) {
+        if (err instanceof UniqueConstraintError) continue;
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * GET /api/v1/quick-moments/:momentId/replies
+   * Owner activity sheet: who replied, with the reply text.
+   */
+  public async getQuickMomentReplies(
+    viewerUserId: string,
+    momentId: string,
+    options: { page?: number; limit?: number } = {}
+  ) {
+    await ensureQuickMomentTables();
+    const moment = await QuickMoment.findByPk(momentId, {
+      attributes: ['id', 'userId', 'repliesCount'],
+    });
+
+    if (!moment) {
+      throw new QuickMomentServiceError('Quick moment not found', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const viewer = await User.findByPk(viewerUserId, { attributes: ['id', 'role'] });
+    const isOwner = moment.userId === viewerUserId;
+    const isAuthorized = isOwner || viewer?.role === 'admin';
+
+    if (!isAuthorized) {
+      throw new QuickMomentServiceError(
+        'Only the moment owner can view replies',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    await this.backfillRepliesFromNotifications(momentId);
+
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.max(1, Math.min(100, options.limit || 30));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await QuickMomentReply.findAndCountAll({
+      where: { quickMomentId: momentId },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const replies = rows.map((row: any) => ({
+      id: row.id,
+      message: row.message,
+      createdAt: row.createdAt,
+      timeAgo: row.createdAt ? formatTimeAgo(row.createdAt, false) : null,
+      user: row.user
+        ? {
+            id: row.user.id,
+            name: row.user.fullName || row.user.nickName || 'User',
+            avatar: row.user.profilePicture
+              ? formatThumbnailUrl(row.user.profilePicture, row.user.updatedAt)
+              : null,
+            city: row.user.city || null,
+            isVerified: !!row.user.isFaceVerified,
+            isSubscribed: !!row.user.isSubscribed,
+          }
+        : null,
+    }));
+
+    return {
+      momentId,
+      total: count,
+      replies,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
     };
   }
 
@@ -1163,6 +1323,7 @@ export class QuickMomentService {
         await QuickMoment.sync();
         await QuickMomentReaction.sync();
         await QuickMomentView.sync();
+        await QuickMomentReply.sync();
         quickMomentTablesReady = true;
 
         moment = await QuickMoment.create({

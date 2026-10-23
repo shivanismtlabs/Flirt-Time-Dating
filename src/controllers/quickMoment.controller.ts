@@ -204,6 +204,40 @@ export const replyQuickMomentHandler = async (
 };
 
 /**
+ * GET /api/v1/quick-moments/:momentId/replies?page=1&limit=30
+ * Owner activity sheet: reply text, sender, and time.
+ */
+export const getQuickMomentRepliesHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const momentId = req.params.momentId as string;
+    const { page, limit } = req.query as any;
+
+    const result = await quickMomentService.getQuickMomentReplies(viewerId, momentId, {
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return sendSuccess(res, 'Quick moment replies fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof QuickMomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching quick moment replies', 500);
+  }
+};
+
+/**
  * POST /api/v1/quick-moments/:momentId/view
  * Mark a quick moment as seen / viewed
  */

@@ -24,6 +24,7 @@ import { Notification } from './notification.model';
 import { QuickMoment } from './quickMoment.model';
 import { QuickMomentReaction } from './quickMomentReaction.model';
 import { QuickMomentView } from './quickMomentView.model';
+import { QuickMomentReply } from './quickMomentReply.model';
 import {
   MomentGift,
   MOMENT_GIFTS_CATALOG,
@@ -629,6 +630,23 @@ QuickMomentView.belongsTo(User, {
   as: 'viewer',
 });
 
+// QuickMoment <-> QuickMomentReply associations
+QuickMoment.hasMany(QuickMomentReply, {
+  foreignKey: 'quickMomentId',
+  as: 'replies',
+  onDelete: 'CASCADE',
+});
+
+QuickMomentReply.belongsTo(QuickMoment, {
+  foreignKey: 'quickMomentId',
+  as: 'quickMoment',
+});
+
+QuickMomentReply.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 // User <-> DeepLink associations
 User.hasMany(DeepLink, {
   foreignKey: 'creatorId',
@@ -849,6 +867,7 @@ export {
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  QuickMomentReply,
   MomentGift,
   MOMENT_GIFTS_CATALOG,
   GiftCatalogItem,
@@ -1304,6 +1323,7 @@ export const initDb = async (force = false): Promise<void> => {
           await QuickMoment.sync();
           await QuickMomentReaction.sync();
           await QuickMomentView.sync();
+          await QuickMomentReply.sync();
           await MomentGift.sync();
           await MomentCommentLike.sync();
         } catch (_qmSyncErr: any) {

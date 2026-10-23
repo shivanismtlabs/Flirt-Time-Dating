@@ -58,6 +58,18 @@ export const getQuickMomentReactionsSchema = z.object({
   }).optional(),
 });
 
+export const getQuickMomentRepliesSchema = z.object({
+  params: z.object({
+    momentId: z.string().uuid('Invalid quick moment ID'),
+  }),
+  query: z
+    .object({
+      page: z.string().regex(/^\d+$/).optional(),
+      limit: z.string().regex(/^\d+$/).optional(),
+    })
+    .optional(),
+});
+
 export const getTargetUserQuickMomentsSchema = z.object({
   params: z.object({
     userId: z.string().min(1),

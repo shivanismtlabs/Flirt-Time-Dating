@@ -5,7 +5,9 @@ import {
   User,
   QuickMoment,
   QuickMomentReaction,
+  QuickMomentReply,
   QuickMomentView,
+  Notification,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
@@ -35,6 +37,7 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
   });
 
   beforeEach(async () => {
+    await QuickMomentReply.destroy({ where: {} });
     await QuickMomentView.destroy({ where: {} });
     await QuickMomentReaction.destroy({ where: {} });
     await QuickMoment.destroy({ where: {} });
@@ -410,6 +413,94 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
 
       const updated = await QuickMoment.findByPk(storyId);
       expect(updated?.repliesCount).toBe(1);
+    });
+
+    it('should list replies for the owner with sender, message, and pagination', async () => {
+      await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/reply`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ message: 'Looks amazing Cindy!' });
+
+      await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/reply`)
+        .set('Authorization', `Bearer ${thirdToken}`)
+        .send({ message: 'Love this story' });
+
+      const res = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/replies?page=1&limit=30`)
+        .set('Authorization', `Bearer ${cindyToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.header['cache-control']).toContain('no-cache');
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.momentId).toBe(storyId);
+      expect(res.body.data.total).toBe(2);
+      expect(res.body.data.replies).toHaveLength(2);
+      expect(res.body.data.pagination).toEqual({
+        page: 1,
+        limit: 30,
+        total: 2,
+        totalPages: 1,
+      });
+
+      const latest = res.body.data.replies[0];
+      expect(latest.message).toBe('Love this story');
+      expect(latest.createdAt).toBeDefined();
+      expect(latest.timeAgo).toBeDefined();
+      expect(latest.user.id).toBe(thirdUser.id);
+      expect(latest.user.name).toBe('Sam Taylor');
+      expect(latest.user.avatar).toBeTruthy();
+      expect(latest.replyId).toBeUndefined();
+      expect(latest.text).toBeUndefined();
+
+      const pageRes = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/replies?page=1&limit=1`)
+        .set('Authorization', `Bearer ${cindyToken}`);
+
+      expect(pageRes.status).toBe(200);
+      expect(pageRes.body.data.replies).toHaveLength(1);
+      expect(pageRes.body.data.pagination.total).toBe(2);
+      expect(pageRes.body.data.pagination.totalPages).toBe(2);
+    });
+
+    it('should reject a non-owner from listing replies', async () => {
+      const res = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/replies`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      expect(res.status).toBe(403);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/only the moment owner can view replies/i);
+    });
+
+    it('should surface reply text that was previously stored only on the notification', async () => {
+      await Notification.create({
+        recipientId: cindyUser.id,
+        senderId: alexUser.id,
+        type: 'moment_reply',
+        title: 'Reply to your Quick Moment',
+        body: 'Alex Rivers: "Saved from the notification"',
+        entityId: storyId,
+        data: {
+          quickMomentId: storyId,
+          momentId: storyId,
+          replyText: 'Saved from the notification',
+          notify_type: 'moment_reply',
+        },
+        isRead: false,
+      });
+
+      await QuickMoment.update({ repliesCount: 1 }, { where: { id: storyId } });
+
+      const res = await request(app)
+        .get(`/api/v1/quick-moments/${storyId}/replies`)
+        .set('Authorization', `Bearer ${cindyToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.total).toBe(1);
+      expect(res.body.data.replies[0].message).toBe('Saved from the notification');
+      expect(res.body.data.replies[0].user.id).toBe(alexUser.id);
+      expect(res.body.data.replies[0].user.name).toBe('Alex Rivers');
     });
 
     it('should mark story as viewed and return viewers list', async () => {

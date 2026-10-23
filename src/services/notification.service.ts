@@ -78,8 +78,14 @@ export const resolveNotifyType = (rawType: string): string => {
     t === 'moment_comment' ||
     t === 'moment_comment_reply' ||
     t === 'moment_comment_like' ||
-    t === 'moment_gift'
+    t === 'moment_gift' ||
+    t === 'moment_reaction' ||
+    t === 'quick_moment_reaction' ||
+    t === 'moment_reply' ||
+    t === 'quick_moment_reply'
   ) {
+    if (t === 'quick_moment_reaction') return 'moment_reaction';
+    if (t === 'quick_moment_reply') return 'moment_reply';
     return t;
   }
   if (t === 'comment_like') return 'moment_comment_like';
@@ -249,11 +255,12 @@ export class NotificationService {
       return Boolean(allowed);
     }
 
-    // Like, comments, reactions, and moment gifts - NOT calls
+    // Like, comments, reactions, quick-moment replies, and moment gifts - NOT calls
     if (
       normalizedType.includes('like') ||
       normalizedType.includes('comment') ||
       normalizedType.includes('reaction') ||
+      normalizedType.includes('reply') ||
       normalizedType.includes('compliment') ||
       normalizedType.includes('gift')
     ) {
@@ -402,15 +409,20 @@ export class NotificationService {
     const resolvedNotifyType = resolveNotifyType(input.data?.notify_type || type);
     const actorUserId = String(input.data?.user_id || senderId || '');
 
-    // 1. Idempotency / deduplication check (only when explicit idempotencyKey is provided)
+    // 1. Idempotency / deduplication check (only when explicit idempotencyKey is provided).
+    // The key is stored on the payload, not as entityId, so a retried gift does not
+    // insert a second in-app row and a second push.
     if (idempotencyKey) {
-      const existing = await Notification.findOne({
+      const candidates = await Notification.findAll({
         where: {
           recipientId,
           type: resolvedNotifyType,
-          entityId: idempotencyKey,
+          ...(entityId ? { entityId } : {}),
         },
+        order: [['createdAt', 'DESC']],
+        limit: 25,
       });
+      const existing = candidates.find((row) => row.data?.idempotencyKey === idempotencyKey);
 
       if (existing) {
         return {
@@ -422,7 +434,8 @@ export class NotificationService {
       }
     }
 
-    const momentId = String(input.data?.momentId || '').trim();
+    const momentId = String(input.data?.momentId || input.data?.quickMomentId || '').trim();
+    const quickMomentId = String(input.data?.quickMomentId || '').trim();
 
     const payloadData: Record<string, any> = {
       ...(input.data || {}),
@@ -544,6 +557,9 @@ export class NotificationService {
       if (momentId) {
         fcmData.momentId = momentId;
       }
+      if (quickMomentId) {
+        fcmData.quickMomentId = quickMomentId;
+      }
       if (silentPush) {
         fcmData.silent = 'true';
       }
@@ -551,8 +567,11 @@ export class NotificationService {
       const apnsCustom: Record<string, string> = {
         notify_type: resolvedNotifyType,
         type: resolvedNotifyType,
+        navType: String(navigation?.type || resolvedNotifyType),
+        navTargetId: String(navigation?.targetId || entityId || actorUserId || ''),
         ...(actorUserId ? { user_id: actorUserId } : {}),
         ...(momentId ? { momentId } : {}),
+        ...(quickMomentId ? { quickMomentId } : {}),
       };
 
       const message: MulticastMessage = {
@@ -974,6 +993,7 @@ export class NotificationService {
       body: `${input.senderName} sent you ${qtyLabel}${input.giftName} ${icon} on your moment!`,
       senderId: input.senderId,
       entityId: input.momentId,
+      idempotencyKey: input.giftId ? `moment_gift_${input.giftId}` : undefined,
       navigation: {
         type: 'moment',
         targetId: input.momentId,
@@ -1108,6 +1128,7 @@ export class NotificationService {
               as: 'photos',
               where: { status: 'approved' },
               required: false,
+              separate: true,
             },
           ],
         },
@@ -1119,8 +1140,18 @@ export class NotificationService {
       limit: limit + 1,
     });
 
-    const hasMore = rows.length > limit;
-    const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
+    // A sender with several approved photos used to multiply the parent row
+    // in the join, so one gift (or any other event) showed up twice.
+    const uniqueRows: Notification[] = [];
+    const seenIds = new Set<string>();
+    for (const row of rows) {
+      if (seenIds.has(row.id)) continue;
+      seenIds.add(row.id);
+      uniqueRows.push(row);
+    }
+
+    const hasMore = uniqueRows.length > limit;
+    const itemsToReturn = hasMore ? uniqueRows.slice(0, limit) : uniqueRows;
 
     // Transform into standard DTOs
     const dtos: NotificationItemDTO[] = itemsToReturn.map((n) => {
@@ -1149,7 +1180,8 @@ export class NotificationService {
         : null;
 
       const resolvedType = resolveNotifyType(n.type);
-      const momentId = String(n.data?.momentId || '').trim();
+      const momentId = String(n.data?.momentId || n.data?.quickMomentId || '').trim();
+      const quickMomentId = String(n.data?.quickMomentId || '').trim();
 
       // Safe navigation payload
       const nav = n.data?.navigation || {
@@ -1172,6 +1204,7 @@ export class NotificationService {
           user_id: actorUserId,
           ...(n.data || {}),
           ...(momentId ? { momentId } : {}),
+          ...(quickMomentId ? { quickMomentId } : {}),
         },
         navigation: {
           type: nav.type || resolvedType,

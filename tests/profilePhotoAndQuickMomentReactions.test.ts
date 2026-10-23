@@ -10,10 +10,12 @@ import {
   Notification,
   Interest,
   UserInterest,
+  UserDevice,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import { s3Service } from '../src/services/s3.service';
+import * as firebaseConfig from '../src/config/firebase';
 
 describe('Profile Photo Updates and Quick Moment Reactions', () => {
   let userA: User;
@@ -44,6 +46,7 @@ describe('Profile Photo Updates and Quick Moment Reactions', () => {
 
   beforeEach(async () => {
     await Notification.destroy({ where: {} });
+    await UserDevice.destroy({ where: {} });
     await QuickMomentView.destroy({ where: {} });
     await QuickMomentReaction.destroy({ where: {} });
     await QuickMoment.destroy({ where: {} });
@@ -296,6 +299,50 @@ describe('Profile Photo Updates and Quick Moment Reactions', () => {
       expect(notifItem).toBeDefined();
       expect(notifItem.sender.id).toBe(userB.id);
       expect(notifItem.sender.profilePhotoUrl).toContain('v=');
+      expect(notifItem.data.quickMomentId).toBe(aliceMomentId);
+      expect(notifItem.data.momentId).toBe(aliceMomentId);
+      expect(notifItem.data.notify_type).toBe('moment_reaction');
+      expect(notifItem.navigation).toEqual({
+        type: 'quick_moment',
+        targetId: aliceMomentId,
+      });
+    });
+
+    it('should push a quick moment reaction to the author device', async () => {
+      const mockSendEachForMulticast = jest.fn().mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        responses: [{ success: true }],
+      });
+      jest.spyOn(firebaseConfig, 'getFirebaseMessaging').mockReturnValue({
+        sendEachForMulticast: mockSendEachForMulticast,
+      } as any);
+
+      await UserDevice.create({
+        userId: userA.id,
+        deviceToken: 'fcm_quick_moment_alice',
+        platform: 'ios',
+        isActive: true,
+      });
+
+      const reactRes = await request(app)
+        .post(`/api/v1/quick-moments/${aliceMomentId}/react`)
+        .set('Authorization', `Bearer ${userTokenB}`)
+        .send({ emoji: '❤️' });
+
+      expect(reactRes.status).toBe(200);
+      expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
+      const message = mockSendEachForMulticast.mock.calls[0][0];
+      expect(message.notification.body).toContain('reacted ❤️');
+      expect(message.data.notify_type).toBe('moment_reaction');
+      expect(message.data.quickMomentId).toBe(aliceMomentId);
+      expect(message.data.momentId).toBe(aliceMomentId);
+      expect(message.data.navType).toBe('quick_moment');
+      expect(message.apns.payload.notify_type).toBe('moment_reaction');
+      expect(message.apns.payload.quickMomentId).toBe(aliceMomentId);
+      expect(message.apns.payload.navType).toBe('quick_moment');
+
+      jest.restoreAllMocks();
     });
 
     it('should remove notification when reaction is toggled off (avoid stale reaction indicator/notification)', async () => {

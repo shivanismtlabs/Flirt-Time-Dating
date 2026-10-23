@@ -236,6 +236,23 @@ export const dedupeChatImages = <T extends { key?: string; imageUrl?: string; ur
  * does not walk a second list that was copied from the sender (`isMine: true`)
  * and then hide the gallery.
  */
+/** Contact card fields the chat screen reads beside metadata. */
+export const contactFieldsFromMeta = (
+  messageType: string | null | undefined,
+  meta: any
+): { contact?: { name: string | null; phoneNumber: string | null; email: string | null }; contactName?: string | null; phoneNumber?: string | null } => {
+  if (messageType !== 'contact' || !meta || typeof meta !== 'object') return {};
+  const name = typeof meta.name === 'string' ? meta.name : null;
+  const phoneNumber = typeof meta.phoneNumber === 'string' ? meta.phoneNumber : null;
+  const email = typeof meta.email === 'string' ? meta.email : null;
+  if (!name && !phoneNumber && !email) return {};
+  return {
+    contact: { name, phoneNumber, email },
+    contactName: name,
+    phoneNumber,
+  };
+};
+
 export const buildViewerChatMessage = (
   dto: ChatMessageDTO,
   isMine: boolean,
@@ -254,6 +271,7 @@ export const buildViewerChatMessage = (
   const medias = toChatMedias(images);
   return {
     ...rest,
+    ...contactFieldsFromMeta(dto.messageType, dto.metadata),
     isMine,
     isSender: isMine,
     images,
@@ -283,6 +301,10 @@ export interface LastMessageDTO {
   senderId?: string;
   senderName?: string | null;
   messageType?: string;
+  isMine?: boolean;
+  contact?: { name: string | null; phoneNumber: string | null; email: string | null };
+  contactName?: string | null;
+  phoneNumber?: string | null;
 }
 
 export interface ChatListItemDTO {
@@ -368,6 +390,9 @@ export interface ChatMessageDTO {
   hasReacted?: boolean;
   totalCount?: number;
   results?: any[];
+  contact?: { name: string | null; phoneNumber: string | null; email: string | null };
+  contactName?: string | null;
+  phoneNumber?: string | null;
 }
 
 export interface MessageReactionDTO {
@@ -541,12 +566,12 @@ export class ChatService {
    */
   private async loadLatestMessageSenders(
     conversationIds: string[]
-  ): Promise<Map<string, { senderId: string; messageType: string }>> {
-    const latest = new Map<string, { senderId: string; messageType: string }>();
+  ): Promise<Map<string, { senderId: string; messageType: string; metadata: any }>> {
+    const latest = new Map<string, { senderId: string; messageType: string; metadata: any }>();
     if (conversationIds.length === 0) return latest;
 
     const rows = await ChatMessage.findAll({
-      attributes: ['conversationId', 'senderId', 'messageType', 'createdAt', 'id'],
+      attributes: ['conversationId', 'senderId', 'messageType', 'metadata', 'createdAt', 'id'],
       where: { conversationId: { [Op.in]: conversationIds } },
       order: [
         ['createdAt', 'DESC'],
@@ -556,9 +581,18 @@ export class ChatService {
 
     for (const row of rows) {
       if (!latest.has(row.conversationId)) {
+        let metadata: any = null;
+        if (row.metadata) {
+          try {
+            metadata = JSON.parse(row.metadata);
+          } catch {
+            metadata = null;
+          }
+        }
         latest.set(row.conversationId, {
           senderId: row.senderId,
           messageType: row.messageType || 'text',
+          metadata,
         });
       }
     }
@@ -841,7 +875,9 @@ export class ChatService {
             sentAt: conv.lastMessageAt || conv.updatedAt,
             senderId: latest?.senderId,
             senderName,
+            isMine: !!senderIsViewer,
             messageType: latest?.messageType || 'text',
+            ...contactFieldsFromMeta(latest?.messageType, latest?.metadata),
           }
           : null,
         unreadCount,
@@ -1382,6 +1418,7 @@ export class ChatService {
         content: msg.content,
         messageType: (msg.messageType as any) || 'text',
         metadata: parsedMetadata,
+        ...contactFieldsFromMeta(msg.messageType, parsedMetadata),
         status,
         receiptStatus: status,
         isDelivered: !!msg.isDelivered,
@@ -1616,11 +1653,8 @@ export class ChatService {
       }
     }
 
-    if (!conversation || conversation.isDeletedForEveryone) {
-      throw new ChatServiceError(
-        'Conversation not found or has been deleted',
-        conversation?.isDeletedForEveryone ? 400 : 404
-      );
+    if (!conversation) {
+      throw new ChatServiceError('Conversation not found or has been deleted', 404);
     }
 
     conversationId = conversation.id;
@@ -1628,9 +1662,15 @@ export class ChatService {
     const normSenderId = String(senderId || '').trim().toLowerCase();
     const normUser1Id = String(conversation.user1Id || '').trim().toLowerCase();
     const normUser2Id = String(conversation.user2Id || '').trim().toLowerCase();
+    const isParticipant = normUser1Id === normSenderId || normUser2Id === normSenderId;
 
-    if (normUser1Id !== normSenderId && normUser2Id !== normSenderId) {
-      throw new ChatServiceError('You are not a participant in this conversation', 403);
+    if (!isParticipant) {
+      throw new ChatServiceError(
+        conversation.isDeletedForEveryone
+          ? 'Conversation not found or has been deleted'
+          : 'You are not a participant in this conversation',
+        conversation.isDeletedForEveryone ? 400 : 403
+      );
     }
 
     const recipientId = getOtherParticipantId(conversation, senderId);
@@ -1651,6 +1691,15 @@ export class ChatService {
         403,
         'CHAT_FORBIDDEN'
       );
+    }
+
+    // Delete-for-everyone / nope leaves the row in place. A new send from a
+    // participant (text or a multi-image burst) reopens that same thread.
+    if (conversation.isDeletedForEveryone) {
+      conversation.isDeletedForEveryone = false;
+      conversation.deletedForEveryoneAt = null;
+      conversation.deletedForEveryoneBy = null;
+      await conversation.save();
     }
 
     // Idempotent retry / deduplication check by clientMessageId
@@ -2654,6 +2703,17 @@ export class ChatService {
       buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
     );
 
+    const liveStatus = await this.applyLiveReceipts(
+      senderId,
+      recipientId,
+      conversationId,
+      allDtos.map((d) => d.id)
+    );
+    if (liveStatus !== 'sent') {
+      const at = new Date().toISOString();
+      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
+    }
+
     // 9. Real-Time Delivery via Socket.IO for every created message
     try {
       const io = getSocketServer();
@@ -2755,7 +2815,7 @@ export class ChatService {
       imageUrls: viewerUrls || senderMessages[0].imageUrls,
       mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
       totalCount: allDtos.length,
-      results: senderMessages.map((d) => ({ message: d, status: 'sent' })),
+      results: senderMessages.map((d) => ({ message: d, status: d.status || 'sent' })),
     };
     if (uploadedAudios.length > 0 && !primaryDto.audioUrl) {
       primaryDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -2765,23 +2825,6 @@ export class ChatService {
     }
 
     this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
-    const liveStatus = await this.applyLiveReceipts(
-      senderId,
-      recipientId,
-      conversationId,
-      allDtos.map((d) => d.id)
-    );
-    if (liveStatus !== 'sent') {
-      const at = new Date().toISOString();
-      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
-      this.applyReceiptStatus(primaryDto, liveStatus, at);
-      if (Array.isArray(primaryDto.results)) {
-        for (const row of primaryDto.results as Array<{ status?: string; message?: any }>) {
-          row.status = liveStatus;
-          if (row.message) this.applyReceiptStatus(row.message, liveStatus, at);
-        }
-      }
-    }
     return primaryDto;
   }
 
@@ -2801,7 +2844,7 @@ export class ChatService {
 
     if (data.conversationId && (!data.recipientIds || data.recipientIds.length === 0) && !(data as any).recipientId) {
       const conv = await Conversation.findByPk(data.conversationId);
-      if (!conv || conv.isDeletedForEveryone) {
+      if (!conv) {
         throw new ChatServiceError('Conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
       }
       if (conv.user1Id !== senderId && conv.user2Id !== senderId) {
@@ -3826,6 +3869,17 @@ export class ChatService {
           buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
         );
 
+        const liveStatus = await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id)
+        );
+        if (liveStatus !== 'sent') {
+          const at = new Date().toISOString();
+          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
+        }
+
         // Real-Time Delivery via Socket.IO
         try {
           const io = getSocketServer();
@@ -3928,7 +3982,7 @@ export class ChatService {
           imageUrls: viewerUrls || senderViews[0].imageUrls,
           mediaUrls: viewerUrls || senderViews[0].mediaUrls,
           totalCount: recipientDtos.length,
-          results: senderViews.map((d) => ({ message: d, status: 'sent' })),
+          results: senderViews.map((d) => ({ message: d, status: d.status || 'sent' })),
         };
         if (uploadedAudios.length > 0 && !primaryRecipientDto.audioUrl) {
           primaryRecipientDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -3936,31 +3990,6 @@ export class ChatService {
           primaryRecipientDto.duration = uploadedAudios[0].duration;
           primaryRecipientDto.durationMs = uploadedAudios[0].durationMs;
         }
-
-        const liveStatus = await this.applyLiveReceipts(
-          senderId,
-          recipientId,
-          conversationId,
-          recipientDtos.map((d) => d.id)
-        );
-        if (liveStatus !== 'sent') {
-          const at = new Date().toISOString();
-          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
-          this.applyReceiptStatus(primaryRecipientDto, liveStatus, at);
-          if (Array.isArray(primaryRecipientDto.results)) {
-            for (const row of primaryRecipientDto.results as Array<{ status?: string; message?: any }>) {
-              row.status = liveStatus;
-              if (row.message) this.applyReceiptStatus(row.message, liveStatus, at);
-            }
-          }
-        }
-
-        results.push({
-          recipientId,
-          conversationId,
-          status: 'success',
-          message: primaryRecipientDto,
-        });
 
         const preview =
           lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
@@ -3970,6 +3999,14 @@ export class ChatService {
             : uploadedAudios.length > 0
             ? 'Sent a voice message 🎤'
             : 'Sent you a message';
+
+        results.push({
+          recipientId,
+          conversationId,
+          status: 'success',
+          message: primaryRecipientDto,
+        });
+
         this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
       } catch (err: any) {
         await t.rollback();
@@ -4010,7 +4047,7 @@ export class ChatService {
     const ids = input.messageIds.filter(Boolean);
     const cursorId = input.cursorId || ids[ids.length - 1] || null;
     const atIso = input.at.toISOString();
-    const status = input.kind === 'delivered' ? 'delivered' : 'read';
+    const status = input.kind === 'delivered' ? 'delivered' : 'seen';
 
     const messages = ids.map((id) => ({
       id,
@@ -4056,7 +4093,7 @@ export class ChatService {
             markedCount: input.markedCount ?? ids.length,
             readAt: atIso,
             deliveredAt: atIso,
-            status: 'read' as const,
+            status: 'seen' as const,
             receiptStatus: 'read' as const,
             isDelivered: true,
             isRead: true,
@@ -4122,14 +4159,39 @@ export class ChatService {
     status: 'delivered' | 'read',
     at: string
   ): void {
-    dto.status = status;
-    dto.receiptStatus = status;
+    dto.status = status === 'read' ? 'seen' : 'delivered';
+    dto.receiptStatus = status === 'read' ? 'read' : 'delivered';
     dto.isDelivered = true;
     if (!dto.deliveredAt) dto.deliveredAt = at;
     if (status === 'read') {
       dto.isRead = true;
       dto.readAt = at;
+      (dto as { seen?: boolean }).seen = true;
     }
+  }
+
+  /**
+   * Every incoming message still on one tick. A later delivery must lift the older bubbles too.
+   */
+  private async pendingReceiptIds(
+    recipientId: string,
+    conversationId: string,
+    messageIds: string[]
+  ): Promise<string[]> {
+    const rows = await ChatMessage.findAll({
+      where: {
+        conversationId,
+        recipientId,
+        isRead: false,
+      },
+      attributes: ['id'],
+      order: [['createdAt', 'ASC']],
+    });
+    const ids = rows.map((row) => row.id);
+    for (const id of messageIds) {
+      if (id && !ids.includes(id)) ids.push(id);
+    }
+    return ids;
   }
 
   /**
@@ -4147,19 +4209,29 @@ export class ChatService {
       return 'sent';
     }
     try {
-      const latestId = messageIds[messageIds.length - 1];
+      const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
+      const latestId = ids[ids.length - 1];
       if (isUserViewingConversation(recipientId, conversationId)) {
         const read = await this.markMessagesAsRead(recipientId, conversationId, latestId);
         return read.markedCount > 0 ? 'read' : 'sent';
       }
       if (isUserConnected(recipientId)) {
-        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, messageIds);
+        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, ids);
         return delivery.deliveredCount > 0 ? 'delivered' : 'sent';
       }
     } catch {
       // receipt side effects must not fail the send
     }
     return 'sent';
+  }
+
+  public async syncOutgoingReceipts(
+    senderId: string,
+    recipientId: string,
+    conversationId: string,
+    messageIds: string[]
+  ): Promise<'sent' | 'delivered' | 'read'> {
+    return this.applyLiveReceipts(senderId, recipientId, conversationId, messageIds);
   }
 
   /**
@@ -4939,6 +5011,27 @@ export class ChatService {
     const sentAt = conversation.lastMessageAt
       ? new Date(conversation.lastMessageAt).toISOString()
       : null;
+    const latestMessage = await ChatMessage.findOne({
+      where: { conversationId },
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+      attributes: ['id', 'senderId', 'messageType', 'content', 'metadata', 'createdAt'],
+    });
+    let latestMeta: any = null;
+    if (latestMessage?.metadata) {
+      try {
+        latestMeta = JSON.parse(latestMessage.metadata);
+      } catch {
+        latestMeta = null;
+      }
+    }
+    const latestType = latestMessage?.messageType || 'text';
+    const viewerSentIt =
+      latestMessage &&
+      String(latestMessage.senderId || '').trim().toLowerCase() ===
+        String(viewerId || '').trim().toLowerCase();
     const displayName = resolveChatDisplayName(otherUser);
     const photo = otherUser.profilePicture ? formatMediaUrl(otherUser.profilePicture) : null;
     const pinnedAt = pin?.createdAt ? new Date(pin.createdAt).toISOString() : null;
@@ -4948,10 +5041,14 @@ export class ChatService {
       id: conversation.id,
       lastMessage: conversation.lastMessage
         ? {
+            id: latestMessage?.id,
             content: conversation.lastMessage,
-            messageType: 'text',
+            messageType: latestType,
+            senderId: latestMessage?.senderId || null,
+            isMine: !!viewerSentIt,
             sentAt: sentAt || new Date(conversation.updatedAt).toISOString(),
             createdAt: sentAt || new Date(conversation.updatedAt).toISOString(),
+            ...contactFieldsFromMeta(latestType, latestMeta),
           }
         : null,
       lastMessageText: conversation.lastMessage || null,
@@ -6343,6 +6440,7 @@ export class ChatService {
         lastMessageAt: conv.lastMessageAt ? conv.lastMessageAt.toISOString() : null,
         lastMessageSenderId: latest?.senderId || null,
         lastMessageSenderName: senderName,
+        messageType: (latest?.messageType || 'text') as ChatMessageType,
         unreadCount,
         isMatched: Boolean(match),
         isPinned: pinnedConversationIdSet.has(conv.id),

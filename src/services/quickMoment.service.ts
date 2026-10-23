@@ -96,6 +96,79 @@ export async function ensureQuickMomentTables(): Promise<void> {
 
 export class QuickMomentService {
   /**
+   * Persists the in-app row and sends the FCM push.
+   * Direct Notification.create only wrote the row, so the device never received a push.
+   */
+  private async dispatchQuickMomentNotification(
+    recipientId: string,
+    senderId: string,
+    momentId: string,
+    input: {
+      type: 'moment_reaction' | 'moment_reply';
+      title: string;
+      body: string;
+      emoji?: string;
+      replyText?: string;
+      replaceExisting?: boolean;
+    }
+  ): Promise<void> {
+    if (!recipientId || recipientId === senderId) return;
+
+    try {
+      if (input.replaceExisting) {
+        await Notification.destroy({
+          where: {
+            recipientId,
+            senderId,
+            entityId: momentId,
+            type: { [Op.in]: ['moment_reaction', 'quick_moment_reaction'] },
+          },
+        });
+      }
+
+      const { notificationService } = await import('./notification.service');
+      await notificationService.dispatchNotification(recipientId, {
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        senderId,
+        entityId: momentId,
+        navigation: { type: 'quick_moment', targetId: momentId },
+        data: {
+          quickMomentId: momentId,
+          momentId,
+          user_id: senderId,
+          notify_type: input.type,
+          ...(input.emoji ? { emoji: input.emoji } : {}),
+          ...(input.replyText ? { replyText: input.replyText } : {}),
+        },
+      });
+    } catch (notifErr: any) {
+      console.warn('[Quick Moment Notif Warning]:', notifErr.message);
+    }
+  }
+
+  private async notifyQuickMomentReaction(
+    recipientId: string,
+    senderId: string,
+    momentId: string,
+    emoji: string
+  ): Promise<void> {
+    const reactor = await User.findByPk(senderId, {
+      attributes: ['id', 'fullName', 'nickName'],
+    });
+    const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
+
+    await this.dispatchQuickMomentNotification(recipientId, senderId, momentId, {
+      type: 'moment_reaction',
+      title: 'New Quick Moment Reaction',
+      body: `${reactorName} reacted ${emoji} to your quick moment`,
+      emoji,
+      replaceExisting: true,
+    });
+  }
+
+  /**
    * 1. GET TRAY: Horizontal Stories Bar (Screen / Image 1)
    * Returns authenticated user's own status bubble ("Add new" or their active stories badge)
    * plus other users' active stories with unread state, preview, time, and reaction badges.
@@ -166,6 +239,8 @@ export class QuickMomentService {
           : null,
         stories: myMoments.map((m) => {
           const cleanKey = m.mediaUrl ? extractS3Key(m.mediaUrl) : null;
+          const storyReactions = m.reactions || [];
+          const storySummary = buildReactionBadge(storyReactions);
           return {
             id: m.id,
             type: m.type,
@@ -175,6 +250,15 @@ export class QuickMomentService {
             mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
             text: m.text,
             createdAt: m.createdAt,
+            reactionsCount: storySummary.total,
+            topEmojis: storySummary.topEmojis,
+            badgeText: storySummary.badgeText,
+            reactionsBreakdown: storySummary.breakdown,
+            reactions: storyReactions.map((r: any) => ({
+              emoji: r.emoji,
+              reaction: r.emoji,
+              userId: r.userId,
+            })),
           };
         }),
       };
@@ -517,10 +601,20 @@ export class QuickMomentService {
         expiresAt: m.expiresAt,
         isViewed,
         myReaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
+        viewerReaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
+        reaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
         availableEmojis: ALLOWED_EMOJIS,
         replyPlaceholder: `Reply to ${authorDisplayName}...`,
         reactionsCount: reactionSummary.total,
+        topEmojis: reactionSummary.topEmojis,
+        reactionsBreakdown: reactionSummary.breakdown,
         badgeText: reactionSummary.badgeText,
+        reactions: (m.reactions || []).map((r: any) => ({
+          emoji: r.emoji,
+          reaction: r.emoji,
+          userId: r.userId,
+          isMine: r.userId === viewerUserId,
+        })),
       };
     });
 
@@ -677,8 +771,8 @@ export class QuickMomentService {
               where: {
                 recipientId: moment.userId,
                 senderId: viewerUserId,
-                type: 'moment_reaction',
                 entityId: momentId,
+                type: { [Op.in]: ['moment_reaction', 'quick_moment_reaction'] },
               },
             });
           } catch (notifErr: any) {
@@ -691,51 +785,8 @@ export class QuickMomentService {
         await existingReaction.save();
         action = 'updated';
 
-        // Update existing notification or create if not present without duplicating
         if (moment.userId !== viewerUserId) {
-          try {
-            const reactor = await User.findByPk(viewerUserId, {
-              attributes: ['id', 'fullName', 'nickName'],
-            });
-            const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
-
-            const existingNotif = await Notification.findOne({
-              where: {
-                recipientId: moment.userId,
-                senderId: viewerUserId,
-                type: 'moment_reaction',
-                entityId: momentId,
-              },
-            });
-
-            if (existingNotif) {
-              existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
-              existingNotif.data = {
-                quickMomentId: momentId,
-                emoji,
-                navigation: { type: 'quick_moment', targetId: momentId },
-              };
-              existingNotif.isRead = false;
-              await existingNotif.save();
-            } else {
-              await Notification.create({
-                recipientId: moment.userId,
-                senderId: viewerUserId,
-                type: 'moment_reaction',
-                title: 'New Quick Moment Reaction',
-                body: `${reactorName} reacted ${emoji} to your quick moment`,
-                entityId: momentId,
-                data: {
-                  quickMomentId: momentId,
-                  emoji,
-                  navigation: { type: 'quick_moment', targetId: momentId },
-                },
-                isRead: false,
-              });
-            }
-          } catch (notifErr: any) {
-            console.warn('[Quick Moment Notif Update Warning]:', notifErr.message);
-          }
+          await this.notifyQuickMomentReaction(moment.userId, viewerUserId, momentId, emoji);
         }
       }
     } else {
@@ -747,51 +798,8 @@ export class QuickMomentService {
       });
       action = 'added';
 
-      // Send in-app notification to story author if not self (reuse/upsert to avoid duplicates)
       if (moment.userId !== viewerUserId) {
-        try {
-          const reactor = await User.findByPk(viewerUserId, {
-            attributes: ['id', 'fullName', 'nickName'],
-          });
-          const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
-
-          const existingNotif = await Notification.findOne({
-            where: {
-              recipientId: moment.userId,
-              senderId: viewerUserId,
-              type: 'moment_reaction',
-              entityId: momentId,
-            },
-          });
-
-          if (existingNotif) {
-            existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
-            existingNotif.data = {
-              quickMomentId: momentId,
-              emoji,
-              navigation: { type: 'quick_moment', targetId: momentId },
-            };
-            existingNotif.isRead = false;
-            await existingNotif.save();
-          } else {
-            await Notification.create({
-              recipientId: moment.userId,
-              senderId: viewerUserId,
-              type: 'moment_reaction',
-              title: 'New Quick Moment Reaction',
-              body: `${reactorName} reacted ${emoji} to your quick moment`,
-              entityId: momentId,
-              data: {
-                quickMomentId: momentId,
-                emoji,
-                navigation: { type: 'quick_moment', targetId: momentId },
-              },
-              isRead: false,
-            });
-          }
-        } catch (notifErr: any) {
-          console.warn('[Quick Moment Notif Warning]:', notifErr.message);
-        }
+        await this.notifyQuickMomentReaction(moment.userId, viewerUserId, momentId, emoji);
       }
     }
 
@@ -843,23 +851,14 @@ export class QuickMomentService {
     });
     const senderName = sender?.fullName || sender?.nickName || 'Someone';
 
-    // Notify author
+    // Notify author in-app and with a push. Each reply is its own event.
     if (moment.userId !== viewerUserId) {
-      try {
-        await Notification.create({
-          recipientId: moment.userId,
-          senderId: viewerUserId,
-          type: 'moment_reply',
-          title: 'Reply to your Quick Moment',
-          body: `${senderName}: "${message.slice(0, 80)}"`,
-          data: {
-            quickMomentId: momentId,
-            replyText: message,
-          },
-        });
-      } catch (err: any) {
-        console.warn('[Quick Moment Reply Notif Warning]:', err.message);
-      }
+      await this.dispatchQuickMomentNotification(moment.userId, viewerUserId, momentId, {
+        type: 'moment_reply',
+        title: 'Reply to your Quick Moment',
+        body: `${senderName}: "${message.slice(0, 80)}"`,
+        replyText: message,
+      });
     }
 
     return {

@@ -27,6 +27,10 @@ import { calculateInterestMatchPercentage } from '../utils/compatibility';
 import { MomentAudience } from '../models/moment.model';
 import { MomentReactionType } from '../models/momentReaction.model';
 import { notificationService } from './notification.service';
+import {
+  publishMomentRealtime,
+  MomentLiveUpdateInput,
+} from '../realtime/socket.moment';
 
 export class MomentServiceError extends Error {
   public statusCode: number;
@@ -140,6 +144,14 @@ export class MomentService {
         console.warn('[Moment notification]', err?.message || err);
       }
     })();
+  }
+
+  /**
+   * Pushes like, comment, and gift activity to sockets watching this moment.
+   * Never blocks or fails the HTTP response.
+   */
+  private emitMomentActivity(update: MomentLiveUpdateInput): void {
+    void publishMomentRealtime(update);
   }
 
   /**
@@ -912,6 +924,19 @@ export class MomentService {
         ],
       });
 
+      const storyMomentIds = activeMoments.map((m) => m.id);
+      const reactionsByMoment = new Map<string, any[]>();
+      if (storyMomentIds.length > 0) {
+        const storyReactionRows = await MomentReaction.findAll({
+          where: { momentId: { [Op.in]: storyMomentIds } },
+        });
+        for (const reaction of storyReactionRows) {
+          const bucket = reactionsByMoment.get(reaction.momentId) || [];
+          bucket.push(reaction);
+          reactionsByMoment.set(reaction.momentId, bucket);
+        }
+      }
+
       // Group moments by creator
       const storiesMap = new Map<string, any>();
       for (const m of activeMoments) {
@@ -922,6 +947,33 @@ export class MomentService {
           (a: any, b: any) => a.displayOrder - b.displayOrder
         );
         const firstMedia = sortedMedia[0];
+
+        const storyReactions = reactionsByMoment.get(m.id) || [];
+        const myStoryReaction = storyReactions.find((r: any) => r.userId === viewerId);
+        const storyReactionCounts: Record<string, number> = {
+          like: 0,
+          heart: 0,
+          love_eyes: 0,
+          fire: 0,
+          laugh: 0,
+          surprised: 0,
+          clap: 0,
+          total: 0,
+        };
+        for (const r of storyReactions) {
+          if (storyReactionCounts[r.reaction] !== undefined) {
+            storyReactionCounts[r.reaction] += 1;
+            storyReactionCounts.total += 1;
+          }
+        }
+
+        const storyReactionFields = {
+          likesCount: storyReactionCounts.total,
+          isLiked: !!myStoryReaction,
+          viewerReaction: myStoryReaction ? myStoryReaction.reaction : null,
+          myReaction: myStoryReaction ? myStoryReaction.reaction : null,
+          reactionCounts: storyReactionCounts,
+        };
 
         if (!storiesMap.has(creator.id)) {
           storiesMap.set(creator.id, {
@@ -944,6 +996,7 @@ export class MomentService {
               publishedAt: m.publishedAt,
               relativeAge: formatRelativeAge(m.publishedAt),
               timeAgo: formatTimeAgoShort(m.publishedAt),
+              ...storyReactionFields,
             },
             moments: [],
           });
@@ -959,6 +1012,7 @@ export class MomentService {
           publishedAt: m.publishedAt,
           relativeAge: formatRelativeAge(m.publishedAt),
           timeAgo: formatTimeAgoShort(m.publishedAt),
+          ...storyReactionFields,
         });
       }
 
@@ -1587,6 +1641,16 @@ export class MomentService {
       }
     }
 
+    this.emitMomentActivity({
+      type: 'reaction',
+      momentId,
+      ownerId: moment.userId,
+      actorId: viewerId,
+      likesCount: allReactions.length,
+      reaction,
+      reactionCounts,
+    });
+
     return {
       momentId,
       liked: true,
@@ -1729,6 +1793,16 @@ export class MomentService {
         reactionCounts[r.reaction]++;
       }
     }
+
+    this.emitMomentActivity({
+      type: isLiked ? 'like' : 'unlike',
+      momentId,
+      ownerId: moment.userId,
+      actorId: viewerId,
+      likesCount: allReactions.length,
+      reaction: isLiked ? 'like' : null,
+      reactionCounts,
+    });
 
     return {
       momentId,
@@ -1908,6 +1982,25 @@ export class MomentService {
         isReply: false,
       })
     );
+
+    this.emitMomentActivity({
+      type: 'comment',
+      momentId: moment.id,
+      ownerId: moment.userId,
+      actorId: senderId,
+      commentId: chatMessage.id,
+      comment: {
+        id: chatMessage.id,
+        commentId: chatMessage.id,
+        momentId: moment.id,
+        comment: trimmedMessage,
+        text: trimmedMessage,
+        parentCommentId: null,
+        createdAt: chatMessage.createdAt,
+        repliesCount: 0,
+        likesCount: 0,
+      },
+    });
 
     return {
       id: chatMessage.id,
@@ -2329,6 +2422,18 @@ export class MomentService {
 
     const likesCount = await MomentCommentLike.count({ where: { commentId } });
 
+    if (resolvedMomentId) {
+      this.emitMomentActivity({
+        type: 'comment_like',
+        momentId: resolvedMomentId,
+        ownerId: moment?.userId || comment.senderId,
+        actorId: userId,
+        notifyUserIds: [comment.senderId],
+        commentId,
+        commentLikesCount: likesCount,
+      });
+    }
+
     return {
       commentId,
       momentId: resolvedMomentId || null,
@@ -2716,6 +2821,52 @@ export class MomentService {
         isReply: true,
       })
     );
+
+    this.emitMomentActivity({
+      type: 'reply',
+      momentId: moment.id,
+      ownerId: moment.userId,
+      actorId: senderId,
+      notifyUserIds: [targetRecipientId, rootComment.senderId],
+      commentId: rootCommentId,
+      replyId: chatMessage.id,
+      parentCommentId: rootCommentId,
+      actor: {
+        id: replierUser?.id || senderId,
+        name: replierUser?.fullName || replierUser?.nickName || 'User',
+        username: replierUser?.username || null,
+        profilePhoto: replierUser?.profilePicture
+          ? formatThumbnailUrl(replierUser.profilePicture)
+          : null,
+      },
+      comment: {
+        id: chatMessage.id,
+        replyId: chatMessage.id,
+        commentId: rootCommentId,
+        reply: trimmedMessage,
+        text: trimmedMessage,
+        parentCommentId: rootCommentId,
+        parentReplyId: effectiveParentReplyId,
+        replyToCommentId: effectiveParentReplyId || rootCommentId,
+        replyToUserId: targetRecipientId,
+        replyToUsername: targetRecipientUsername,
+        momentId: moment.id,
+        createdAt:
+          chatMessage.createdAt instanceof Date
+            ? chatMessage.createdAt.toISOString()
+            : chatMessage.createdAt,
+        likesCount: 0,
+        repliesCount: 0,
+        user: {
+          id: replierUser?.id,
+          username: replierUser?.username || null,
+          name: replierUser?.fullName || replierUser?.nickName || 'User',
+          profilePhoto: replierUser?.profilePicture
+            ? formatThumbnailUrl(replierUser.profilePicture)
+            : null,
+        },
+      },
+    });
 
     return {
       id: chatMessage.id,
@@ -3223,6 +3374,17 @@ export class MomentService {
       }
     } catch {}
 
+    this.emitMomentActivity({
+      type: 'comment_deleted',
+      momentId,
+      ownerId: moment.userId,
+      actorId: userId,
+      notifyUserIds: [reply.senderId, parentComment.senderId],
+      commentId,
+      replyId,
+      parentCommentId: commentId,
+    });
+
     return {
       replyId,
       commentId,
@@ -3358,6 +3520,18 @@ export class MomentService {
         await conversation.save();
       }
     } catch {}
+
+    if (resolvedMomentId) {
+      this.emitMomentActivity({
+        type: 'comment_deleted',
+        momentId: resolvedMomentId,
+        ownerId: moment?.userId || userId,
+        actorId: userId,
+        notifyUserIds: [comment.senderId],
+        commentId,
+        parentCommentId,
+      });
+    }
 
     return {
       success: true,
@@ -3508,6 +3682,16 @@ export class MomentService {
       }
     }
 
+    this.emitMomentActivity({
+      type: 'unlike',
+      momentId,
+      ownerId: moment.userId,
+      actorId: viewerId,
+      likesCount: allReactions.length,
+      reaction: null,
+      reactionCounts,
+    });
+
     return {
       momentId,
       liked: false,
@@ -3545,6 +3729,13 @@ export class MomentService {
 
     moment.status = 'deleted';
     await moment.save();
+
+    this.emitMomentActivity({
+      type: 'deleted',
+      momentId,
+      ownerId: moment.userId,
+      actorId: userId,
+    });
 
     return {
       success: true,
@@ -3851,6 +4042,47 @@ export class MomentService {
     } catch (_sumErr) {
       totalMomentGifts = qty;
     }
+
+    this.emitMomentActivity({
+      type: 'gift',
+      momentId: moment.id,
+      ownerId: moment.userId,
+      actorId: senderId,
+      giftsCount: totalMomentGifts,
+      actor: {
+        id: sender.id,
+        name: sender.fullName || sender.nickName || 'User',
+        username: sender.username || null,
+        profilePhoto: sender.profilePicture
+          ? formatThumbnailUrl(sender.profilePicture)
+          : null,
+      },
+      gift: {
+        giftTransactionId: giftRecord.id,
+        id: gift.id,
+        code: gift.code,
+        name: gift.name,
+        icon: gift.icon,
+        quantity: qty,
+        totalCoins,
+        message: giftRecord.message,
+        createdAt: giftRecord.createdAt,
+        sender: {
+          id: sender.id,
+          name: sender.fullName || sender.nickName || 'User',
+          profilePhoto: sender.profilePicture
+            ? formatThumbnailUrl(sender.profilePicture)
+            : null,
+        },
+        recipient: {
+          id: recipient.id,
+          name: recipient.fullName || recipient.nickName || 'Creator',
+          profilePhoto: recipient.profilePicture
+            ? formatThumbnailUrl(recipient.profilePicture)
+            : null,
+        },
+      },
+    });
 
     return {
       giftTransactionId: giftRecord.id,

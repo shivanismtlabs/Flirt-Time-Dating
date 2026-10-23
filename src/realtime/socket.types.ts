@@ -259,6 +259,56 @@ export interface ServerToClientEvents {
   'chat:message_reaction_updated': (data: any) => void;
   'chat:reaction:updated': (data: any) => void;
   'reaction:updated': (data: any) => void;
+
+  /**
+   * Moment feed / detail live updates.
+   * `moment:updated` fires for every activity. Specific events carry the same payload.
+   * `isLiked` is intentionally omitted: that flag belongs to each viewer, not the actor.
+   */
+  'moment:updated': (data: MomentLiveUpdate) => void;
+  'moment:like_updated': (data: MomentLiveUpdate) => void;
+  'moment:comment_created': (data: MomentLiveUpdate) => void;
+  'moment:comment_deleted': (data: MomentLiveUpdate) => void;
+  'moment:comment_like_updated': (data: MomentLiveUpdate) => void;
+  'moment:gift_sent': (data: MomentLiveUpdate) => void;
+  'moment:deleted': (data: MomentLiveUpdate) => void;
+}
+
+/**
+ * Payload pushed when a moment is liked, commented, gifted, or removed.
+ * Counts are moment-level. Comment-row likes use `commentLikesCount`.
+ */
+export interface MomentLiveUpdate {
+  type:
+    | 'like'
+    | 'unlike'
+    | 'reaction'
+    | 'comment'
+    | 'reply'
+    | 'comment_deleted'
+    | 'comment_like'
+    | 'gift'
+    | 'deleted';
+  momentId: string;
+  ownerId: string;
+  actor: {
+    id: string;
+    name: string;
+    username: string | null;
+    profilePhoto: string | null;
+  };
+  likesCount: number;
+  commentsCount: number;
+  giftsCount: number;
+  reaction: string | null;
+  reactionCounts: Record<string, number> | null;
+  comment: Record<string, unknown> | null;
+  gift: Record<string, unknown> | null;
+  commentId: string | null;
+  replyId: string | null;
+  parentCommentId: string | null;
+  commentLikesCount: number | null;
+  updatedAt: string;
 }
 
 /**
@@ -513,6 +563,37 @@ export interface ClientToServerEvents {
   'chat:list': (
     data?: any,
     callback?: (response: { success: boolean; data?: any; error?: string }) => void
+  ) => void;
+
+  /**
+   * Subscribe the current socket to live updates for one open moment.
+   */
+  'moment:join': (
+    data: { momentId?: string },
+    callback?: (response: { success: boolean; error?: string; momentId?: string }) => void
+  ) => void;
+
+  'moment:leave': (
+    data: { momentId?: string },
+    callback?: (response: { success: boolean; error?: string; momentId?: string }) => void
+  ) => void;
+
+  /**
+   * Subscribe to the moments currently visible on the feed (max 30).
+   */
+  'moment:watch': (
+    data: { momentIds?: string[] },
+    callback?: (response: {
+      success: boolean;
+      error?: string;
+      joined?: string[];
+      rejected?: string[];
+    }) => void
+  ) => void;
+
+  'moment:unwatch': (
+    data?: { momentIds?: string[] },
+    callback?: (response: { success: boolean; left?: string[] }) => void
   ) => void;
 }
 

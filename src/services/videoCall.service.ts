@@ -425,9 +425,20 @@ export class VideoCallService {
         { where: { id: call.conversationId } }
       );
 
+      const { chatService } = await import('./chat.service');
+      const liveStatus = await chatService.syncOutgoingReceipts(
+        call.callerId,
+        call.calleeId,
+        call.conversationId,
+        [saved.id]
+      );
+      const at = (saved.createdAt ? new Date(saved.createdAt) : new Date()).toISOString();
+      const delivered = liveStatus !== 'sent';
+      const seen = liveStatus === 'read';
+
       const io = this.getIoSafe();
       if (io) {
-        emitCallChatMessage(io, [call.callerId, call.calleeId], {
+        emitCallChatMessage(io, call.callerId, call.calleeId, {
           id: saved.id,
           conversationId: call.conversationId,
           senderId: call.callerId,
@@ -435,7 +446,15 @@ export class VideoCallService {
           content: body,
           messageType: 'call',
           metadata: saved.metadata,
-          createdAt: saved.createdAt ? new Date(saved.createdAt).toISOString() : new Date().toISOString(),
+          status: seen ? 'seen' : liveStatus,
+          receiptStatus: liveStatus,
+          isDelivered: delivered,
+          deliveredAt: delivered ? at : null,
+          isRead: seen,
+          readAt: seen ? at : null,
+          seen,
+          sentAt: at,
+          createdAt: at,
         });
       }
     } catch {

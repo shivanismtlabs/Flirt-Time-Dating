@@ -155,8 +155,13 @@ export class ComplimentService {
       requester.username ||
       'Someone';
 
-    // 4. Validate subscription status of requester
-    const isSubscribed = await this.isUserSubscribed(requester);
+    // 4. Validate subscription status of both people.
+    // A premium recipient must actually receive the compliment in chat, not only
+    // as a pending request the sender can see.
+    const [isSubscribed, targetIsSubscribed] = await Promise.all([
+      this.isUserSubscribed(requester),
+      this.isUserSubscribed(targetUser),
+    ]);
 
     // 5. Check if already matched
     const [u1, u2] = [requesterId, targetUserId].sort();
@@ -428,9 +433,14 @@ export class ComplimentService {
       }
     }
 
-    // 8. Atomic transaction for new ConnectionRequest persistence
+    // 8. Atomic transaction for new ConnectionRequest persistence.
+    // Premium-to-premium also drops the compliment into the chat thread so the
+    // other premium user receives it without needing a prior match.
+    const deliverToChat = isSubscribed && targetIsSubscribed;
     const t = await sequelize.transaction();
     let savedRequest: ConnectionRequest;
+    let deliveredConversationId: string | undefined;
+    let deliveredChatMessageId: string | undefined;
     try {
       savedRequest = await ConnectionRequest.create(
         {
@@ -449,6 +459,44 @@ export class ComplimentService {
         { userId: requesterId, targetUserId, action: 'super_like' },
         { transaction: t }
       );
+
+      if (deliverToChat) {
+        const now = new Date();
+        const [conv] = await Conversation.findOrCreate({
+          where: { user1Id: u1, user2Id: u2 },
+          defaults: {
+            user1Id: u1,
+            user2Id: u2,
+            lastMessage: finalMessage,
+            lastMessageAt: now,
+          },
+          transaction: t,
+        });
+
+        const chatMessage = await ChatMessage.create(
+          {
+            conversationId: conv.id,
+            senderId: requesterId,
+            recipientId: targetUserId,
+            content: finalMessage,
+            messageType: 'text',
+            metadata: JSON.stringify({
+              type: 'compliment',
+              reason: finalReason,
+              momentId,
+              complimentId: savedRequest.id,
+            }),
+            isRead: false,
+          },
+          { transaction: t }
+        );
+
+        conv.lastMessage = finalMessage;
+        conv.lastMessageAt = now;
+        await conv.save({ transaction: t });
+        deliveredConversationId = conv.id;
+        deliveredChatMessageId = chatMessage.id;
+      }
 
       await t.commit();
     } catch (dbErr: any) {
@@ -480,6 +528,12 @@ export class ComplimentService {
         ? savedRequest.createdAt.toISOString()
         : new Date().toISOString(),
       isNewMatch: false,
+      ...(deliveredConversationId
+        ? {
+            conversationId: deliveredConversationId,
+            chatMessageId: deliveredChatMessageId,
+          }
+        : {}),
     };
   }
 }

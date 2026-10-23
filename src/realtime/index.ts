@@ -11,4 +11,5 @@ export * from './socket.auth';
 export * from './socket.lifecycle';
 export * from './socket.server';
 export * from './socket.videoCall';
+export * from './socket.moment';
 

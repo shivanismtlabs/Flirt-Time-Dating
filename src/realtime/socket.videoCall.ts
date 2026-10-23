@@ -262,13 +262,14 @@ export const emitVideoCallMissed = (
 
 export const emitCallChatMessage = (
   io: AppSocketServer,
-  userIds: string[],
+  callerId: string,
+  calleeId: string,
   payload: Record<string, unknown>
 ): void => {
-  for (const userId of userIds) {
-    emitToUser(io, userId, 'chat:message_received', payload);
-    emitToUser(io, userId, 'chat:message_sent', payload);
-  }
+  const sent = { ...payload, isMine: true, isSender: true };
+  const received = { ...payload, isMine: false, isSender: false };
+  emitToUser(io, callerId, 'chat:message_sent', sent);
+  emitToUser(io, calleeId, 'chat:message_received', received);
 };
 
 function errorMessage(err: unknown, fallback: string): string {

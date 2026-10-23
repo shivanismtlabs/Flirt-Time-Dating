@@ -25,6 +25,7 @@ import { socketLogger } from './socket.errors';
 import { SOCKET_ERROR_CODES } from './socket.constants';
 import { registerChatSocketHandlers } from './socket.chat';
 import { registerVideoCallSocketHandlers } from './socket.videoCall';
+import { registerMomentSocketHandlers } from './socket.moment';
 
 /**
  * Singleton Socket.IO server reference.
@@ -63,6 +64,7 @@ export const initSocketServer = (
     handleSocketConnection(socket, io);
     registerChatSocketHandlers(socket, io);
     registerVideoCallSocketHandlers(socket, io);
+    registerMomentSocketHandlers(socket, io);
   });
 
   ioInstance = io;

@@ -160,8 +160,8 @@ describe('Onboarding Preference & Media APIs', () => {
     });
   });
 
-  describe('5. Screen 25: Profile Photos Gallery (Min 3 and Max 5 images)', () => {
-    it('should reject upload when fewer than 3 photos are provided (MIN_PHOTOS_REQUIRED)', async () => {
+  describe('5. Screen 25: Profile Photos Gallery', () => {
+    it('should accept an upload of fewer than 3 photos', async () => {
       const fakePhoto1 = await createBlankImage(200, 200);
       const fakePhoto2 = await createBlankImage(200, 200);
 
@@ -171,12 +171,13 @@ describe('Onboarding Preference & Media APIs', () => {
         .attach('photos', fakePhoto1, 'p1.jpg')
         .attach('photos', fakePhoto2, 'p2.jpg');
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 3 photos/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(2);
+      expect(res.body.data.totalPhotos).toBe(2);
     });
 
-    it('should reject upload when more than 5 photos are provided (MAX_PHOTOS_EXCEEDED)', async () => {
+    it('should accept an upload of more than 5 photos', async () => {
       const p1 = await createBlankImage(200, 200);
       const p2 = await createBlankImage(200, 200);
       const p3 = await createBlankImage(200, 200);
@@ -194,9 +195,10 @@ describe('Onboarding Preference & Media APIs', () => {
         .attach('photos', p5, 'p5.jpg')
         .attach('photos', p6, 'p6.jpg');
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/maximum 5/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(6);
+      expect(res.body.data.totalPhotos).toBe(6);
     });
 
     it('should successfully upload 3 photos, set first as primary, and update profilePicture', async () => {

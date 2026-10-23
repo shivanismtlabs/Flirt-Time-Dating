@@ -1,7 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
-import { OnboardingService, onboardingService, OnboardingServiceError } from '../services/onboarding.service';
+import { onboardingService, OnboardingServiceError } from '../services/onboarding.service';
 import { formatMediaUrl, formatThumbnailUrl } from '../services/s3.service';
 
 const getUserIdOrThrow = (req: AuthenticatedRequest, res: Response): string | null => {
@@ -208,27 +208,9 @@ export const uploadPhoto = async (req: AuthenticatedRequest, res: Response) => {
     if (totalCount === 0) {
       return sendError(
         res,
-        `No photos provided. You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed).`,
+        'No photos provided. Please upload at least one photo.',
         400,
-        'MIN_PHOTOS_REQUIRED'
-      );
-    }
-
-    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
-      return sendError(
-        res,
-        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
-        400,
-        'MIN_PHOTOS_REQUIRED'
-      );
-    }
-
-    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
-      return sendError(
-        res,
-        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
-        400,
-        'MAX_PHOTOS_EXCEEDED'
+        'PHOTOS_REQUIRED'
       );
     }
 

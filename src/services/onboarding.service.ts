@@ -23,7 +23,6 @@ export class OnboardingServiceError extends Error {
 
 export class OnboardingService {
   public static readonly MIN_PHOTOS_COUNT = 3;
-  public static readonly MAX_PHOTOS_COUNT = 5;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60; // 60s max voice prompt
 
   /**
@@ -201,19 +200,11 @@ export class OnboardingService {
 
     const totalCount = files.length + validKeys.length;
 
-    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
+    if (totalCount < 1) {
       throw new OnboardingServiceError(
-        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        'No photos provided. Please upload at least one photo.',
         400,
-        'MIN_PHOTOS_REQUIRED'
-      );
-    }
-
-    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
-      throw new OnboardingServiceError(
-        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
-        400,
-        'MAX_PHOTOS_EXCEEDED'
+        'PHOTOS_REQUIRED'
       );
     }
 

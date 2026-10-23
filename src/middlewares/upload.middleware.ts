@@ -79,13 +79,13 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
 };
 
 /**
- * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP, up to 5 images)
+ * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP)
  */
 export const uploadPhoto = multer({
   storage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5 MB per photo
-    files: 5,
+    files: 30,
   },
   fileFilter: (_req, file, cb) => {
     if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
@@ -98,11 +98,11 @@ export const uploadPhoto = multer({
 
 export const handleUploadPhoto = (req: Request, res: Response, next: NextFunction) => {
   const upload = uploadPhoto.fields([
-    { name: 'photos', maxCount: 5 },
-    { name: 'images', maxCount: 5 },
-    { name: 'photo', maxCount: 5 },
-    { name: 'image', maxCount: 5 },
-    { name: 'files', maxCount: 5 },
+    { name: 'photos', maxCount: 30 },
+    { name: 'images', maxCount: 30 },
+    { name: 'photo', maxCount: 30 },
+    { name: 'image', maxCount: 30 },
+    { name: 'files', maxCount: 30 },
   ]);
 
   upload(req, res, (err: any) => {
@@ -119,7 +119,7 @@ export const handleUploadPhoto = (req: Request, res: Response, next: NextFunctio
         if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
           return sendError(
             res,
-            'Maximum 5 photos allowed. Please upload between 3 and 5 images.',
+            'Too many photos in one request.',
             400,
             'MAX_PHOTOS_EXCEEDED'
           );

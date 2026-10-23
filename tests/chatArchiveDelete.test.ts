@@ -516,18 +516,18 @@ describe('Conversation Archive & Deletion (REST APIs + Socket.IO Delivery)', () 
         .set('Authorization', `Bearer ${tokenB}`);
       expect(detailB.status).toBe(404);
 
-      // Sending messages on a globally deleted conversation is rejected
+      // A later send from a participant reopens the thread
       const sendRes = await request(app)
         .post(`/api/v1/chats/${convAB.id}/messages`)
         .set('Authorization', `Bearer ${tokenA}`)
         .send({ content: 'Testing send on deleted' });
-      expect(sendRes.status).toBe(400);
+      expect(sendRes.status).toBe(201);
+      expect(sendRes.body.success).toBe(true);
 
-      // Database verification: conversation still exists for audit, but marked deleted
       const convDb = await Conversation.findByPk(convAB.id);
       expect(convDb).not.toBeNull();
-      expect(convDb!.isDeletedForEveryone).toBe(true);
-      expect(convDb!.deletedForEveryoneBy).toBe(userA.id);
+      expect(convDb!.isDeletedForEveryone).toBe(false);
+      expect(convDb!.deletedForEveryoneBy).toBeNull();
     });
 
     it('should be safe and idempotent on repeated Delete for Everyone requests', async () => {

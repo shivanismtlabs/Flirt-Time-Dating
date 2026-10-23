@@ -191,6 +191,29 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       expect(res.body.data.images.length).toBe(2);
     });
 
+    it('should reopen a deleted conversation when multiple images are sent', async () => {
+      await convAB.update({
+        isDeletedForEveryone: true,
+        deletedForEveryoneAt: new Date(),
+        deletedForEveryoneBy: userA.id,
+      });
+
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .attach('images', sampleJpegBuffer, 'photo1.jpg')
+        .attach('images', samplePngBuffer, 'photo2.png');
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.messageType).toBe('image');
+      expect(res.body.data.images.length).toBe(2);
+
+      const conv = await Conversation.findByPk(convAB.id);
+      expect(conv?.isDeletedForEveryone).toBe(false);
+      expect(conv?.lastMessage).toBe('📷 Photo');
+    });
+
     it('should return fully resolved images array and status in message history', async () => {
       // 1. Send multi-image
       await request(app)

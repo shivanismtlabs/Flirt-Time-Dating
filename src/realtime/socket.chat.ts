@@ -532,11 +532,14 @@ export const registerChatSocketHandlers = (
   // 4b. Event: conversation:pin
   socket.on('conversation:pin', async (payload: any, callback?: Function) => {
     try {
+      const rawPinned =
+        typeof payload?.isPinned === 'boolean' ? payload.isPinned : payload?.pinned;
+
       if (
         !payload ||
         typeof payload !== 'object' ||
         !payload.conversationId ||
-        typeof payload.isPinned !== 'boolean'
+        typeof rawPinned !== 'boolean'
       ) {
         if (typeof callback === 'function') {
           return callback({
@@ -550,7 +553,7 @@ export const registerChatSocketHandlers = (
       const result = await chatService.pinConversation(
         currentUserId,
         payload.conversationId,
-        payload.isPinned
+        rawPinned
       );
 
       if (typeof callback === 'function') {

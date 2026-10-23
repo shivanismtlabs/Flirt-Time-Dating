@@ -1014,6 +1014,30 @@ describe('Production-Ready Send Message API + Socket.IO Delivery', () => {
       expect(res.body.data.recipientId).toBe(recipient2.id);
       expect(res.body.data.participant).toBeDefined();
       expect(res.body.data.participant.id).toBe(recipient2.id);
+      expect(res.body.data.participant.userId).toBe(recipient2.id);
+      expect(res.body.data.participant.displayName).toBe('Bob Second');
+      expect(res.body.data.participant.name).toBe('Bob Second');
+      expect(res.body.data.targetUser.name).toBe('Bob Second');
+
+      const [starterList, recipientList] = await Promise.all([
+        request(app).get('/api/v1/chats').set('Authorization', `Bearer ${senderToken}`),
+        request(app).get('/api/v1/chats').set('Authorization', `Bearer ${recipient2Token}`),
+      ]);
+
+      expect(starterList.status).toBe(200);
+      const started = [
+        ...starterList.body.data.pinned,
+        ...starterList.body.data.conversations,
+      ].find((item: any) => item.conversationId === res.body.data.conversationId);
+      expect(started).toBeDefined();
+      expect(started.participant.userId).toBe(recipient2.id);
+      expect(started.participant.displayName).toBe('Bob Second');
+
+      const visibleToRecipient = [
+        ...recipientList.body.data.pinned,
+        ...recipientList.body.data.conversations,
+      ].some((item: any) => item.conversationId === res.body.data.conversationId);
+      expect(visibleToRecipient).toBe(false);
     });
 
     it('should return top-level isMine: true and isSender: true when sending message with recipientId (POST /api/v1/chat/messages)', async () => {

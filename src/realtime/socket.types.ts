@@ -149,8 +149,18 @@ export interface ServerToClientEvents {
   /**
    * Emitted to requesting user's active sessions when conversation pin status is updated.
    */
-  'conversation:pin-updated': (data: { conversationId: string; isPinned: boolean }) => void;
-  'conversation:pin_updated': (data: { conversationId: string; isPinned: boolean }) => void;
+  'conversation:pin-updated': (data: {
+    conversationId: string;
+    isPinned: boolean;
+    pinned?: boolean;
+    pinnedAt?: string | null;
+  }) => void;
+  'conversation:pin_updated': (data: {
+    conversationId: string;
+    isPinned: boolean;
+    pinned?: boolean;
+    pinnedAt?: string | null;
+  }) => void;
 
   /**
    * Emitted to authorized conversation participants when a message is pinned.

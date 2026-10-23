@@ -21,7 +21,7 @@ import {
 } from '../models';
 import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
-import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
+import { calculateAge, calculateDistanceKm } from './discovery.service';
 import { isUserConnected, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
 import { socketLogger } from '../realtime/socket.errors';
@@ -125,6 +125,115 @@ export const validateMediaAttachmentKey = (raw: string, senderId: string): strin
   return cleanKey;
 };
 
+/** Accepts a JSON array, a comma-separated string, or a single URL. */
+export const coerceMediaList = (raw: any): any[] => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (!trimmed) return [];
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      // fall through to comma-separated / single value
+    }
+    if (trimmed.includes(',')) {
+      return trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+    }
+    return [trimmed];
+  }
+  return [];
+};
+
+/**
+ * Gallery cells on the receiver load thumbnailUrl. Thumbnail objects are created
+ * in the background and 404 until that finishes, so each gallery item points at
+ * the original image, which is already public.
+ */
+export const decorateChatGalleryImage = (img: any): any => {
+  if (!img) return img;
+  if (typeof img === 'string') {
+    const key = s3Service.extractKey(img);
+    const full = img.startsWith('http://') || img.startsWith('https://')
+      ? img
+      : s3Service.getPublicUrl(key);
+    return {
+      url: full,
+      imageUrl: full,
+      mediaUrl: full,
+      thumbnailUrl: full,
+      path: full,
+      uri: full,
+      src: full,
+      key,
+    };
+  }
+  const raw = img.url || img.imageUrl || img.mediaUrl || img.path || img.uri || img.src || '';
+  const key = img.key || (raw ? s3Service.extractKey(raw) : '');
+  const full =
+    raw && (String(raw).startsWith('http://') || String(raw).startsWith('https://'))
+      ? raw
+      : key
+        ? s3Service.getPublicUrl(key)
+        : '';
+  return {
+    ...img,
+    url: full,
+    imageUrl: full,
+    mediaUrl: full,
+    thumbnailUrl: full || img.thumbnailUrl,
+    path: full,
+    uri: full,
+    src: full,
+    key,
+  };
+};
+
+export const dedupeChatImages = <T extends { key?: string; imageUrl?: string; url?: string }>(
+  images: T[]
+): T[] => {
+  const seen = new Set<string>();
+  const unique: T[] = [];
+  for (const img of images) {
+    const id = String(img.key || img.imageUrl || img.url || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(img);
+  }
+  return unique;
+};
+
+/**
+ * Flat copy for socket delivery. Nested `messages` are omitted so a receiver
+ * does not walk a second list that was copied from the sender (`isMine: true`)
+ * and then hide the gallery.
+ */
+export const buildViewerChatMessage = (
+  dto: ChatMessageDTO,
+  isMine: boolean,
+  gallery?: any[],
+  galleryUrls?: string[]
+): ChatMessageDTO => {
+  const images = (gallery && gallery.length > 0 ? gallery : dto.images || []).map(decorateChatGalleryImage);
+  const imageUrls =
+    galleryUrls && galleryUrls.length > 0
+      ? galleryUrls
+      : images.map((img: any) => img?.imageUrl || img?.url).filter(Boolean);
+  const { messages: _nested, results: _results, ...rest } = dto as ChatMessageDTO & {
+    messages?: ChatMessageDTO[];
+    results?: any[];
+  };
+  return {
+    ...rest,
+    isMine,
+    isSender: isMine,
+    images,
+    imageUrls,
+    mediaUrls: imageUrls,
+  };
+};
+
 export interface ChatParticipantDTO {
   userId: string;
   displayName: string;
@@ -207,6 +316,7 @@ export interface ChatMessageDTO {
   durationMs?: number;
   images?: any[];
   imageUrls?: string[];
+  mediaUrls?: string[];
   messages?: ChatMessageDTO[];
   reactions?: MessageReactionDTO[];
   reactionCounts?: Record<string, number>;
@@ -1168,31 +1278,7 @@ export class ChatService {
         }
         if (Array.isArray(parsedMetadata.images)) {
           parsedMetadata.images = parsedMetadata.images.map((img: any) => {
-            if (typeof img === 'string') {
-              const k = s3Service.extractKey(img);
-              const pubUrl = s3Service.getPublicUrl(k);
-              const thUrl = s3Service.getThumbnailUrl(k);
-              return { url: pubUrl, imageUrl: pubUrl, thumbnailUrl: thUrl, mediaUrl: pubUrl, key: k };
-            }
-            if (img && typeof img === 'object') {
-              const rawUrl = img.url || img.imageUrl || '';
-              const k = img.key || s3Service.extractKey(rawUrl);
-              const pubUrl = (rawUrl && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://')))
-                ? rawUrl
-                : (k ? s3Service.getPublicUrl(k) : '');
-              const thUrl = (img.thumbnailUrl && (img.thumbnailUrl.startsWith('http://') || img.thumbnailUrl.startsWith('https://')))
-                ? img.thumbnailUrl
-                : (k ? s3Service.getThumbnailUrl(k) : pubUrl);
-              return {
-                ...img,
-                url: pubUrl,
-                imageUrl: pubUrl,
-                thumbnailUrl: thUrl,
-                mediaUrl: pubUrl,
-                key: k,
-              };
-            }
-            return img;
+            return decorateChatGalleryImage(img);
           });
         }
       } else if (msg.messageType === 'audio' && msg.content) {
@@ -1318,8 +1404,9 @@ export class ChatService {
         msgItem.url = resolvedUrl;
 
         if (Array.isArray(parsedMetadata?.images) && parsedMetadata.images.length > 0) {
-          msgItem.images = parsedMetadata.images;
-          msgItem.imageUrls = parsedMetadata.images.map((i: any) =>
+          const gallery = parsedMetadata.images.map(decorateChatGalleryImage);
+          msgItem.images = gallery;
+          msgItem.imageUrls = gallery.map((i: any) =>
             typeof i === 'string' ? i : i.url || i.imageUrl || ''
           );
         } else if (Array.isArray(parsedMetadata?.imageUrls) && parsedMetadata.imageUrls.length > 0) {
@@ -1327,23 +1414,14 @@ export class ChatService {
             typeof i === 'string' ? i : i.url || i.imageUrl || ''
           );
           msgItem.imageUrls = urls;
-          msgItem.images = urls.map((u: string) => {
-            const k = s3Service.extractKey(u);
-            const pubUrl = (u && (u.startsWith('http://') || u.startsWith('https://'))) ? u : s3Service.getPublicUrl(k);
-            return {
-              url: pubUrl,
-              imageUrl: pubUrl,
-              thumbnailUrl: s3Service.getThumbnailUrl(k),
-              mediaUrl: pubUrl,
-              key: k,
-            };
-          });
+          msgItem.images = urls.map((u: string) => decorateChatGalleryImage(u));
         } else {
           msgItem.images = resolvedUrl
-            ? [{ url: resolvedUrl, imageUrl: resolvedUrl, thumbnailUrl: resolvedThumb, key: cleanKey }]
+            ? [decorateChatGalleryImage({ url: resolvedUrl, imageUrl: resolvedUrl, thumbnailUrl: resolvedThumb, key: cleanKey })]
             : [];
           msgItem.imageUrls = resolvedUrl ? [resolvedUrl] : [];
         }
+        msgItem.mediaUrls = msgItem.imageUrls;
       } else if (msg.messageType === 'audio') {
         const cleanKey = s3Service.extractKey(msg.content);
         const resolvedAudio =
@@ -1612,23 +1690,15 @@ export class ChatService {
       metadataObj.replyTo = replyToRef;
     }
 
-    let rawImages = (data as any).images || metadataObj.images;
-    if (typeof rawImages === 'string') {
-      try {
-        rawImages = JSON.parse(rawImages);
-      } catch {}
-    }
-
-    let rawImageUrls =
+    let rawImages = coerceMediaList((data as any).images || metadataObj.images || metadataObj.photos || metadataObj.attachments);
+    let rawImageUrls = coerceMediaList(
       (data as any).imageUrls ||
       (data as any).mediaUrls ||
       metadataObj.imageUrls ||
-      metadataObj.mediaUrls;
-    if (typeof rawImageUrls === 'string') {
-      try {
-        rawImageUrls = JSON.parse(rawImageUrls);
-      } catch {}
-    }
+      metadataObj.mediaUrls ||
+      metadataObj.photos ||
+      metadataObj.attachments
+    );
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
     if (!data.messageType && !data.type) {
@@ -1816,6 +1886,7 @@ export class ChatService {
               item?.uri ||
               item?.path ||
               item?.mediaUrl ||
+              item?.src ||
               item?.key ||
               '';
         if (!raw) continue;
@@ -1835,7 +1906,16 @@ export class ChatService {
     }
     if (Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
       for (const rawItem of rawImageUrls) {
-        const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
+        const raw = typeof rawItem === 'string'
+          ? rawItem
+          : (rawItem as any)?.url ||
+            (rawItem as any)?.imageUrl ||
+            (rawItem as any)?.mediaUrl ||
+            (rawItem as any)?.path ||
+            (rawItem as any)?.uri ||
+            (rawItem as any)?.src ||
+            (rawItem as any)?.key ||
+            '';
         if (!raw || typeof raw !== 'string') continue;
         const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -1850,6 +1930,12 @@ export class ChatService {
           fileSize: 0,
         });
       }
+    }
+
+    if (uploadedImages.length > 1) {
+      const uniqueImages = dedupeChatImages(uploadedImages);
+      uploadedImages.length = 0;
+      uploadedImages.push(...uniqueImages);
     }
 
     if (uploadedImages.length > 0) {
@@ -2177,6 +2263,9 @@ export class ChatService {
       preview: string;
     }> = [];
 
+    const galleryImages = uploadedImages.map(decorateChatGalleryImage);
+    const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
+
     // All images (creates distinct chat message row for each image so ALL images display in chat UI)
     for (let i = 0; i < uploadedImages.length; i++) {
       const img = uploadedImages[i];
@@ -2188,8 +2277,9 @@ export class ChatService {
         url: img.url,
         mimeType: img.mimeType,
         fileSize: img.fileSize,
-        images: uploadedImages,
-        imageUrls: uploadedImages.map((x) => x.imageUrl),
+        images: galleryImages,
+        imageUrls: galleryUrls,
+        mediaUrls: galleryUrls,
       };
       if ((data as any).caption && i === 0) {
         itemMeta.caption = (data as any).caption;
@@ -2419,13 +2509,14 @@ export class ChatService {
       allDtos.push(dto);
     }
 
-    // Attach batch references so both individual and multi-message consumers receive the full payload
-    for (const d of allDtos) {
-      d.messages = allDtos.map((item) => ({ ...item }));
-      d.images = uploadedImages.length > 0 ? uploadedImages : d.images;
-      d.imageUrls = uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : d.imageUrls;
-      d.totalCount = allDtos.length;
-    }
+    const viewerGallery = galleryImages.length > 0 ? galleryImages : undefined;
+    const viewerUrls = galleryUrls.length > 0 ? galleryUrls : undefined;
+    const recipientMessages = allDtos.map((item) =>
+      buildViewerChatMessage(item, false, viewerGallery, viewerUrls)
+    );
+    const senderMessages = allDtos.map((item) =>
+      buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
+    );
 
     // 9. Real-Time Delivery via Socket.IO for every created message
     try {
@@ -2433,14 +2524,20 @@ export class ChatService {
       const recipientRoom = getUserRoomName(recipientId);
       const senderRoom = getUserRoomName(senderId);
 
-      for (const dto of allDtos) {
+      for (let i = 0; i < allDtos.length; i++) {
         const recipientPayload = {
-          ...dto,
-          isMine: false,
-          isSender: false,
+          ...recipientMessages[i],
+          messages: recipientMessages,
+          totalCount: allDtos.length,
+        };
+        const senderPayload = {
+          ...senderMessages[i],
+          messages: senderMessages,
+          totalCount: allDtos.length,
         };
 
-        // Deliver to recipient's multi-device room across all standard event names
+        // Deliver to recipient's multi-device room across all standard event names.
+        // Every nested message is isMine:false so the other user renders the full gallery.
         io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
         io.to(recipientRoom).emit('message:received' as any, recipientPayload);
         io.to(recipientRoom).emit('new_message' as any, recipientPayload);
@@ -2450,12 +2547,12 @@ export class ChatService {
         }
 
         // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
-        io.to(senderRoom).emit('chat:message_sent' as any, dto);
-        io.to(senderRoom).emit('message:sent' as any, dto);
-        io.to(senderRoom).emit('new_message' as any, dto);
+        io.to(senderRoom).emit('chat:message_sent' as any, senderPayload);
+        io.to(senderRoom).emit('message:sent' as any, senderPayload);
+        io.to(senderRoom).emit('new_message' as any, senderPayload);
         if (senderId && senderId.toLowerCase() !== senderId) {
-          io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, dto);
-          io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, dto);
+          io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, senderPayload);
+          io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, senderPayload);
         }
 
         // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
@@ -2473,9 +2570,10 @@ export class ChatService {
           conversationId,
           senderId,
           recipientId,
-          messages: allDtos.map((d) => ({ ...d, isMine: false, isSender: false })),
-          images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
-          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+          messages: recipientMessages,
+          images: viewerGallery || recipientMessages[0].images,
+          imageUrls: viewerUrls || recipientMessages[0].imageUrls,
+          mediaUrls: viewerUrls || recipientMessages[0].mediaUrls,
           totalCount: allDtos.length,
         };
         io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -2489,9 +2587,10 @@ export class ChatService {
           conversationId,
           senderId,
           recipientId,
-          messages: allDtos.map((d) => ({ ...d })),
-          images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
-          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+          messages: senderMessages,
+          images: viewerGallery || senderMessages[0].images,
+          imageUrls: viewerUrls || senderMessages[0].imageUrls,
+          mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
           totalCount: allDtos.length,
         };
         io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
@@ -2511,12 +2610,13 @@ export class ChatService {
     }
 
     const primaryDto: ChatMessageDTO = {
-      ...allDtos[0],
-      messages: allDtos.map((d) => ({ ...d })),
-      images: uploadedImages.length > 0 ? uploadedImages : allDtos[0].images,
-      imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : allDtos[0].imageUrls,
+      ...senderMessages[0],
+      messages: senderMessages,
+      images: viewerGallery || senderMessages[0].images,
+      imageUrls: viewerUrls || senderMessages[0].imageUrls,
+      mediaUrls: viewerUrls || senderMessages[0].mediaUrls,
       totalCount: allDtos.length,
-      results: allDtos.map((d) => ({ message: d, status: 'sent' })),
+      results: senderMessages.map((d) => ({ message: d, status: 'sent' })),
     };
     if (uploadedAudios.length > 0 && !primaryDto.audioUrl) {
       primaryDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -2623,23 +2723,15 @@ export class ChatService {
       }
     }
 
-    let rawImages = (data as any).images || metadataObj.images;
-    if (typeof rawImages === 'string') {
-      try {
-        rawImages = JSON.parse(rawImages);
-      } catch {}
-    }
-
-    let rawImageUrls =
+    let rawImages = coerceMediaList((data as any).images || metadataObj.images || metadataObj.photos || metadataObj.attachments);
+    let rawImageUrls = coerceMediaList(
       (data as any).imageUrls ||
       (data as any).mediaUrls ||
       metadataObj.imageUrls ||
-      metadataObj.mediaUrls;
-    if (typeof rawImageUrls === 'string') {
-      try {
-        rawImageUrls = JSON.parse(rawImageUrls);
-      } catch {}
-    }
+      metadataObj.mediaUrls ||
+      metadataObj.photos ||
+      metadataObj.attachments
+    );
 
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
     if (!data.messageType && !data.type) {
@@ -2827,6 +2919,7 @@ export class ChatService {
               item?.uri ||
               item?.path ||
               item?.mediaUrl ||
+              item?.src ||
               item?.key ||
               '';
         if (!raw) continue;
@@ -2846,7 +2939,16 @@ export class ChatService {
     }
     if (Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
       for (const rawItem of rawImageUrls) {
-        const raw = typeof rawItem === 'string' ? rawItem : (rawItem as any)?.url || (rawItem as any)?.imageUrl || '';
+        const raw = typeof rawItem === 'string'
+          ? rawItem
+          : (rawItem as any)?.url ||
+            (rawItem as any)?.imageUrl ||
+            (rawItem as any)?.mediaUrl ||
+            (rawItem as any)?.path ||
+            (rawItem as any)?.uri ||
+            (rawItem as any)?.src ||
+            (rawItem as any)?.key ||
+            '';
         if (!raw || typeof raw !== 'string') continue;
         const cleanKey = validateMediaAttachmentKey(raw, senderId);
         const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -3021,6 +3123,12 @@ export class ChatService {
           durationMs: durMs !== undefined && !Number.isNaN(durMs) ? durMs : undefined,
         });
       }
+    }
+
+    if (uploadedImages.length > 1) {
+      const uniqueImages = dedupeChatImages(uploadedImages);
+      uploadedImages.length = 0;
+      uploadedImages.push(...uniqueImages);
     }
 
     if (uploadedImages.length > 0) {
@@ -3309,6 +3417,9 @@ export class ChatService {
           preview: string;
         }> = [];
 
+        const galleryImages = uploadedImages.map(decorateChatGalleryImage);
+        const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
+
         // All images
         for (let i = 0; i < uploadedImages.length; i++) {
           const img = uploadedImages[i];
@@ -3320,8 +3431,9 @@ export class ChatService {
             url: img.url,
             mimeType: img.mimeType,
             fileSize: img.fileSize,
-            images: uploadedImages,
-            imageUrls: uploadedImages.map((x) => x.imageUrl),
+            images: galleryImages,
+            imageUrls: galleryUrls,
+            mediaUrls: galleryUrls,
           };
           if ((data as any).caption && i === 0) {
             itemMeta.caption = (data as any).caption;
@@ -3534,13 +3646,14 @@ export class ChatService {
           recipientDtos.push(dto);
         }
 
-        // Attach batch references so both individual and multi-message consumers receive the full payload
-        for (const d of recipientDtos) {
-          d.messages = recipientDtos.map((item) => ({ ...item }));
-          d.images = uploadedImages.length > 0 ? uploadedImages : d.images;
-          d.imageUrls = uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : d.imageUrls;
-          d.totalCount = recipientDtos.length;
-        }
+        const viewerGallery = galleryImages.length > 0 ? galleryImages : undefined;
+        const viewerUrls = galleryUrls.length > 0 ? galleryUrls : undefined;
+        const receiverViews = recipientDtos.map((item) =>
+          buildViewerChatMessage(item, false, viewerGallery, viewerUrls)
+        );
+        const senderViews = recipientDtos.map((item) =>
+          buildViewerChatMessage(item, true, viewerGallery, viewerUrls)
+        );
 
         // Real-Time Delivery via Socket.IO
         try {
@@ -3548,14 +3661,20 @@ export class ChatService {
           const recipientRoom = getUserRoomName(recipientId);
           const senderRoom = getUserRoomName(senderId);
 
-          for (const dto of recipientDtos) {
+          for (let i = 0; i < recipientDtos.length; i++) {
             const recipientPayload = {
-              ...dto,
-              isMine: false,
-              isSender: false,
+              ...receiverViews[i],
+              messages: receiverViews,
+              totalCount: recipientDtos.length,
+            };
+            const senderPayload = {
+              ...senderViews[i],
+              messages: senderViews,
+              totalCount: recipientDtos.length,
             };
 
-            // Deliver to recipient's multi-device room across all standard event names
+            // Deliver to recipient's multi-device room across all standard event names.
+            // Nested messages stay isMine:false so the other user shows every image.
             io.to(recipientRoom).emit('chat:message_received' as any, recipientPayload);
             io.to(recipientRoom).emit('message:received' as any, recipientPayload);
             io.to(recipientRoom).emit('new_message' as any, recipientPayload);
@@ -3565,12 +3684,12 @@ export class ChatService {
             }
 
             // Synchronize sender's other connected devices (e.g. tablet, web, mobile)
-            io.to(senderRoom).emit('chat:message_sent' as any, dto);
-            io.to(senderRoom).emit('message:sent' as any, dto);
-            io.to(senderRoom).emit('new_message' as any, dto);
+            io.to(senderRoom).emit('chat:message_sent' as any, senderPayload);
+            io.to(senderRoom).emit('message:sent' as any, senderPayload);
+            io.to(senderRoom).emit('new_message' as any, senderPayload);
             if (senderId && senderId.toLowerCase() !== senderId) {
-              io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, dto);
-              io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, dto);
+              io.to(getUserRoomName(senderId.toLowerCase())).emit('chat:message_sent' as any, senderPayload);
+              io.to(getUserRoomName(senderId.toLowerCase())).emit('message:sent' as any, senderPayload);
             }
 
             // Broadcast to conversation room subscribers (exclude senderRoom so sender does not receive message_received for own message)
@@ -3588,9 +3707,10 @@ export class ChatService {
               conversationId,
               senderId,
               recipientId,
-              messages: recipientDtos.map((d) => ({ ...d, isMine: false, isSender: false })),
-              images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
-              imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+              messages: receiverViews,
+              images: viewerGallery || receiverViews[0].images,
+              imageUrls: viewerUrls || receiverViews[0].imageUrls,
+              mediaUrls: viewerUrls || receiverViews[0].mediaUrls,
               totalCount: recipientDtos.length,
             };
             io.to(recipientRoom).emit('chat:messages_received' as any, batchRecipientPayload);
@@ -3604,9 +3724,10 @@ export class ChatService {
               conversationId,
               senderId,
               recipientId,
-              messages: recipientDtos.map((d) => ({ ...d })),
-              images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
-              imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+              messages: senderViews,
+              images: viewerGallery || senderViews[0].images,
+              imageUrls: viewerUrls || senderViews[0].imageUrls,
+              mediaUrls: viewerUrls || senderViews[0].mediaUrls,
               totalCount: recipientDtos.length,
             };
             io.to(senderRoom).emit('chat:messages_sent' as any, batchSenderPayload);
@@ -3627,12 +3748,13 @@ export class ChatService {
         }
 
         const primaryRecipientDto: ChatMessageDTO = {
-          ...recipientDtos[0],
-          messages: recipientDtos.map((d) => ({ ...d })),
-          images: uploadedImages.length > 0 ? uploadedImages : recipientDtos[0].images,
-          imageUrls: uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : recipientDtos[0].imageUrls,
+          ...senderViews[0],
+          messages: senderViews,
+          images: viewerGallery || senderViews[0].images,
+          imageUrls: viewerUrls || senderViews[0].imageUrls,
+          mediaUrls: viewerUrls || senderViews[0].mediaUrls,
           totalCount: recipientDtos.length,
-          results: recipientDtos.map((d) => ({ message: d, status: 'sent' })),
+          results: senderViews.map((d) => ({ message: d, status: 'sent' })),
         };
         if (uploadedAudios.length > 0 && !primaryRecipientDto.audioUrl) {
           primaryRecipientDto.audioUrl = uploadedAudios[0].audioUrl;
@@ -4397,6 +4519,128 @@ export class ChatService {
   }
 
   /**
+   * Chat-list row for one viewer. The mobile list reads participant.userId,
+   * displayName, and name. A payload missing those fields renders as "Unknown"
+   * and is then dropped on the next refresh.
+   */
+  private async buildViewerConversationPayload(
+    viewerId: string,
+    conversationId: string
+  ): Promise<Record<string, any> | null> {
+    const conversation = await Conversation.findByPk(conversationId);
+    if (!conversation) return null;
+
+    const otherUserId = getOtherParticipantId(conversation, viewerId);
+    const otherUser = await User.findByPk(otherUserId, {
+      attributes: [
+        'id',
+        'fullName',
+        'firstName',
+        'lastName',
+        'nickName',
+        'username',
+        'profilePicture',
+        'isFaceVerified',
+        'isSubscribed',
+        'isActive',
+      ],
+    });
+    if (!otherUser || otherUser.isActive === false) return null;
+
+    const [pin, state, unreadCount] = await Promise.all([
+      ConversationPin.findOne({ where: { conversationId, userId: viewerId } }),
+      ConversationUserState.findOne({ where: { conversationId, userId: viewerId } }),
+      this.getConversationUnreadCount(viewerId, conversationId),
+    ]);
+
+    const sentAt = conversation.lastMessageAt
+      ? new Date(conversation.lastMessageAt).toISOString()
+      : null;
+    const displayName = resolveChatDisplayName(otherUser);
+    const photo = otherUser.profilePicture ? formatMediaUrl(otherUser.profilePicture) : null;
+    const pinnedAt = pin?.createdAt ? new Date(pin.createdAt).toISOString() : null;
+
+    return {
+      conversationId: conversation.id,
+      id: conversation.id,
+      lastMessage: conversation.lastMessage
+        ? {
+            content: conversation.lastMessage,
+            messageType: 'text',
+            sentAt: sentAt || new Date(conversation.updatedAt).toISOString(),
+            createdAt: sentAt || new Date(conversation.updatedAt).toISOString(),
+          }
+        : null,
+      lastMessageText: conversation.lastMessage || null,
+      lastMessageAt: sentAt,
+      unreadCount,
+      participant: {
+        userId: otherUser.id,
+        id: otherUser.id,
+        displayName,
+        name: displayName,
+        username: otherUser.username || otherUser.nickName || '',
+        profileImageUrl: photo,
+        profilePhotoUrl: photo,
+        isOnline: isUserConnected(otherUser.id),
+      },
+      targetUser: {
+        id: otherUser.id,
+        name: displayName,
+        username: otherUser.username || otherUser.nickName || '',
+        profilePhotoUrl: photo,
+        profilePicture: photo,
+        isVerified: Boolean(otherUser.isFaceVerified),
+        isSubscribed: Boolean(otherUser.isSubscribed),
+      },
+      isPinned: !!pin,
+      pinned: !!pin,
+      pinnedAt,
+      isArchived: !!state?.isArchived,
+      updatedAt: new Date().toISOString(),
+    };
+  }
+
+  private emitToViewer(viewerId: string, eventName: string, payload: any): void {
+    const io = getSocketServer();
+    if (!io || !viewerId) return;
+    const rooms = new Set<string>([getUserRoomName(viewerId)]);
+    const lower = String(viewerId).toLowerCase();
+    if (lower !== viewerId) {
+      rooms.add(getUserRoomName(lower));
+    }
+    for (const room of rooms) {
+      io.to(room).emit(eventName as any, payload);
+    }
+  }
+
+  /**
+   * Pushes the viewer's chat-list row immediately so an open list can insert
+   * or move the conversation without leaving the screen and coming back.
+   */
+  private async pushViewerConversation(
+    viewerId: string,
+    conversationId: string
+  ): Promise<Record<string, any> | null> {
+    try {
+      const payload = await this.buildViewerConversationPayload(viewerId, conversationId);
+      if (!payload) return null;
+      for (const eventName of [
+        'conversation:updated',
+        'chat:conversation_updated',
+        'conversation_updated',
+        'conversation:update',
+        'conversations:update',
+      ]) {
+        this.emitToViewer(viewerId, eventName, payload);
+      }
+      return payload;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Computes total aggregate unread messages count for a user across all active conversations.
    */
   public async getTotalUnreadCount(userId: string): Promise<{ totalUnread: number }> {
@@ -4553,16 +4797,25 @@ export class ChatService {
       }
 
       // Real-time synchronization only to requesting user's active sessions (never other participants)
-      // and only emitted when state actually changed (idempotent guard)
+      // and only emitted when state actually changed (idempotent guard).
+      // conversation:updated carries the full list row (name + pin) so the open
+      // chat list can move the person into the pinned section immediately.
       try {
-        const io = getSocketServer();
+        const snapshot = await this.pushViewerConversation(currentUserId, conversationId);
         const payload = {
           conversationId,
           isPinned,
+          pinned: isPinned,
+          pinnedAt: isPinned ? snapshot?.pinnedAt || new Date().toISOString() : null,
+          participant: snapshot?.participant,
+          targetUser: snapshot?.targetUser,
+          lastMessage: snapshot?.lastMessage ?? null,
+          lastMessageAt: snapshot?.lastMessageAt ?? null,
+          unreadCount: snapshot?.unreadCount ?? 0,
+          isArchived: snapshot?.isArchived ?? false,
         };
-        const userRoom = getUserRoomName(currentUserId);
-        io.to(userRoom).emit('conversation:pin-updated', payload);
-        io.to(userRoom).emit('conversation:pin_updated' as any, payload);
+        this.emitToViewer(currentUserId, 'conversation:pin-updated', payload);
+        this.emitToViewer(currentUserId, 'conversation:pin_updated', payload);
       } catch {
         // Socket server not available in test/offline environments
       }
@@ -5362,8 +5615,14 @@ export class ChatService {
     user1Id: string;
     user2Id: string;
     recipientId: string;
-    participant?: ChatMessageSenderDTO;
+    participant?: any;
     targetUser?: any;
+    lastMessage?: any;
+    lastMessageAt?: string | null;
+    unreadCount?: number;
+    isPinned?: boolean;
+    pinned?: boolean;
+    isArchived?: boolean;
   }> {
     const recipient = await this.resolveRecipientUser(recipientId);
     recipientId = recipient.id;
@@ -5392,10 +5651,47 @@ export class ChatService {
       { unhideForUser: currentUserId }
     );
 
-    const participantDto: ChatMessageSenderDTO = {
+    const hadHistory = Boolean(
+      (conversation.lastMessage && String(conversation.lastMessage).trim().length > 0) ||
+        conversation.lastMessageAt
+    );
+
+    // Opening chat from a profile must keep the thread on the starter's list.
+    // Until a real message exists, the other person does not see an empty row.
+    if (!hadHistory) {
+      const openedAt = new Date();
+      const hiddenAt = new Date(openedAt.getTime() + 1000);
+      conversation.lastMessageAt = openedAt;
+      await conversation.save();
+      await ConversationUserState.update(
+        { isDeleted: true, deletedAt: hiddenAt, clearedAt: hiddenAt },
+        { where: { conversationId: conversation.id, userId: recipientId } }
+      );
+    }
+
+    const displayName = resolveChatDisplayName(recipient);
+    const photo = formatMediaUrl(recipient.profilePicture);
+    const snapshot = await this.pushViewerConversation(currentUserId, conversation.id);
+
+    const participant = snapshot?.participant || {
+      userId: recipient.id,
       id: recipient.id,
-      displayName: resolveChatDisplayName(recipient),
-      profileImageUrl: formatMediaUrl(recipient.profilePicture),
+      displayName,
+      name: displayName,
+      username: recipient.username || '',
+      profileImageUrl: photo,
+      profilePhotoUrl: photo,
+      isOnline: isUserConnected(recipient.id),
+    };
+
+    const targetUser = snapshot?.targetUser || {
+      id: recipient.id,
+      username: recipient.username,
+      name: displayName,
+      profilePicture: photo,
+      profilePhotoUrl: photo,
+      isVerified: Boolean((recipient as any).isFaceVerified),
+      isSubscribed: Boolean((recipient as any).isSubscribed),
     };
 
     return {
@@ -5405,13 +5701,16 @@ export class ChatService {
       user1Id: conversation.user1Id,
       user2Id: conversation.user2Id,
       recipientId,
-      participant: participantDto,
-      targetUser: {
-        id: recipient.id,
-        username: recipient.username,
-        name: resolveChatDisplayName(recipient),
-        profilePicture: formatMediaUrl(recipient.profilePicture),
-      },
+      participant,
+      targetUser,
+      lastMessage: snapshot?.lastMessage ?? null,
+      lastMessageAt: snapshot?.lastMessageAt ?? (conversation.lastMessageAt
+        ? new Date(conversation.lastMessageAt).toISOString()
+        : null),
+      unreadCount: snapshot?.unreadCount ?? 0,
+      isPinned: snapshot?.isPinned ?? false,
+      pinned: snapshot?.pinned ?? false,
+      isArchived: snapshot?.isArchived ?? false,
     };
   }
 
@@ -5607,10 +5906,14 @@ export class ChatService {
 
     const results: ConversationSummaryDTO[] = [];
 
-    for (const conv of conversations) {
-      if (conv.user1Id === conv.user2Id) continue;
+    const normViewerId = String(userId || '').trim().toLowerCase();
 
-      const partner = conv.user1Id === userId ? (conv as any).user2 : (conv as any).user1;
+    for (const conv of conversations) {
+      const normU1 = String(conv.user1Id || '').trim().toLowerCase();
+      const normU2 = String(conv.user2Id || '').trim().toLowerCase();
+      if (normU1 === normU2) continue;
+
+      const partner = normU1 === normViewerId ? (conv as any).user2 : (conv as any).user1;
       if (!partner || !partner.isActive) continue;
 
       // Exclude noped users
@@ -5648,7 +5951,7 @@ export class ChatService {
         id: conv.id,
         targetUser: {
           id: partner.id,
-          name: resolveDisplayName(partner),
+          name: resolveChatDisplayName(partner),
           username: partner.username || partner.nickName || '',
           profilePhotoUrl: this.resolvePrimaryPhoto(partner.profilePicture, partner.photos),
           isVerified: Boolean(partner.isFaceVerified),

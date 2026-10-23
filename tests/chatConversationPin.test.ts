@@ -509,6 +509,9 @@ describe('Pin / Unpin Conversation API & Real-time Socket.IO Sync', () => {
       const pinEventPromiseA = new Promise<any>((resolve) => {
         socketA.on('conversation:pin-updated', (data) => resolve(data));
       });
+      const listUpdatePromiseA = new Promise<any>((resolve) => {
+        socketA.on('conversation:updated', (data) => resolve(data));
+      });
 
       let receivedByB = false;
       socketB.on('conversation:pin-updated', () => {
@@ -522,10 +525,18 @@ describe('Pin / Unpin Conversation API & Real-time Socket.IO Sync', () => {
         .send({ isPinned: true });
 
       const eventData = await pinEventPromiseA;
-      expect(eventData).toEqual({
-        conversationId: convAB.id,
-        isPinned: true,
-      });
+      expect(eventData.conversationId).toBe(convAB.id);
+      expect(eventData.isPinned).toBe(true);
+      expect(eventData.pinned).toBe(true);
+      expect(eventData.participant?.userId).toBe(userB.id);
+      expect(eventData.participant?.displayName).toBe('Bob Partner');
+
+      const listUpdate = await listUpdatePromiseA;
+      expect(listUpdate.conversationId).toBe(convAB.id);
+      expect(listUpdate.isPinned).toBe(true);
+      expect(listUpdate.pinned).toBe(true);
+      expect(listUpdate.participant.displayName).toBe('Bob Partner');
+      expect(listUpdate.participant.userId).toBe(userB.id);
 
       // Brief delay to ensure User B did not receive the event
       await new Promise((resolve) => setTimeout(resolve, 200));

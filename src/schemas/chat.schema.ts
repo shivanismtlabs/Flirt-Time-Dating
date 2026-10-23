@@ -126,7 +126,8 @@ export const directSendMessageSchema = z.object({
     url: z.string().trim().max(5000).optional(),
     fileUrl: z.string().trim().max(5000).optional(),
     images: z.union([z.array(z.any()), z.string()]).optional(),
-    imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+    imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+    mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
     duration: z.union([z.number(), z.string()]).optional(),
     durationMs: z.union([z.number(), z.string()]).optional(),
     caption: z.string().trim().max(1000).optional(),
@@ -151,7 +152,11 @@ export const directSendMessageSchema = z.object({
       const first = (data as any).images[0];
       multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
     } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-      multiImageFirst = (data as any).imageUrls[0];
+      const first = (data as any).imageUrls[0];
+      multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
+    } else if (Array.isArray((data as any).mediaUrls) && (data as any).mediaUrls.length > 0) {
+      const first = (data as any).mediaUrls[0];
+      multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
     }
 
     const resolvedContent =
@@ -341,7 +346,8 @@ export const sendMessageSchema = z.object({
       url: z.string().trim().max(5000).optional(),
       fileUrl: z.string().trim().max(5000).optional(),
       images: z.union([z.array(z.any()), z.string()]).optional(),
-      imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+      imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
       durationMs: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
@@ -371,7 +377,11 @@ export const sendMessageSchema = z.object({
         const first = (data as any).images[0];
         multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
       } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-        multiImageFirst = (data as any).imageUrls[0];
+        const first = (data as any).imageUrls[0];
+        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
+      } else if (Array.isArray((data as any).mediaUrls) && (data as any).mediaUrls.length > 0) {
+        const first = (data as any).mediaUrls[0];
+        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
       }
 
       const resolvedContent =
@@ -571,7 +581,8 @@ export const sendMultiMessageSchema = z.object({
           url: z.string().trim().max(5000).optional(),
           fileUrl: z.string().trim().max(5000).optional(),
           images: z.union([z.array(z.any()), z.string()]).optional(),
-          imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+          imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+          mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
           duration: z.union([z.number(), z.string()]).optional(),
           durationMs: z.union([z.number(), z.string()]).optional(),
           caption: z.string().trim().max(1000).optional(),
@@ -628,7 +639,11 @@ export const sendMultiMessageSchema = z.object({
         const first = (data as any).images[0];
         multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
       } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-        multiImageFirst = (data as any).imageUrls[0];
+        const first = (data as any).imageUrls[0];
+        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
+      } else if (Array.isArray((data as any).mediaUrls) && (data as any).mediaUrls.length > 0) {
+        const first = (data as any).mediaUrls[0];
+        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
       }
 
       const resolvedContent =
@@ -1113,7 +1128,8 @@ export const replyMessageSchema = z.object({
     url: z.string().trim().max(5000).optional(),
     fileUrl: z.string().trim().max(5000).optional(),
     images: z.union([z.array(z.any()), z.string()]).optional(),
-    imageUrls: z.union([z.array(z.string()), z.string()]).optional(),
+    imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+    mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
     duration: z.union([z.number(), z.string()]).optional(),
     caption: z.string().trim().max(1000).optional(),
     type: z

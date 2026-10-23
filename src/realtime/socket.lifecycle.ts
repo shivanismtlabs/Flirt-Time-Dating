@@ -61,7 +61,12 @@ export const getUserActiveSocketCount = (userId: string): number => {
  * Checks if a user has at least one active socket connection.
  */
 export const isUserConnected = (userId: string): boolean => {
-  return (userSocketsMap.get(userId)?.size ?? 0) > 0;
+  const target = String(userId || '').trim().toLowerCase();
+  if (!target) return false;
+  for (const [key, sockets] of userSocketsMap) {
+    if (String(key).trim().toLowerCase() === target && sockets.size > 0) return true;
+  }
+  return false;
 };
 
 /** Mark whether this user currently has a conversation open on screen. */
@@ -88,7 +93,16 @@ export const isUserViewingConversation = (
   userId: string,
   conversationId: string
 ): boolean => {
-  return viewingConversations.get(userId)?.has(conversationId) ?? false;
+  const target = String(userId || '').trim().toLowerCase();
+  const conv = String(conversationId || '').trim().toLowerCase();
+  if (!target || !conv) return false;
+  for (const [key, open] of viewingConversations) {
+    if (String(key).trim().toLowerCase() !== target) continue;
+    for (const id of open) {
+      if (String(id).trim().toLowerCase() === conv) return true;
+    }
+  }
+  return false;
 };
 
 export const clearUserViewing = (userId: string): void => {

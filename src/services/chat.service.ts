@@ -2765,12 +2765,23 @@ export class ChatService {
     }
 
     this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
-    await this.applyLiveReceipts(
+    const liveStatus = await this.applyLiveReceipts(
       senderId,
       recipientId,
       conversationId,
       allDtos.map((d) => d.id)
     );
+    if (liveStatus !== 'sent') {
+      const at = new Date().toISOString();
+      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
+      this.applyReceiptStatus(primaryDto, liveStatus, at);
+      if (Array.isArray(primaryDto.results)) {
+        for (const row of primaryDto.results as Array<{ status?: string; message?: any }>) {
+          row.status = liveStatus;
+          if (row.message) this.applyReceiptStatus(row.message, liveStatus, at);
+        }
+      }
+    }
     return primaryDto;
   }
 
@@ -3926,12 +3937,23 @@ export class ChatService {
           primaryRecipientDto.durationMs = uploadedAudios[0].durationMs;
         }
 
-        await this.applyLiveReceipts(
+        const liveStatus = await this.applyLiveReceipts(
           senderId,
           recipientId,
           conversationId,
           recipientDtos.map((d) => d.id)
         );
+        if (liveStatus !== 'sent') {
+          const at = new Date().toISOString();
+          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
+          this.applyReceiptStatus(primaryRecipientDto, liveStatus, at);
+          if (Array.isArray(primaryRecipientDto.results)) {
+            for (const row of primaryRecipientDto.results as Array<{ status?: string; message?: any }>) {
+              row.status = liveStatus;
+              if (row.message) this.applyReceiptStatus(row.message, liveStatus, at);
+            }
+          }
+        }
 
         results.push({
           recipientId,
@@ -3970,9 +3992,9 @@ export class ChatService {
   }
 
   /**
-   * Push sent / delivered / seen ticks on the names this app and older clients listen for.
-   * OneVibe mobile: chat:message:delivered, chat:message:seen, chat:message:status.
-   * Existing clients: chat:delivery_receipt, chat:read_receipt.
+   * Ticks the old FlirtTime app actually listens for.
+   * Delivered → chat:delivery_receipt. Seen → chat:read_receipt.
+   * Each event carries the message `id` the bubble was stored with.
    */
   private emitMessageReceipt(input: {
     kind: 'delivered' | 'read';
@@ -3988,23 +4010,41 @@ export class ChatService {
     const ids = input.messageIds.filter(Boolean);
     const cursorId = input.cursorId || ids[ids.length - 1] || null;
     const atIso = input.at.toISOString();
+    const status = input.kind === 'delivered' ? 'delivered' : 'read';
+
+    const messages = ids.map((id) => ({
+      id,
+      messageId: id,
+      conversationId: input.conversationId,
+      status,
+      receiptStatus: status,
+      isDelivered: true,
+      deliveredAt: atIso,
+      isRead: input.kind === 'read',
+      readAt: input.kind === 'read' ? atIso : null,
+      seen: input.kind === 'read',
+    }));
 
     const legacy =
       input.kind === 'delivered'
         ? {
+            id: cursorId,
             conversationId: input.conversationId,
             recipientId: input.actorId,
             delivererId: input.actorId,
             userId: input.actorId,
             messageIds: ids,
             messageId: cursorId,
+            messages,
             deliveredAt: atIso,
             status: 'delivered' as const,
             receiptStatus: 'delivered' as const,
             isDelivered: true,
+            isRead: false,
             deliveredCount: input.markedCount ?? ids.length,
           }
         : {
+            id: cursorId,
             conversationId: input.conversationId,
             readerId: input.actorId,
             userId: input.actorId,
@@ -4012,42 +4052,15 @@ export class ChatService {
             lastReadMessageId: cursorId,
             messageId: cursorId,
             messageIds: ids,
+            messages,
             markedCount: input.markedCount ?? ids.length,
             readAt: atIso,
+            deliveredAt: atIso,
             status: 'read' as const,
             receiptStatus: 'read' as const,
-            isRead: true,
-            seen: true,
-          };
-
-    const oneVibe =
-      input.kind === 'delivered'
-        ? {
-            conversationId: input.conversationId,
-            delivererId: input.actorId,
-            recipientId: input.actorId,
-            userId: input.actorId,
-            messageId: cursorId,
-            messageIds: ids,
-            deliveredAt: atIso,
-            status: 'delivered' as const,
-            receiptStatus: 'delivered' as const,
             isDelivered: true,
-          }
-        : {
-            conversationId: input.conversationId,
-            readerId: input.actorId,
-            userId: input.actorId,
-            readBy: input.actorId,
-            messageId: cursorId,
-            messageIds: ids,
-            lastReadMessageId: cursorId,
-            readAt: atIso,
-            status: 'seen' as const,
-            receiptStatus: 'read' as const,
             isRead: true,
             seen: true,
-            markedCount: input.markedCount ?? 0,
           };
 
     const rooms = [
@@ -4063,41 +4076,60 @@ export class ChatService {
       rooms.push(getUserRoomName(input.actorId.toLowerCase()));
     }
 
-    const legacyEvents =
+    const events =
       input.kind === 'delivered'
         ? ['chat:delivery_receipt', 'message:delivery_receipt']
         : ['chat:read_receipt', 'message:read_receipt'];
-    const oneVibeEvents =
-      input.kind === 'delivered'
-        ? ['chat:message:delivered', 'chat:message:status', 'message:status']
-        : ['chat:message:seen', 'chat:seen', 'message:seen', 'chat:message:status', 'message:status'];
 
-    for (const room of rooms) {
-      for (const event of legacyEvents) {
-        io.to(room).emit(event as any, legacy);
-      }
-      for (const event of oneVibeEvents) {
-        io.to(room).emit(event as any, oneVibe);
-      }
-    }
-
-    if (ids.length > 1) {
-      const perEvent = input.kind === 'delivered' ? 'chat:message:delivered' : 'chat:message:seen';
-      for (const id of ids) {
-        const perMessage = { ...oneVibe, messageId: id };
-        for (const room of rooms) {
-          io.to(room).emit(perEvent as any, perMessage);
+    const emitPayload = (payload: Record<string, unknown>) => {
+      for (const room of rooms) {
+        for (const event of events) {
+          io.to(room).emit(event as any, payload);
         }
       }
-    }
+    };
 
-    io.to(getUserRoomName(input.notifyUserId)).emit('chat:inbox:refresh' as any, {
+    for (const id of ids) {
+      emitPayload({
+        ...legacy,
+        id,
+        messageId: id,
+        messageIds: [id],
+        messages: messages.filter((message) => message.id === id),
+      });
+    }
+    emitPayload(legacy);
+
+    const inbox = {
       conversationId: input.conversationId,
       reason: input.kind === 'delivered' ? 'delivered' : 'read',
       ...(input.kind === 'delivered'
         ? { delivererId: input.actorId }
         : { readerId: input.actorId }),
-    });
+    };
+    io.to(getUserRoomName(input.notifyUserId)).emit('chat:inbox:refresh' as any, inbox);
+  }
+
+  private applyReceiptStatus(
+    dto: {
+      status?: string;
+      receiptStatus?: string;
+      isDelivered?: boolean;
+      deliveredAt?: Date | string | null;
+      isRead?: boolean;
+      readAt?: Date | string | null;
+    },
+    status: 'delivered' | 'read',
+    at: string
+  ): void {
+    dto.status = status;
+    dto.receiptStatus = status;
+    dto.isDelivered = true;
+    if (!dto.deliveredAt) dto.deliveredAt = at;
+    if (status === 'read') {
+      dto.isRead = true;
+      dto.readAt = at;
+    }
   }
 
   /**
@@ -4109,21 +4141,25 @@ export class ChatService {
     recipientId: string,
     conversationId: string,
     messageIds: string[]
-  ): Promise<void> {
-    if (!recipientId || !conversationId || messageIds.length === 0) return;
-    if (recipientId === senderId) return;
+  ): Promise<'sent' | 'delivered' | 'read'> {
+    if (!recipientId || !conversationId || messageIds.length === 0) return 'sent';
+    if (String(recipientId).trim().toLowerCase() === String(senderId).trim().toLowerCase()) {
+      return 'sent';
+    }
     try {
       const latestId = messageIds[messageIds.length - 1];
       if (isUserViewingConversation(recipientId, conversationId)) {
-        await this.markMessagesAsRead(recipientId, conversationId, latestId);
-        return;
+        const read = await this.markMessagesAsRead(recipientId, conversationId, latestId);
+        return read.markedCount > 0 ? 'read' : 'sent';
       }
       if (isUserConnected(recipientId)) {
-        await this.acknowledgeDelivery(recipientId, conversationId, messageIds);
+        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, messageIds);
+        return delivery.deliveredCount > 0 ? 'delivered' : 'sent';
       }
     } catch {
       // receipt side effects must not fail the send
     }
+    return 'sent';
   }
 
   /**
@@ -4154,7 +4190,10 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const sameUser = (left?: string | null, right?: string | null) =>
+      String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+
+    if (!sameUser(conversation.user1Id, currentUserId) && !sameUser(conversation.user2Id, currentUserId)) {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
@@ -4181,6 +4220,20 @@ export class ChatService {
         where: { id: lastReadMessageId, conversationId },
         attributes: ['id', 'conversationId', 'createdAt'],
       });
+
+      if (!boundaryMessage) {
+        const safeClientId = String(lastReadMessageId).replace(/[%_"]/g, '');
+        if (safeClientId) {
+          boundaryMessage = await ChatMessage.findOne({
+            where: {
+              conversationId,
+              metadata: { [Op.like]: `%"clientMessageId":"${safeClientId}"%` },
+            },
+            attributes: ['id', 'conversationId', 'createdAt'],
+          });
+          if (boundaryMessage) lastReadMessageId = boundaryMessage.id;
+        }
+      }
 
       if (!boundaryMessage) {
         throw new ChatServiceError(
@@ -4219,7 +4272,15 @@ export class ChatService {
     const now = new Date();
     const t = await sequelize.transaction();
     let markedCount = 0;
+    let pendingIds: string[] = [];
     try {
+      const pendingRows = await ChatMessage.findAll({
+        where: whereCondition,
+        attributes: ['id'],
+        order: [['createdAt', 'ASC']],
+        transaction: t,
+      });
+      pendingIds = pendingRows.map((row) => row.id);
       const [updatedRows] = await ChatMessage.update(
         {
           isRead: true,
@@ -4256,13 +4317,15 @@ export class ChatService {
     if (markedCount > 0 || lastReadMessageId) {
       try {
         const io = getSocketServer();
+        const readIds =
+          pendingIds.length > 0 ? pendingIds : resolvedLastReadId ? [resolvedLastReadId] : [];
         this.emitMessageReceipt({
           kind: 'read',
           conversationId,
           actorId: currentUserId,
           notifyUserId: otherUserId,
-          messageIds: resolvedLastReadId ? [resolvedLastReadId] : [],
-          cursorId: resolvedLastReadId,
+          messageIds: readIds,
+          cursorId: resolvedLastReadId || readIds[readIds.length - 1] || null,
           at: now,
           markedCount,
         });
@@ -4378,7 +4441,10 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const sameUser = (left?: string | null, right?: string | null) =>
+      String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+
+    if (!sameUser(conversation.user1Id, currentUserId) && !sameUser(conversation.user2Id, currentUserId)) {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
@@ -4399,7 +4465,7 @@ export class ChatService {
     }
 
     // Security & Integrity: Only messages belonging to this conversation where current user is the RECIPIENT
-    const eligibleMessages = await ChatMessage.findAll({
+    let eligibleMessages = await ChatMessage.findAll({
       where: {
         id: { [Op.in]: messageIds },
         conversationId,
@@ -4407,6 +4473,24 @@ export class ChatService {
       },
       attributes: ['id', 'isDelivered'],
     });
+
+    if (eligibleMessages.length === 0) {
+      const clientIds = messageIds
+        .map((id) => String(id).replace(/[%_"]/g, ''))
+        .filter(Boolean);
+      if (clientIds.length > 0) {
+        eligibleMessages = await ChatMessage.findAll({
+          where: {
+            conversationId,
+            recipientId: currentUserId,
+            [Op.or]: clientIds.map((id) => ({
+              metadata: { [Op.like]: `%"clientMessageId":"${id}"%` },
+            })),
+          },
+          attributes: ['id', 'isDelivered'],
+        });
+      }
+    }
 
     if (eligibleMessages.length === 0) {
       return {
@@ -4509,7 +4593,9 @@ export class ChatService {
         throw new ChatServiceError('Conversation not found', 404);
       }
 
-      if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+      const sameUser = (left?: string | null, right?: string | null) =>
+        String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+      if (!sameUser(conversation.user1Id, currentUserId) && !sameUser(conversation.user2Id, currentUserId)) {
         throw new ChatServiceError('Conversation not found', 404);
       }
     }
@@ -4786,6 +4872,10 @@ export class ChatService {
 
       const senderRoom = getUserRoomName(senderId);
       const recipientRoom = getUserRoomName(recipientId);
+      const inboxRefresh = { conversationId, reason: 'message' };
+
+      io.to(senderRoom).emit('chat:inbox:refresh' as any, inboxRefresh);
+      io.to(recipientRoom).emit('chat:inbox:refresh' as any, inboxRefresh);
 
       // Emit to Sender's devices across all standard event names
       io.to(senderRoom).emit('conversation:updated', senderPayload);
@@ -7961,6 +8051,13 @@ return {
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
+
+        await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id)
+        );
 
         this.dispatchChatPush(
           recipientId,

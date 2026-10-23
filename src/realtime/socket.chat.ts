@@ -6,7 +6,7 @@
 
 import { AppSocket, AppSocketServer } from './socket.types';
 import { chatService, ChatServiceError, coerceMediaList } from '../services/chat.service';
-import { Conversation, UserBlock } from '../models';
+import { ChatMessage, Conversation, UserBlock } from '../models';
 import { Op } from 'sequelize';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
@@ -328,13 +328,51 @@ export const registerChatSocketHandlers = (
   socket.on('chat:forward_message', handleForwardMessage);
   socket.on('message:forward' as any, handleForwardMessage);
 
+  const collectMessageIds = (payload: any, conversationId?: string): string[] => {
+    const out: string[] = [];
+    const push = (value: unknown) => {
+      if (typeof value !== 'string') return;
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      if (conversationId && trimmed === conversationId) return;
+      out.push(trimmed);
+    };
+
+    if (Array.isArray(payload?.messageIds)) payload.messageIds.forEach(push);
+    else if (typeof payload?.messageIds === 'string') payload.messageIds.split(',').forEach(push);
+    if (Array.isArray(payload?.deliveredMessageIds)) payload.deliveredMessageIds.forEach(push);
+    else if (typeof payload?.deliveredMessageIds === 'string') {
+      payload.deliveredMessageIds.split(',').forEach(push);
+    }
+    push(payload?.messageId);
+    push(payload?.message_id);
+    push(payload?.lastReadMessageId);
+    push(payload?.last_read_message_id);
+    push(payload?.id);
+    if (payload?.message && typeof payload.message === 'object') {
+      push(payload.message.id);
+      push(payload.message.messageId);
+    }
+    if (Array.isArray(payload?.messages)) {
+      for (const item of payload.messages) {
+        if (typeof item === 'string') push(item);
+        else if (item && typeof item === 'object') {
+          push(item.id);
+          push(item.messageId);
+        }
+      }
+    }
+    return Array.from(new Set(out));
+  };
+
   // 2. Event: chat:mark_read & message:read (Read Acknowledgement)
   const handleMarkRead = async (payload: any, callback?: Function) => {
     try {
       const conversationId =
         payload?.conversationId ||
         payload?.conversation_id ||
-        payload?.chatId;
+        payload?.chatId ||
+        payload?.message?.conversationId;
 
       if (!conversationId) {
         if (typeof callback === 'function') {
@@ -343,12 +381,14 @@ export const registerChatSocketHandlers = (
         return;
       }
 
+      const messageIds = collectMessageIds(payload, conversationId);
       const lastReadMessageId =
         payload?.lastReadMessageId ||
         payload?.messageId ||
         payload?.last_read_message_id ||
         payload?.message_id ||
-        (payload?.id && payload?.id !== conversationId ? payload?.id : undefined);
+        payload?.message?.id ||
+        messageIds[messageIds.length - 1];
 
       const result = await chatService.markMessagesAsRead(
         currentUserId,
@@ -375,23 +415,18 @@ export const registerChatSocketHandlers = (
   // 2b. Event: chat:message_delivered & message:delivered (Delivery Acknowledgement)
   const handleMessageDelivered = async (payload: any, callback?: Function) => {
     try {
-      const conversationId =
+      let conversationId =
         payload?.conversationId ||
         payload?.conversation_id ||
-        payload?.chatId;
+        payload?.chatId ||
+        payload?.message?.conversationId;
 
-      let messageIds: string[] = [];
-      if (Array.isArray(payload?.messageIds)) {
-        messageIds = payload.messageIds;
-      } else if (Array.isArray(payload?.deliveredMessageIds)) {
-        messageIds = payload.deliveredMessageIds;
-      } else if (typeof payload?.messageId === 'string' && payload.messageId.trim()) {
-        messageIds = [payload.messageId.trim()];
-      } else if (typeof payload?.messageIds === 'string' && payload.messageIds.trim()) {
-        const trimmed = payload.messageIds.trim();
-        messageIds = trimmed.includes(',')
-          ? trimmed.split(',').map((s: string) => s.trim()).filter(Boolean)
-          : [trimmed];
+      let messageIds = collectMessageIds(payload, conversationId);
+      if (!conversationId && messageIds.length > 0) {
+        const row = await ChatMessage.findByPk(messageIds[0], {
+          attributes: ['conversationId'],
+        });
+        conversationId = row?.conversationId;
       }
 
       if (!conversationId || messageIds.length === 0) {

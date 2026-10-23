@@ -507,4 +507,63 @@ describe('FlirtTime Notifications & FCM APIs', () => {
       expect(message.data.silent).toBeUndefined();
     });
   });
+
+  describe('8. Moment notification payload includes momentId', () => {
+    const momentId = '6f1c2a30-7b4e-4d2a-9c11-0a1b2c3d4e5f';
+
+    beforeEach(async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_moment_token_user_b',
+        platform: 'ios',
+        isActive: true,
+      });
+    });
+
+    it('includes momentId for comment, comment like, and gift pushes and the in-app payload', async () => {
+      await notificationService.sendCommentNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        comment: 'Nice moment',
+        momentId,
+        commentId: '11111111-1111-4111-8111-111111111111',
+      });
+
+      await notificationService.sendCommentLikeNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        commentId: '22222222-2222-4222-8222-222222222222',
+        momentId,
+        commentSnippet: 'Nice moment',
+      });
+
+      await notificationService.sendMomentGiftNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        momentId,
+        giftName: 'Rose',
+        giftCode: 'rose',
+        quantity: 1,
+        totalCoins: 10,
+      });
+
+      expect(mockSendEachForMulticast).toHaveBeenCalledTimes(3);
+      for (const call of mockSendEachForMulticast.mock.calls) {
+        const message = call[0];
+        expect(message.data.momentId).toBe(momentId);
+        expect(message.apns.payload.momentId).toBe(momentId);
+      }
+
+      const res = await request(app)
+        .get('/api/v1/notifications?limit=20&timezone=UTC')
+        .set('Authorization', `Bearer ${tokenB}`);
+
+      expect(res.status).toBe(200);
+      const items = res.body.data.notifications;
+      expect(items).toHaveLength(3);
+      for (const item of items) {
+        expect(item.data.momentId).toBe(momentId);
+      }
+    });
+  });
 });

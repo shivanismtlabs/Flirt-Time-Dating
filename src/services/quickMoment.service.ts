@@ -1004,7 +1004,7 @@ export class QuickMomentService {
 
   /**
    * GET /api/v1/quick-moments/:momentId/replies
-   * Owner activity sheet: who replied, with the reply text.
+   * Owner activity sheet: replies, viewers, and reactions for one quick moment.
    */
   public async getQuickMomentReplies(
     viewerUserId: string,
@@ -1071,6 +1071,54 @@ export class QuickMomentService {
         : null,
     }));
 
+    const userAttributes = ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'];
+
+    const [viewRows, reactionRows] = await Promise.all([
+      QuickMomentView.findAll({
+        where: { quickMomentId: momentId },
+        include: [{ model: User, as: 'viewer', attributes: userAttributes }],
+        order: [['createdAt', 'DESC']],
+      }),
+      QuickMomentReaction.findAll({
+        where: { quickMomentId: momentId },
+        include: [{ model: User, as: 'user', attributes: userAttributes }],
+        order: [['createdAt', 'DESC']],
+      }),
+    ]);
+
+    const viewers = viewRows.map((view: any) => ({
+      userId: view.viewer?.id,
+      name: view.viewer?.fullName || view.viewer?.nickName || 'Viewer',
+      avatar: view.viewer?.profilePicture
+        ? formatThumbnailUrl(view.viewer.profilePicture, view.viewer.updatedAt)
+        : null,
+      isVerified: !!view.viewer?.isFaceVerified,
+      isSubscribed: !!view.viewer?.isSubscribed,
+      city: view.viewer?.city || null,
+      viewedAt: view.createdAt,
+      timeAgo: view.createdAt ? formatTimeAgo(view.createdAt, false) : null,
+    }));
+
+    const reactionSummary = buildReactionBadge(reactionRows);
+    const reactors = reactionRows.map((reaction: any) => ({
+      id: reaction.id,
+      emoji: reaction.emoji,
+      createdAt: reaction.createdAt,
+      timeAgo: reaction.createdAt ? formatTimeAgo(reaction.createdAt, false) : null,
+      user: reaction.user
+        ? {
+            id: reaction.user.id,
+            name: reaction.user.fullName || reaction.user.nickName || 'User',
+            avatar: reaction.user.profilePicture
+              ? formatThumbnailUrl(reaction.user.profilePicture, reaction.user.updatedAt)
+              : null,
+            city: reaction.user.city || null,
+            isVerified: !!reaction.user.isFaceVerified,
+            isSubscribed: !!reaction.user.isSubscribed,
+          }
+        : null,
+    }));
+
     return {
       momentId,
       total: count,
@@ -1080,6 +1128,17 @@ export class QuickMomentService {
         limit,
         total: count,
         totalPages: Math.ceil(count / limit),
+      },
+      views: {
+        total: viewers.length,
+        viewers,
+      },
+      reactions: {
+        total: reactionSummary.total,
+        topEmojis: reactionSummary.topEmojis,
+        badgeText: reactionSummary.badgeText,
+        breakdown: reactionSummary.breakdown,
+        reactors,
       },
     };
   }

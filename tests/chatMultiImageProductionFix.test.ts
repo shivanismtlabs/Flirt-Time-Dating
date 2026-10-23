@@ -190,15 +190,15 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
       expect(Array.isArray(res.body.data.imageUrls)).toBe(true);
       expect(res.body.data.imageUrls.length).toBe(3);
 
-      // Verify all 3 images persisted
+      // One grouped message holds every photo
       const allDbMsgs = await ChatMessage.findAll({
         where: { conversationId: testConversation.id },
       });
-      expect(allDbMsgs.length).toBe(3);
-      for (const msg of allDbMsgs) {
-        expect(msg.messageType).toBe('image');
-        expect(msg.senderId).toBe(senderUser.id);
-      }
+      expect(allDbMsgs.length).toBe(1);
+      expect(allDbMsgs[0].messageType).toBe('image');
+      expect(allDbMsgs[0].senderId).toBe(senderUser.id);
+      const stored = JSON.parse(allDbMsgs[0].metadata || '{}');
+      expect(stored.images.length).toBe(3);
     });
   });
 
@@ -319,18 +319,19 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.messages.length).toBe(3);
+      expect(res.body.data.messages.length).toBe(1);
 
-      for (const msg of res.body.data.messages) {
-        expect(msg.messageType).toBe('image');
-        expect(msg.isMine).toBe(false);
-        expect(msg.imageUrl.startsWith('http')).toBe(true);
-        expect(msg.thumbnailUrl.startsWith('http')).toBe(true);
-        expect(Array.isArray(msg.images)).toBe(true);
-        expect(msg.images.length).toBe(1);
-        expect(msg.images[0].url.startsWith('http')).toBe(true);
+      const msg = res.body.data.messages[0];
+      expect(msg.messageType).toBe('image');
+      expect(msg.isMine).toBe(false);
+      expect(msg.imageUrl.startsWith('http')).toBe(true);
+      expect(msg.thumbnailUrl.startsWith('http')).toBe(true);
+      expect(msg.images.length).toBe(3);
+      expect(msg.medias.length).toBe(3);
+      for (const img of msg.images) {
+        expect(img.url.startsWith('http')).toBe(true);
       }
-      expect(new Set(res.body.data.messages.map((msg: any) => msg.imageUrl)).size).toBe(3);
+      expect(new Set(msg.images.map((img: any) => img.url)).size).toBe(3);
 
       // 3. Receiver calls direct target user endpoint GET /api/v1/chat/messages/:targetUserId
       const directRes = await request(app)
@@ -338,7 +339,9 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
         .set('Authorization', `Bearer ${receiverToken}`);
 
       expect(directRes.status).toBe(200);
-      expect(directRes.body.data.messages.length).toBe(3);
+      expect(directRes.body.data.messages.length).toBe(1);
+      expect(directRes.body.data.messages[0].images.length).toBe(3);
+      expect(directRes.body.data.messages[0].isMine).toBe(false);
     });
   });
 

@@ -426,6 +426,15 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
         .set('Authorization', `Bearer ${thirdToken}`)
         .send({ message: 'Love this story' });
 
+      await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      await request(app)
+        .post(`/api/v1/quick-moments/${storyId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '😍' });
+
       const res = await request(app)
         .get(`/api/v1/quick-moments/${storyId}/replies?page=1&limit=30`)
         .set('Authorization', `Bearer ${cindyToken}`);
@@ -461,6 +470,28 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
       expect(pageRes.body.data.replies).toHaveLength(1);
       expect(pageRes.body.data.pagination.total).toBe(2);
       expect(pageRes.body.data.pagination.totalPages).toBe(2);
+      expect(pageRes.body.data.views.total).toBe(1);
+      expect(pageRes.body.data.reactions.total).toBe(1);
+
+      expect(res.body.data.views.total).toBe(1);
+      expect(res.body.data.views.viewers).toHaveLength(1);
+      expect(res.body.data.views.viewers[0].userId).toBe(alexUser.id);
+      expect(res.body.data.views.viewers[0].name).toBe('Alex Rivers');
+      expect(res.body.data.views.viewers[0].avatar).toBeTruthy();
+      expect(res.body.data.views.viewers[0].viewedAt).toBeDefined();
+      expect(res.body.data.views.viewers[0].timeAgo).toBeDefined();
+
+      expect(res.body.data.reactions.total).toBe(1);
+      expect(res.body.data.reactions.topEmojis).toEqual(['😍']);
+      expect(res.body.data.reactions.badgeText).toBe('😍 1');
+      expect(res.body.data.reactions.breakdown).toEqual([{ emoji: '😍', count: 1 }]);
+      expect(res.body.data.reactions.reactors).toHaveLength(1);
+      expect(res.body.data.reactions.reactors[0].emoji).toBe('😍');
+      expect(res.body.data.reactions.reactors[0].user.id).toBe(alexUser.id);
+      expect(res.body.data.reactions.reactors[0].user.name).toBe('Alex Rivers');
+      expect(res.body.data.reactions.reactors[0].user.avatar).toBeTruthy();
+      expect(res.body.data.reactions.reactors[0].createdAt).toBeDefined();
+      expect(res.body.data.reactions.reactors[0].timeAgo).toBeDefined();
     });
 
     it('should reject a non-owner from listing replies', async () => {

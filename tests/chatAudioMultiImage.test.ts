@@ -229,16 +229,13 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
 
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
-      // Both images are saved as distinct message records so all images appear in chat UI for both users
-      expect(res.body.data.messages.length).toBe(2);
-      const urls = new Set(res.body.data.messages.map((msg: any) => msg.imageUrl));
-      expect(urls.size).toBe(2);
-      for (const fetchedMsg of res.body.data.messages) {
-        expect(fetchedMsg.status).toBe('sent');
-        expect(fetchedMsg.messageType).toBe('image');
-        expect(fetchedMsg.imageUrl).toBeDefined();
-        expect(fetchedMsg.images.length).toBe(1);
-      }
+      expect(res.body.data.messages.length).toBe(1);
+      const fetchedMsg = res.body.data.messages[0];
+      expect(fetchedMsg.status).toBe('sent');
+      expect(fetchedMsg.messageType).toBe('image');
+      expect(fetchedMsg.images.length).toBe(2);
+      expect(fetchedMsg.medias.length).toBe(2);
+      expect(new Set(fetchedMsg.images.map((img: any) => img.url || img.imageUrl)).size).toBe(2);
     });
 
     it('should support sending 3-4 images and have all of them visible in chat history', async () => {
@@ -256,20 +253,19 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       expect(sendRes.body.data.images.length).toBe(4);
       expect(sendRes.body.data.imageUrls.length).toBe(4);
       expect(Array.isArray(sendRes.body.data.messages)).toBe(true);
-      expect(sendRes.body.data.messages.length).toBe(4);
+      expect(sendRes.body.data.messages.length).toBe(1);
+      expect(sendRes.body.data.messages[0].images.length).toBe(4);
 
-      // Sender fetches history -> should see all 4 images
+      // Sender fetches history -> one grouped message with all 4 images
       const histSender = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages`)
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect(histSender.status).toBe(200);
-      expect(histSender.body.data.messages.length).toBe(4);
-      for (const msg of histSender.body.data.messages) {
-        expect(msg.messageType).toBe('image');
-        expect(msg.imageUrl).toBeDefined();
-        expect(msg.status).toBe('sent');
-      }
+      expect(histSender.body.data.messages.length).toBe(1);
+      expect(histSender.body.data.messages[0].messageType).toBe('image');
+      expect(histSender.body.data.messages[0].images.length).toBe(4);
+      expect(histSender.body.data.messages[0].status).toBe('sent');
 
       // Recipient (Bob) generates token and fetches history -> should also see all 4 images
       const tokenB = generateToken({
@@ -283,12 +279,11 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
         .set('Authorization', `Bearer ${tokenB}`);
 
       expect(histRecipient.status).toBe(200);
-      expect(histRecipient.body.data.messages.length).toBe(4);
-      for (const msg of histRecipient.body.data.messages) {
-        expect(msg.messageType).toBe('image');
-        expect(msg.imageUrl).toBeDefined();
-        expect(msg.isMine).toBe(false);
-      }
+      expect(histRecipient.body.data.messages.length).toBe(1);
+      expect(histRecipient.body.data.messages[0].messageType).toBe('image');
+      expect(histRecipient.body.data.messages[0].images.length).toBe(4);
+      expect(histRecipient.body.data.messages[0].medias.length).toBe(4);
+      expect(histRecipient.body.data.messages[0].isMine).toBe(false);
     });
 
     it('should support sending 3-4 images AND audio in the same request without dropping either media', async () => {
@@ -309,20 +304,21 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       // Both images and audio messages are created
       expect(sendRes.body.data.images.length).toBe(3);
       expect(sendRes.body.data.audioUrl).toBeDefined();
-      expect(sendRes.body.data.messages.length).toBe(4); // 3 images + 1 audio
+      expect(sendRes.body.data.messages.length).toBe(2); // 1 image group + 1 audio
 
-      // Fetch history -> all 4 messages should be present
+      // Fetch history -> grouped images plus the voice note
       const histRes = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages`)
         .set('Authorization', `Bearer ${tokenA}`);
 
       expect(histRes.status).toBe(200);
-      expect(histRes.body.data.messages.length).toBe(4);
+      expect(histRes.body.data.messages.length).toBe(2);
 
       const imageMsgs = histRes.body.data.messages.filter((m: any) => m.messageType === 'image');
       const audioMsgs = histRes.body.data.messages.filter((m: any) => m.messageType === 'audio');
 
-      expect(imageMsgs.length).toBe(3);
+      expect(imageMsgs.length).toBe(1);
+      expect(imageMsgs[0].images.length).toBe(3);
       expect(audioMsgs.length).toBe(1);
       expect(audioMsgs[0].audioUrl).toBeDefined();
       expect(audioMsgs[0].duration).toBe(14);

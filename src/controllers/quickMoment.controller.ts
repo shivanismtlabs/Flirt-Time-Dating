@@ -205,7 +205,7 @@ export const replyQuickMomentHandler = async (
 
 /**
  * GET /api/v1/quick-moments/:momentId/replies?page=1&limit=30
- * Owner activity sheet: reply text, sender, and time.
+ * Owner activity sheet: replies, viewers, and reactions for one quick moment.
  */
 export const getQuickMomentRepliesHandler = async (
   req: AuthenticatedRequest,

@@ -25,7 +25,7 @@ describe('notification:count socket', () => {
       auth: { token: authToken },
     });
     clients.push(socket);
-    const events: Array<{ unreadCount: number }> = [];
+    const events: Array<{ unreadCount: number; count: number; unread: number }> = [];
     socket.on('notification:count', (data) => {
       events.push(data);
     });
@@ -104,8 +104,7 @@ describe('notification:count socket', () => {
     await Promise.all([waitConnect(mine.socket), waitConnect(theirs.socket)]);
     await Promise.all([waitForEvents(mine.events, 1), waitForEvents(theirs.events, 1)]);
 
-    expect(mine.events[0]).toEqual({ unreadCount: 0 });
-    expect(Object.keys(mine.events[0])).toEqual(['unreadCount']);
+    expect(mine.events[0]).toEqual({ unreadCount: 0, count: 0, unread: 0 });
 
     const created = await notificationService.dispatchNotification(user.id, {
       type: 'like',
@@ -113,12 +112,12 @@ describe('notification:count socket', () => {
       body: 'Someone liked you',
     });
     await waitForEvents(mine.events, 2);
-    expect(mine.events[1]).toEqual({ unreadCount: 1 });
+    expect(mine.events[1]).toEqual({ unreadCount: 1, count: 1, unread: 1 });
     expect(theirs.events).toHaveLength(1);
 
     await notificationService.markAsRead(user.id, created.inAppNotificationId as string);
     await waitForEvents(mine.events, 3);
-    expect(mine.events[2]).toEqual({ unreadCount: 0 });
+    expect(mine.events[2]).toEqual({ unreadCount: 0, count: 0, unread: 0 });
 
     await notificationService.dispatchNotification(user.id, {
       type: 'match',
@@ -126,11 +125,11 @@ describe('notification:count socket', () => {
       body: 'You matched',
     });
     await waitForEvents(mine.events, 4);
-    expect(mine.events[3]).toEqual({ unreadCount: 1 });
+    expect(mine.events[3]).toEqual({ unreadCount: 1, count: 1, unread: 1 });
 
     await notificationService.markAllAsRead(user.id);
     await waitForEvents(mine.events, 5);
-    expect(mine.events[4]).toEqual({ unreadCount: 0 });
+    expect(mine.events[4]).toEqual({ unreadCount: 0, count: 0, unread: 0 });
 
     const second = await notificationService.dispatchNotification(user.id, {
       type: 'like',
@@ -140,7 +139,7 @@ describe('notification:count socket', () => {
     await waitForEvents(mine.events, 6);
     await notificationService.deleteNotification(user.id, second.inAppNotificationId as string);
     await waitForEvents(mine.events, 7);
-    expect(mine.events[6]).toEqual({ unreadCount: 0 });
-    expect(theirs.events).toEqual([{ unreadCount: 0 }]);
+    expect(mine.events[6]).toEqual({ unreadCount: 0, count: 0, unread: 0 });
+    expect(theirs.events).toEqual([{ unreadCount: 0, count: 0, unread: 0 }]);
   });
 });

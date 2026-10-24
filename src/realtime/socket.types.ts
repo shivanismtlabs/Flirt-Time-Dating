@@ -105,7 +105,7 @@ export interface ServerToClientEvents {
   /**
    * Unread in-app notification badge. Emitted to the user's room.
    */
-  'notification:count': (data: { unreadCount: number }) => void;
+  'notification:count': (data: { unreadCount: number; count: number; unread: number }) => void;
 
   /**
    * Real-time Conversation List Update Events

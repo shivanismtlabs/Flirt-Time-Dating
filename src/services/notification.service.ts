@@ -1372,14 +1372,14 @@ export class NotificationService {
 
   /**
    * Pushes the current unread badge to the user's open sockets.
-   * Payload is only { unreadCount }.
+   * Keys match GET /notifications/counts so the open app can read any of them.
    */
   public async publishUnreadCount(userId: string): Promise<void> {
     try {
       const { getSocketServer } = await import('../realtime/socket.server');
       const io = getSocketServer();
       const unreadCount = await this.getUnreadCount(userId);
-      const payload = { unreadCount };
+      const payload = { unreadCount, count: unreadCount, unread: unreadCount };
       io.to(getUserRoomName(userId)).emit('notification:count', payload);
       if (userId.toLowerCase() !== userId) {
         io.to(getUserRoomName(userId.toLowerCase())).emit('notification:count', payload);

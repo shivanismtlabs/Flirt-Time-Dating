@@ -192,10 +192,10 @@ export const handleSocketConnection = (
 
   // 4. Automatically join user's private multi-device room (e.g. 'user:<uuid>')
   const userRoom = getUserRoomName(user.userId);
-  socket.join(userRoom);
-  if (user.userId && user.userId.toLowerCase() !== user.userId) {
-    socket.join(getUserRoomName(user.userId.toLowerCase()));
-  }
+  const lowercaseRoom =
+    user.userId && user.userId.toLowerCase() !== user.userId
+      ? getUserRoomName(user.userId.toLowerCase())
+      : null;
 
   socketLogger.info('Socket connection established and authenticated', {
     socketId: socket.id,
@@ -206,9 +206,14 @@ export const handleSocketConnection = (
     transport: socket.conn.transport.name,
   });
 
-  void import('../services/notification.service')
-    .then(({ notificationService }) => notificationService.publishUnreadCount(user.userId))
-    .catch(() => undefined);
+  void (async () => {
+    await socket.join(userRoom);
+    if (lowercaseRoom) {
+      await socket.join(lowercaseRoom);
+    }
+    const { notificationService } = await import('../services/notification.service');
+    await notificationService.publishUnreadCount(user.userId);
+  })().catch(() => undefined);
 
   // 5. Track transport upgrades (e.g., polling -> websocket) without logging sensitive data
   socket.conn.on('upgrade', (transport: any) => {

@@ -11,6 +11,14 @@ import { combineAndNormalizePhone, isValidCountryCode, isValidPhone, normalizePh
 import { normalizeEmail } from '../utils/normalization';
 import { smsProvider } from './sms.service';
 import { emailProvider } from './email.service';
+import {
+  FirebasePhoneClientProof,
+  FirebasePhoneError,
+  isFirebasePhoneOtpEnabled,
+  linkFirebasePhoneIdentity,
+  matchStoredPhoneCode,
+  sendFirebasePhoneCode,
+} from './firebasePhone.service';
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -56,7 +64,7 @@ export class OtpService {
   public async requestPhoneOtp(
     countryCode: string,
     phone: string,
-    options?: { purpose?: string; userId?: string | null }
+    options?: { purpose?: string; userId?: string | null; clientVerification?: FirebasePhoneClientProof }
   ): Promise<RequestOtpResult> {
     if (!countryCode || !isValidCountryCode(countryCode)) {
       return {
@@ -110,7 +118,9 @@ export class OtpService {
     const targetPurpose = options?.purpose || 'auth';
     const targetUserId = options?.userId || null;
 
-    const result = await sequelize.transaction(async (t) => {
+    let result: RequestOtpResult;
+    try {
+      result = await sequelize.transaction(async (t) => {
       const activeRecord = await PhoneVerification.findOne({
         where: {
           phone: normalizedPhone,
@@ -143,16 +153,15 @@ export class OtpService {
         await activeRecord.save({ transaction: t });
       }
 
-      // Generate cryptographically secure 6-digit OTP
-      const otp = crypto.randomInt(100000, 1000000).toString();
-      const otpHash = await hashPassword(otp);
+      const issued = await this.issuePhoneCode(normalizedPhone, options?.clientVerification);
 
       const verificationRecord = await PhoneVerification.create(
         {
           phone: normalizedPhone,
           purpose: targetPurpose,
           userId: targetUserId,
-          otpHash,
+          otpHash: issued.otpHash,
+          providerSession: issued.providerSession,
           expiresAt,
           isConsumed: false,
           isVerified: false,
@@ -165,7 +174,9 @@ export class OtpService {
         { transaction: t }
       );
 
-      await smsProvider.sendOtp(normalizedPhone, otp);
+      if (issued.plainOtp) {
+        await smsProvider.sendOtp(normalizedPhone, issued.plainOtp);
+      }
 
       return {
         statusCode: 200,
@@ -176,8 +187,33 @@ export class OtpService {
         },
       };
     });
+    } catch (error: unknown) {
+      if (error instanceof FirebasePhoneError) {
+        return { statusCode: error.statusCode, error: error.message };
+      }
+      throw error;
+    }
 
     return result;
+  }
+
+  /**
+   * Firebase texts the code when configured. Otherwise the local SMS provider
+   * delivers a code we generate and store only as a hash.
+   */
+  private async issuePhoneCode(
+    phone: string,
+    clientVerification?: FirebasePhoneClientProof
+  ): Promise<{ otpHash: string; providerSession: string | null; plainOtp?: string }> {
+    if (isFirebasePhoneOtpEnabled()) {
+      const providerSession = await sendFirebasePhoneCode(phone, clientVerification);
+      const otpHash = await hashPassword(crypto.randomBytes(32).toString('hex'));
+      return { otpHash, providerSession };
+    }
+
+    const plainOtp = crypto.randomInt(100000, 1000000).toString();
+    const otpHash = await hashPassword(plainOtp);
+    return { otpHash, providerSession: null, plainOtp };
   }
 
   /**
@@ -316,7 +352,7 @@ export class OtpService {
    */
   public async resendPhoneOtp(
     verificationId: string,
-    options?: { purpose?: string; userId?: string | null }
+    options?: { purpose?: string; userId?: string | null; clientVerification?: FirebasePhoneClientProof }
   ): Promise<ResendOtpResult> {
     if (!verificationId || typeof verificationId !== 'string' || !verificationId.trim()) {
       return {
@@ -337,7 +373,9 @@ export class OtpService {
     const cooldownSeconds = env.OTP_RESEND_COOLDOWN_SECONDS || 60;
     const expiresIn = env.OTP_EXPIRY_SECONDS || 300;
 
-    const result = await sequelize.transaction(async (t) => {
+    let result: ResendOtpResult;
+    try {
+      result = await sequelize.transaction(async (t) => {
       const verificationRecord = await PhoneVerification.findByPk(trimmedId, {
         transaction: t,
         ...(isPostgres && { lock: t.LOCK.UPDATE }),
@@ -394,11 +432,14 @@ export class OtpService {
         };
       }
 
-      const newOtp = crypto.randomInt(100000, 1000000).toString();
-      const newOtpHash = await hashPassword(newOtp);
+      const issued = await this.issuePhoneCode(
+        verificationRecord.phone,
+        options?.clientVerification
+      );
       const newExpiresAt = new Date(now.getTime() + expiresIn * 1000);
 
-      verificationRecord.otpHash = newOtpHash;
+      verificationRecord.otpHash = issued.otpHash;
+      verificationRecord.providerSession = issued.providerSession;
       verificationRecord.attempts = 0;
       verificationRecord.resendCount += 1;
       verificationRecord.lastResentAt = now;
@@ -406,7 +447,9 @@ export class OtpService {
 
       await verificationRecord.save({ transaction: t });
 
-      await smsProvider.sendOtp(verificationRecord.phone, newOtp);
+      if (issued.plainOtp) {
+        await smsProvider.sendOtp(verificationRecord.phone, issued.plainOtp);
+      }
 
       return {
         statusCode: 200,
@@ -417,6 +460,12 @@ export class OtpService {
         },
       };
     });
+    } catch (error: unknown) {
+      if (error instanceof FirebasePhoneError) {
+        return { statusCode: error.statusCode, error: error.message };
+      }
+      throw error;
+    }
 
     return result;
   }
@@ -1005,20 +1054,38 @@ export class OtpService {
         };
       }
 
-      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
-      if (!isMatch) {
-        verificationRecord.attempts += 1;
-        const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
-        if (reachedMax) {
+      const codeCheck = await matchStoredPhoneCode(verificationRecord, trimmedOtp);
+      if (!codeCheck.ok) {
+        if (codeCheck.invalidateSession) {
           verificationRecord.isConsumed = true;
+          verificationRecord.providerSession = null;
+          await verificationRecord.save({ transaction: t });
+          return {
+            statusCode: codeCheck.statusCode || 400,
+            error: codeCheck.error || 'OTP has expired. Please request a new OTP.',
+          };
         }
-        await verificationRecord.save({ transaction: t });
+
+        if (codeCheck.statusCode === 401) {
+          verificationRecord.attempts += 1;
+          const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
+          if (reachedMax) {
+            verificationRecord.isConsumed = true;
+            verificationRecord.providerSession = null;
+          }
+          await verificationRecord.save({ transaction: t });
+
+          return {
+            statusCode: 401,
+            error: reachedMax
+              ? 'Maximum verification attempts exceeded. Please request a new OTP.'
+              : 'Invalid verification code',
+          };
+        }
 
         return {
-          statusCode: 401,
-          error: reachedMax
-            ? 'Maximum verification attempts exceeded. Please request a new OTP.'
-            : 'Invalid verification code',
+          statusCode: codeCheck.statusCode || 400,
+          error: codeCheck.error || 'Invalid verification code',
         };
       }
 
@@ -1026,7 +1093,12 @@ export class OtpService {
       verificationRecord.isConsumed = true;
       verificationRecord.isVerified = true;
       verificationRecord.consumedAt = now;
+      verificationRecord.providerSession = null;
       await verificationRecord.save({ transaction: t });
+
+      if (codeCheck.firebaseUid) {
+        await linkFirebasePhoneIdentity(userId, codeCheck.firebaseUid, t);
+      }
 
       const targetPhone = verificationRecord.phone;
 

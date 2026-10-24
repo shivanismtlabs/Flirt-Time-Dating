@@ -3,10 +3,11 @@ import crypto from 'crypto';
 import { sequelize } from '../config/database';
 import { PhoneVerification } from '../models/phoneVerification.model';
 import { User } from '../models/user.model';
-import { comparePassword, hashPassword } from '../utils/password';
+import { hashPassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
 import { sendSuccess, sendError } from '../utils/response';
 import { normalizePhone } from '../utils/phone';
+import { linkFirebasePhoneIdentity, matchStoredPhoneCode } from '../services/firebasePhone.service';
 
 // UUID validation regex (supports all standard 32-hex 8-4-4-4-12 UUID variants)
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -109,23 +110,40 @@ export const verifyPhoneOtp = async (req: Request, res: Response) => {
         };
       }
 
-      // 10: Securely compare submitted OTP with stored hash
-      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
+      // Securely compare submitted OTP with the stored hash, or confirm it with Firebase.
+      const codeCheck = await matchStoredPhoneCode(verificationRecord, trimmedOtp);
 
-      // 11: If incorrect:
-      if (!isMatch) {
-        verificationRecord.attempts += 1;
-        const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
-        if (reachedMax) {
+      if (!codeCheck.ok) {
+        if (codeCheck.invalidateSession) {
           verificationRecord.isConsumed = true;
+          verificationRecord.providerSession = null;
+          await verificationRecord.save({ transaction: t });
+          return {
+            statusCode: codeCheck.statusCode || 400,
+            error: codeCheck.error || 'OTP has expired. Please request a new OTP.',
+          };
         }
-        await verificationRecord.save({ transaction: t });
+
+        if (codeCheck.statusCode === 401) {
+          verificationRecord.attempts += 1;
+          const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
+          if (reachedMax) {
+            verificationRecord.isConsumed = true;
+            verificationRecord.providerSession = null;
+          }
+          await verificationRecord.save({ transaction: t });
+
+          return {
+            statusCode: 401,
+            error: reachedMax
+              ? 'Maximum verification attempts exceeded. Please request a new OTP.'
+              : 'Invalid verification code',
+          };
+        }
 
         return {
-          statusCode: 401,
-          error: reachedMax
-            ? 'Maximum verification attempts exceeded. Please request a new OTP.'
-            : 'Invalid verification code',
+          statusCode: codeCheck.statusCode || 400,
+          error: codeCheck.error || 'Invalid verification code',
         };
       }
 
@@ -135,6 +153,7 @@ export const verifyPhoneOtp = async (req: Request, res: Response) => {
           isConsumed: true,
           isVerified: true,
           consumedAt: now,
+          providerSession: null,
         },
         {
           where: {
@@ -198,6 +217,10 @@ export const verifyPhoneOtp = async (req: Request, res: Response) => {
           },
           { transaction: t }
         );
+      }
+
+      if (codeCheck.firebaseUid) {
+        await linkFirebasePhoneIdentity(user.id, codeCheck.firebaseUid, t);
       }
 
       // Generate JWT Token

@@ -169,7 +169,7 @@ export const formatMoreAboutMe = (user: {
     { key: 'living', label: 'Living', icon: '🏠', value: living },
     { key: 'relationship', label: 'Relationship', icon: '👩‍❤️‍👨', value: relationship },
     { key: 'children', label: 'Children', icon: '👶', value: children },
-  ];
+  ].filter((item) => item.value != null && item.value.trim() !== '');
 
   return {
     drinking,
@@ -381,56 +381,75 @@ export const updateUserProfile = async (
     user.about = data.about ? data.about.trim() : null;
   }
 
-  // 4. Update More About Me fields (direct or from data.moreAboutMe)
+  // 4. Update More About Me fields from the request body, nested moreAboutMe, or items[].
   const moreSource = data.moreAboutMe || {};
-  if (data.drinking !== undefined || moreSource.drinking !== undefined) {
-    user.drinking = data.drinking !== undefined ? data.drinking : moreSource.drinking || null;
+  const itemValueByKey = new Map<string, string | null>();
+  const rawItems = (moreSource as { items?: unknown }).items;
+  if (Array.isArray(rawItems)) {
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object') continue;
+      const key = typeof (item as { key?: unknown }).key === 'string'
+        ? (item as { key: string }).key.trim()
+        : '';
+      if (!key) continue;
+      const rawValue = (item as { value?: unknown }).value;
+      itemValueByKey.set(key, rawValue == null ? null : String(rawValue));
+    }
   }
-  if (data.education !== undefined || moreSource.education !== undefined) {
-    user.education = data.education !== undefined ? data.education : moreSource.education || null;
-  }
-  if (data.height !== undefined || moreSource.height !== undefined) {
-    user.height = data.height !== undefined ? data.height : moreSource.height || null;
-  }
-  if (data.religion !== undefined || moreSource.religion !== undefined) {
-    user.religion = data.religion !== undefined ? data.religion : moreSource.religion || null;
-  }
-  if (data.sexuality !== undefined || moreSource.sexuality !== undefined) {
-    user.sexuality = data.sexuality !== undefined ? data.sexuality : moreSource.sexuality || null;
-  }
-  if (data.smoking !== undefined || moreSource.smoking !== undefined) {
-    user.smoking = data.smoking !== undefined ? data.smoking : moreSource.smoking || null;
-  }
-  if (data.weight !== undefined || moreSource.weight !== undefined) {
-    user.weight = data.weight !== undefined ? data.weight : moreSource.weight || null;
-  }
-  if (
-    data.eyeColor !== undefined ||
-    data.eyecolor !== undefined ||
-    moreSource.eyeColor !== undefined ||
-    moreSource.eyecolor !== undefined
-  ) {
-    user.eyeColor =
-      data.eyeColor ?? data.eyecolor ?? moreSource.eyeColor ?? moreSource.eyecolor ?? null;
-  }
-  if (
-    data.hairColor !== undefined ||
-    data.haircolor !== undefined ||
-    moreSource.hairColor !== undefined ||
-    moreSource.haircolor !== undefined
-  ) {
-    user.hairColor =
-      data.hairColor ?? data.haircolor ?? moreSource.hairColor ?? moreSource.haircolor ?? null;
-  }
-  if (data.living !== undefined || moreSource.living !== undefined) {
-    user.living = data.living !== undefined ? data.living : moreSource.living || null;
-  }
-  if (data.relationship !== undefined || moreSource.relationship !== undefined) {
-    user.relationship = data.relationship !== undefined ? data.relationship : moreSource.relationship || null;
-  }
-  if (data.children !== undefined || moreSource.children !== undefined) {
-    user.children = data.children !== undefined ? data.children : moreSource.children || null;
-  }
+
+  const blankToNull = (value: unknown): string | null => {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const resolveMore = (
+    direct: string | null | undefined,
+    nested: string | null | undefined,
+    ...keys: string[]
+  ): string | null | undefined => {
+    if (direct !== undefined) return direct;
+    if (nested !== undefined) return nested;
+    for (const key of keys) {
+      if (itemValueByKey.has(key)) return itemValueByKey.get(key);
+    }
+    return undefined;
+  };
+
+  const drinkingValue = resolveMore(data.drinking, moreSource.drinking, 'drinking');
+  if (drinkingValue !== undefined) user.drinking = blankToNull(drinkingValue);
+  const educationValue = resolveMore(data.education, moreSource.education, 'education');
+  if (educationValue !== undefined) user.education = blankToNull(educationValue);
+  const heightValue = resolveMore(data.height, moreSource.height, 'height');
+  if (heightValue !== undefined) user.height = blankToNull(heightValue);
+  const religionValue = resolveMore(data.religion, moreSource.religion, 'religion');
+  if (religionValue !== undefined) user.religion = blankToNull(religionValue);
+  const sexualityValue = resolveMore(data.sexuality, moreSource.sexuality, 'sexuality');
+  if (sexualityValue !== undefined) user.sexuality = blankToNull(sexualityValue);
+  const smokingValue = resolveMore(data.smoking, moreSource.smoking, 'smoking');
+  if (smokingValue !== undefined) user.smoking = blankToNull(smokingValue);
+  const weightValue = resolveMore(data.weight, moreSource.weight, 'weight');
+  if (weightValue !== undefined) user.weight = blankToNull(weightValue);
+  const eyeColorValue = resolveMore(
+    data.eyeColor !== undefined ? data.eyeColor : data.eyecolor,
+    moreSource.eyeColor !== undefined ? moreSource.eyeColor : moreSource.eyecolor,
+    'eyeColor',
+    'eyecolor'
+  );
+  if (eyeColorValue !== undefined) user.eyeColor = blankToNull(eyeColorValue);
+  const hairColorValue = resolveMore(
+    data.hairColor !== undefined ? data.hairColor : data.haircolor,
+    moreSource.hairColor !== undefined ? moreSource.hairColor : moreSource.haircolor,
+    'hairColor',
+    'haircolor'
+  );
+  if (hairColorValue !== undefined) user.hairColor = blankToNull(hairColorValue);
+  const livingValue = resolveMore(data.living, moreSource.living, 'living');
+  if (livingValue !== undefined) user.living = blankToNull(livingValue);
+  const relationshipValue = resolveMore(data.relationship, moreSource.relationship, 'relationship');
+  if (relationshipValue !== undefined) user.relationship = blankToNull(relationshipValue);
+  const childrenValue = resolveMore(data.children, moreSource.children, 'children');
+  if (childrenValue !== undefined) user.children = blankToNull(childrenValue);
   if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
     user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
   }
@@ -1230,303 +1249,60 @@ export const calculateProfileCompletion = (
   return Math.min(100, Math.max(0, score));
 };
 
-const INDIAN_STATES = new Set([
-  'andhra pradesh', 'arunachal pradesh', 'assam', 'bihar', 'chhattisgarh',
-  'goa', 'gujarat', 'haryana', 'himachal pradesh', 'jharkhand', 'karnataka',
-  'kerala', 'madhya pradesh', 'maharashtra', 'manipur', 'meghalaya', 'mizoram',
-  'nagaland', 'odisha', 'punjab', 'rajasthan', 'sikkim', 'tamil nadu',
-  'telangana', 'tripura', 'uttar pradesh', 'uttarakhand', 'west bengal',
-  'delhi', 'ncr', 'chandigarh', 'puducherry', 'jammu and kashmir', 'ladakh',
-]);
-
-const INDIAN_CITIES = new Map<string, { state: string; country: string }>([
-  ['mumbai', { state: 'Maharashtra', country: 'India' }],
-  ['pune', { state: 'Maharashtra', country: 'India' }],
-  ['nagpur', { state: 'Maharashtra', country: 'India' }],
-  ['thane', { state: 'Maharashtra', country: 'India' }],
-  ['nashik', { state: 'Maharashtra', country: 'India' }],
-  ['navi mumbai', { state: 'Maharashtra', country: 'India' }],
-  ['indore', { state: 'Madhya Pradesh', country: 'India' }],
-  ['bhopal', { state: 'Madhya Pradesh', country: 'India' }],
-  ['jabalpur', { state: 'Madhya Pradesh', country: 'India' }],
-  ['gwalior', { state: 'Madhya Pradesh', country: 'India' }],
-  ['bengaluru', { state: 'Karnataka', country: 'India' }],
-  ['bangalore', { state: 'Karnataka', country: 'India' }],
-  ['mysuru', { state: 'Karnataka', country: 'India' }],
-  ['mysore', { state: 'Karnataka', country: 'India' }],
-  ['hyderabad', { state: 'Telangana', country: 'India' }],
-  ['ahmedabad', { state: 'Gujarat', country: 'India' }],
-  ['surat', { state: 'Gujarat', country: 'India' }],
-  ['vadodara', { state: 'Gujarat', country: 'India' }],
-  ['kolkata', { state: 'West Bengal', country: 'India' }],
-  ['chennai', { state: 'Tamil Nadu', country: 'India' }],
-  ['coimbatore', { state: 'Tamil Nadu', country: 'India' }],
-  ['madurai', { state: 'Tamil Nadu', country: 'India' }],
-  ['jaipur', { state: 'Rajasthan', country: 'India' }],
-  ['udaipur', { state: 'Rajasthan', country: 'India' }],
-  ['jodhpur', { state: 'Rajasthan', country: 'India' }],
-  ['lucknow', { state: 'Uttar Pradesh', country: 'India' }],
-  ['kanpur', { state: 'Uttar Pradesh', country: 'India' }],
-  ['agra', { state: 'Uttar Pradesh', country: 'India' }],
-  ['varanasi', { state: 'Uttar Pradesh', country: 'India' }],
-  ['noida', { state: 'Uttar Pradesh', country: 'India' }],
-  ['greater noida', { state: 'Uttar Pradesh', country: 'India' }],
-  ['ghaziabad', { state: 'Uttar Pradesh', country: 'India' }],
-  ['delhi', { state: 'Delhi', country: 'India' }],
-  ['new delhi', { state: 'Delhi', country: 'India' }],
-  ['gurugram', { state: 'Haryana', country: 'India' }],
-  ['gurgaon', { state: 'Haryana', country: 'India' }],
-  ['faridabad', { state: 'Haryana', country: 'India' }],
-  ['chandigarh', { state: 'Chandigarh', country: 'India' }],
-  ['kochi', { state: 'Kerala', country: 'India' }],
-  ['cochin', { state: 'Kerala', country: 'India' }],
-  ['thiruvananthapuram', { state: 'Kerala', country: 'India' }],
-  ['trivandrum', { state: 'Kerala', country: 'India' }],
-  ['kozhikode', { state: 'Kerala', country: 'India' }],
-  ['patna', { state: 'Bihar', country: 'India' }],
-  ['ranchi', { state: 'Jharkhand', country: 'India' }],
-  ['bhubaneswar', { state: 'Odisha', country: 'India' }],
-  ['guwahati', { state: 'Assam', country: 'India' }],
-  ['dehradun', { state: 'Uttarakhand', country: 'India' }],
-  ['shimla', { state: 'Himachal Pradesh', country: 'India' }],
-  ['amritsar', { state: 'Punjab', country: 'India' }],
-  ['ludhiana', { state: 'Punjab', country: 'India' }],
-  ['goa', { state: 'Goa', country: 'India' }],
-  ['panaji', { state: 'Goa', country: 'India' }],
-]);
-
-const US_STATES = new Set([
-  'alabama', 'alaska', 'arizona', 'arkansas', 'california', 'colorado',
-  'connecticut', 'delaware', 'florida', 'georgia', 'hawaii', 'idaho',
-  'illinois', 'indiana', 'iowa', 'kansas', 'kentucky', 'louisiana',
-  'maine', 'maryland', 'massachusetts', 'michigan', 'minnesota',
-  'mississippi', 'missouri', 'montana', 'nebraska', 'nevada',
-  'new hampshire', 'new jersey', 'new mexico', 'new york',
-  'north carolina', 'north dakota', 'ohio', 'oklahoma', 'oregon',
-  'pennsylvania', 'rhode island', 'south carolina', 'south dakota',
-  'tennessee', 'texas', 'utah', 'vermont', 'virginia', 'washington',
-  'west virginia', 'wisconsin', 'wyoming',
-  'al', 'ak', 'az', 'ar', 'ca', 'co', 'ct', 'de', 'fl', 'ga', 'hi',
-  'id', 'il', 'in', 'ia', 'ks', 'ky', 'la', 'me', 'md', 'ma', 'mi',
-  'mn', 'ms', 'mo', 'mt', 'ne', 'nv', 'nh', 'nj', 'nm', 'ny', 'nc',
-  'nd', 'oh', 'ok', 'or', 'pa', 'ri', 'sc', 'sd', 'tn', 'tx', 'ut',
-  'vt', 'va', 'wa', 'wv', 'wi', 'wy'
-]);
-
-const KNOWN_COUNTRIES = new Map<string, string>([
-  ['india', 'India'],
-  ['united states', 'United States'],
-  ['united states of america', 'United States'],
-  ['usa', 'United States'],
-  ['u.s.a.', 'United States'],
-  ['united kingdom', 'United Kingdom'],
-  ['uk', 'United Kingdom'],
-  ['u.k.', 'United Kingdom'],
-  ['canada', 'Canada'],
-  ['australia', 'Australia'],
-  ['germany', 'Germany'],
-  ['france', 'France'],
-  ['italy', 'Italy'],
-  ['spain', 'Spain'],
-  ['brazil', 'Brazil'],
-  ['mexico', 'Mexico'],
-  ['japan', 'Japan'],
-  ['china', 'China'],
-  ['singapore', 'Singapore'],
-  ['united arab emirates', 'United Arab Emirates'],
-  ['uae', 'United Arab Emirates'],
-  ['netherlands', 'Netherlands'],
-  ['switzerland', 'Switzerland'],
-  ['sweden', 'Sweden'],
-  ['norway', 'Norway'],
-  ['russia', 'Russia'],
-  ['south africa', 'South Africa'],
-  ['new zealand', 'New Zealand'],
-  ['ireland', 'Ireland'],
-  ['indonesia', 'Indonesia'],
-  ['thailand', 'Thailand'],
-  ['malaysia', 'Malaysia'],
-  ['philippines', 'Philippines'],
-  ['vietnam', 'Vietnam'],
-  ['saudi arabia', 'Saudi Arabia'],
-  ['turkey', 'Turkey'],
-]);
-
-const MAJOR_WORLD_CITIES = new Map<string, { state: string | null; country: string }>([
-  ['london', { state: null, country: 'United Kingdom' }],
-  ['paris', { state: null, country: 'France' }],
-  ['berlin', { state: null, country: 'Germany' }],
-  ['tokyo', { state: null, country: 'Japan' }],
-  ['singapore', { state: null, country: 'Singapore' }],
-  ['dubai', { state: 'Dubai', country: 'United Arab Emirates' }],
-  ['toronto', { state: 'Ontario', country: 'Canada' }],
-  ['vancouver', { state: 'British Columbia', country: 'Canada' }],
-  ['sydney', { state: 'New South Wales', country: 'Australia' }],
-  ['melbourne', { state: 'Victoria', country: 'Australia' }],
-  ['new york', { state: 'New York', country: 'United States' }],
-  ['los angeles', { state: 'California', country: 'United States' }],
-  ['chicago', { state: 'Illinois', country: 'United States' }],
-  ['houston', { state: 'Texas', country: 'United States' }],
-  ['san francisco', { state: 'California', country: 'United States' }],
-  ['seattle', { state: 'Washington', country: 'United States' }],
-  ['austin', { state: 'Texas', country: 'United States' }],
-]);
 
 /**
- * Parses city string (e.g. "Indore, Madhya Pradesh", "Mumbai", "Austin, Travis County, Texas, United States")
- * into structured city, state, country, county, and formatted full location.
+ * Splits a user-entered location string into city, county, state, and country.
+ * The formatted location stays exactly what the user saved. A state or country
+ * is included only when it is part of that string.
  */
 export const parseLocation = (
   cityString?: string | null,
   latitude?: number | null,
   longitude?: number | null
 ): LocationDTO => {
+  const latitudeValue = latitude ?? null;
+  const longitudeValue = longitude ?? null;
+
+  const emptyLocation = (): LocationDTO => ({
+    city: null,
+    state: null,
+    country: null,
+    county: null,
+    name: null,
+    label: null,
+    fullLocation: null,
+    formattedLocation: null,
+    latitude: latitudeValue,
+    longitude: longitudeValue,
+  });
+
   if (!cityString || !cityString.trim()) {
-    return {
-      city: null,
-      state: null,
-      country: null,
-      county: null,
-      name: null,
-      label: null,
-      fullLocation: null,
-      formattedLocation: null,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-    };
+    return emptyLocation();
   }
 
   const trimmed = cityString.trim();
-  const rawParts = trimmed.split(',').map((p) => p.trim()).filter(Boolean);
+  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return emptyLocation();
+  }
 
-  let city: string | null = null;
+  const city = parts[0];
+  const rest = parts.slice(1);
   let county: string | null = null;
+  const countyIndex = rest.findIndex((part) => part.toLowerCase().includes('county'));
+  if (countyIndex !== -1) {
+    county = rest[countyIndex];
+    rest.splice(countyIndex, 1);
+  }
+
   let state: string | null = null;
   let country: string | null = null;
-
-  if (rawParts.length === 0) {
-    return {
-      city: null,
-      state: null,
-      country: null,
-      county: null,
-      name: null,
-      label: null,
-      fullLocation: null,
-      formattedLocation: null,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-    };
+  if (rest.length >= 2) {
+    country = rest[rest.length - 1];
+    state = rest.slice(0, rest.length - 1).join(', ');
+  } else if (rest.length === 1) {
+    state = rest[0];
   }
-
-  if (rawParts.length === 1) {
-    const p0 = rawParts[0];
-    const p0Lower = p0.toLowerCase();
-    city = p0;
-
-    const indianCity = INDIAN_CITIES.get(p0Lower);
-    const worldCity = MAJOR_WORLD_CITIES.get(p0Lower);
-    if (indianCity) {
-      state = indianCity.state;
-      country = indianCity.country;
-    } else if (worldCity) {
-      state = worldCity.state;
-      country = worldCity.country;
-    } else if (KNOWN_COUNTRIES.has(p0Lower)) {
-      country = KNOWN_COUNTRIES.get(p0Lower)!;
-      city = null;
-    }
-  } else if (rawParts.length === 2) {
-    const p0 = rawParts[0];
-    const p1 = rawParts[1];
-    const p0Lower = p0.toLowerCase();
-    const p1Lower = p1.toLowerCase();
-
-    city = p0;
-
-    if (p1Lower.includes('county')) {
-      county = p1;
-      const indianCity = INDIAN_CITIES.get(p0Lower);
-      if (indianCity) {
-        state = indianCity.state;
-        country = indianCity.country;
-      }
-    } else if (KNOWN_COUNTRIES.has(p1Lower)) {
-      country = KNOWN_COUNTRIES.get(p1Lower)!;
-      const indianCity = INDIAN_CITIES.get(p0Lower);
-      if (indianCity) {
-        state = indianCity.state;
-      }
-    } else if (INDIAN_STATES.has(p1Lower)) {
-      state = p1;
-      country = 'India';
-    } else if (US_STATES.has(p1Lower)) {
-      state = p1;
-      country = 'United States';
-    } else {
-      state = p1;
-      const indianCity = INDIAN_CITIES.get(p0Lower);
-      if (indianCity) {
-        country = indianCity.country;
-      }
-    }
-  } else if (rawParts.length === 3) {
-    const p0 = rawParts[0];
-    const p1 = rawParts[1];
-    const p2 = rawParts[2];
-    const p1Lower = p1.toLowerCase();
-    const p2Lower = p2.toLowerCase();
-
-    city = p0;
-
-    if (p1Lower.includes('county')) {
-      county = p1;
-      state = p2;
-      if (US_STATES.has(p2Lower)) {
-        country = 'United States';
-      } else if (INDIAN_STATES.has(p2Lower)) {
-        country = 'India';
-      } else if (KNOWN_COUNTRIES.has(p2Lower)) {
-        country = KNOWN_COUNTRIES.get(p2Lower)!;
-        state = null;
-      }
-    } else {
-      state = p1;
-      country = KNOWN_COUNTRIES.get(p2Lower) || p2;
-    }
-  } else {
-    // 4 or more parts: e.g. "Austin, Travis County, Texas, United States"
-    city = rawParts[0];
-    let remaining = rawParts.slice(1);
-
-    const countyIndex = remaining.findIndex((p) => p.toLowerCase().includes('county'));
-    if (countyIndex !== -1) {
-      county = remaining[countyIndex];
-      remaining = remaining.filter((_, idx) => idx !== countyIndex);
-    }
-
-    if (remaining.length >= 2) {
-      state = remaining.slice(0, remaining.length - 1).join(', ');
-      const lastPart = remaining[remaining.length - 1];
-      country = KNOWN_COUNTRIES.get(lastPart.toLowerCase()) || lastPart;
-    } else if (remaining.length === 1) {
-      const part = remaining[0];
-      const partLower = part.toLowerCase();
-      if (KNOWN_COUNTRIES.has(partLower)) {
-        country = KNOWN_COUNTRIES.get(partLower)!;
-      } else {
-        state = part;
-      }
-    }
-  }
-
-  const fullParts: string[] = [];
-  if (city) fullParts.push(city);
-  if (county) fullParts.push(county);
-  if (state) fullParts.push(state);
-  if (country) fullParts.push(country);
-
-  const fullLocation = fullParts.length > 0 ? fullParts.join(', ') : trimmed;
 
   return {
     city,
@@ -1534,12 +1310,10 @@ export const parseLocation = (
     country,
     county,
     name: trimmed,
-    label: fullLocation,
-    fullLocation,
-    formattedLocation: fullLocation,
-    latitude: latitude ?? null,
-    longitude: longitude ?? null,
+    label: trimmed,
+    fullLocation: trimmed,
+    formattedLocation: trimmed,
+    latitude: latitudeValue,
+    longitude: longitudeValue,
   };
 };
-
-

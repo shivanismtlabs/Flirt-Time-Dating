@@ -203,24 +203,92 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.location).toEqual({
         city: 'Indore',
         state: 'Madhya Pradesh',
-        country: 'India',
+        country: null,
         county: null,
         name: 'Indore, Madhya Pradesh',
-        label: 'Indore, Madhya Pradesh, India',
-        fullLocation: 'Indore, Madhya Pradesh, India',
-        formattedLocation: 'Indore, Madhya Pradesh, India',
+        label: 'Indore, Madhya Pradesh',
+        fullLocation: 'Indore, Madhya Pradesh',
+        formattedLocation: 'Indore, Madhya Pradesh',
         latitude: null,
         longitude: null,
       });
       expect(res.body.data.city).toBe('Indore, Madhya Pradesh');
       expect(res.body.data.state).toBe('Madhya Pradesh');
-      expect(res.body.data.country).toBe('India');
+      expect(res.body.data.country).toBeNull();
       expect(res.body.data.county).toBeNull();
-      expect(res.body.data.fullLocation).toBe('Indore, Madhya Pradesh, India');
+      expect(res.body.data.fullLocation).toBe('Indore, Madhya Pradesh');
 
       // Verify in DB
       const userInDb = await User.findByPk(testUser.id);
       expect(userInDb?.city).toBe('Indore, Madhya Pradesh');
+    });
+
+    it('saves the location and about-me values the user entered', async () => {
+      const payload = {
+        fullName: 'Madsudan Patel',
+        username: 'madupatel',
+        nickName: 'Madu',
+        dateOfBirth: '1996-10-09',
+        gender: 'male',
+        about: 'Creative mind with a love for design.',
+        location: 'Mumbai, Maharashtra',
+        latitude: 19.076,
+        longitude: 72.8777,
+        drinking: 'Socially',
+        education: 'Graduate',
+        height: '5\'10"',
+        religion: 'Hindu',
+        sexuality: 'Straight',
+        smoking: 'Never',
+        weight: '70 kg',
+        eyeColor: 'Brown',
+        hairColor: 'Black',
+        living: 'With family',
+        relationship: 'Single',
+        children: 'No',
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.fullName).toBe('Madsudan Patel');
+      expect(res.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
+      expect(res.body.data.location.city).toBe('Mumbai');
+      expect(res.body.data.location.state).toBe('Maharashtra');
+      expect(res.body.data.location.country).toBeNull();
+      expect(res.body.data.latitude).toBe(19.076);
+      expect(res.body.data.longitude).toBe(72.8777);
+      expect(res.body.data.location.latitude).toBe(19.076);
+      expect(res.body.data.location.longitude).toBe(72.8777);
+      expect(res.body.data.moreAboutMe.drinking).toBe('Socially');
+      expect(res.body.data.moreAboutMe.education).toBe('Graduate');
+      expect(res.body.data.moreAboutMe.height).toBe('5\'10"');
+      expect(res.body.data.moreAboutMe.religion).toBe('Hindu');
+      expect(res.body.data.moreAboutMe.items.map((item: { key: string; value: string }) => item.key)).toEqual([
+        'drinking',
+        'education',
+        'height',
+        'religion',
+        'sexuality',
+        'smoking',
+        'weight',
+        'eyeColor',
+        'hairColor',
+        'living',
+        'relationship',
+        'children',
+      ]);
+      expect(res.body.data.moreAboutMe.items.every((item: { value: string | null }) => item.value)).toBe(true);
+
+      const userInDb = await User.findByPk(testUser.id);
+      expect(userInDb?.city).toBe('Mumbai, Maharashtra');
+      expect(userInDb?.latitude).toBe(19.076);
+      expect(userInDb?.longitude).toBe(72.8777);
+      expect(userInDb?.drinking).toBe('Socially');
+      expect(userInDb?.children).toBe('No');
     });
 
     it('should accept location object with coordinates and return structured location', async () => {
@@ -242,15 +310,15 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.location.city).toBe('Mumbai');
       expect(res.body.data.location.state).toBe('Maharashtra');
-      expect(res.body.data.location.country).toBe('India');
+      expect(res.body.data.location.country).toBeNull();
       expect(res.body.data.location.county).toBeNull();
-      expect(res.body.data.location.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(res.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
       expect(res.body.data.location.latitude).toBe(19.076);
       expect(res.body.data.location.longitude).toBe(72.8777);
       expect(res.body.data.state).toBe('Maharashtra');
-      expect(res.body.data.country).toBe('India');
+      expect(res.body.data.country).toBeNull();
       expect(res.body.data.county).toBeNull();
-      expect(res.body.data.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(res.body.data.fullLocation).toBe('Mumbai, Maharashtra');
       expect(res.body.data.latitude).toBe(19.076);
       expect(res.body.data.longitude).toBe(72.8777);
 
@@ -262,18 +330,18 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.data.location.city).toBe('Mumbai');
       expect(getRes.body.data.location.state).toBe('Maharashtra');
-      expect(getRes.body.data.location.country).toBe('India');
+      expect(getRes.body.data.location.country).toBeNull();
       expect(getRes.body.data.location.county).toBeNull();
-      expect(getRes.body.data.location.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(getRes.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
       expect(getRes.body.data.profile.location.city).toBe('Mumbai');
       expect(getRes.body.data.profile.location.state).toBe('Maharashtra');
-      expect(getRes.body.data.profile.location.country).toBe('India');
+      expect(getRes.body.data.profile.location.country).toBeNull();
       expect(getRes.body.data.profile.location.county).toBeNull();
-      expect(getRes.body.data.profile.location.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(getRes.body.data.profile.location.fullLocation).toBe('Mumbai, Maharashtra');
       expect(getRes.body.data.profile.state).toBe('Maharashtra');
-      expect(getRes.body.data.profile.country).toBe('India');
+      expect(getRes.body.data.profile.country).toBeNull();
       expect(getRes.body.data.profile.county).toBeNull();
-      expect(getRes.body.data.profile.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(getRes.body.data.profile.fullLocation).toBe('Mumbai, Maharashtra');
       expect(getRes.body.data.location.latitude).toBe(19.076);
       expect(getRes.body.data.location.longitude).toBe(72.8777);
     });

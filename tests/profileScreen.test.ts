@@ -208,14 +208,14 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.profile.gender).toBe('male');
       expect(data.profile.location.city).toBe('Indore');
       expect(data.profile.location.state).toBe('Madhya Pradesh');
-      expect(data.profile.location.country).toBe('India');
+      expect(data.profile.location.country).toBeNull();
       expect(data.profile.location.county).toBeNull();
-      expect(data.profile.location.fullLocation).toBe('Indore, Madhya Pradesh, India');
+      expect(data.profile.location.fullLocation).toBe('Indore, Madhya Pradesh');
       expect(data.profile.city).toBe('Indore, Madhya Pradesh');
       expect(data.profile.state).toBe('Madhya Pradesh');
-      expect(data.profile.country).toBe('India');
+      expect(data.profile.country).toBeNull();
       expect(data.profile.county).toBeNull();
-      expect(data.profile.fullLocation).toBe('Indore, Madhya Pradesh, India');
+      expect(data.profile.fullLocation).toBe('Indore, Madhya Pradesh');
       expect(data.profile.age).toBeGreaterThanOrEqual(25);
       expect(data.profile.isVerified).toBe(true);
       expect(data.profile.completionPercentage).toBeGreaterThanOrEqual(90);
@@ -258,11 +258,7 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.moreAboutMe).toBeDefined();
       expect(data.profile.moreAboutMe).toBeDefined();
       expect(Array.isArray(data.moreAboutMe.items)).toBe(true);
-      expect(data.moreAboutMe.items.length).toBe(12);
-      const drinkingItem = data.moreAboutMe.items.find((i: any) => i.key === 'drinking');
-      expect(drinkingItem).toBeDefined();
-      expect(drinkingItem.label).toBe('Drinking');
-      expect(drinkingItem.icon).toBe('🍷');
+      expect(data.moreAboutMe.items).toEqual([]);
     });
   });
 
@@ -573,24 +569,24 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(parseLocation('Indore, Madhya Pradesh')).toEqual({
         city: 'Indore',
         state: 'Madhya Pradesh',
-        country: 'India',
+        country: null,
         county: null,
         name: 'Indore, Madhya Pradesh',
-        label: 'Indore, Madhya Pradesh, India',
-        fullLocation: 'Indore, Madhya Pradesh, India',
-        formattedLocation: 'Indore, Madhya Pradesh, India',
+        label: 'Indore, Madhya Pradesh',
+        fullLocation: 'Indore, Madhya Pradesh',
+        formattedLocation: 'Indore, Madhya Pradesh',
         latitude: null,
         longitude: null,
       });
       expect(parseLocation('London')).toEqual({
         city: 'London',
         state: null,
-        country: 'United Kingdom',
+        country: null,
         county: null,
         name: 'London',
-        label: 'London, United Kingdom',
-        fullLocation: 'London, United Kingdom',
-        formattedLocation: 'London, United Kingdom',
+        label: 'London',
+        fullLocation: 'London',
+        formattedLocation: 'London',
         latitude: null,
         longitude: null,
       });

@@ -36,6 +36,10 @@ export const requestPhoneOtpSchema = z.object({
           message: 'Invalid phone number format (must contain 4-15 digits)',
         }
       ),
+    recaptchaToken: z.string().trim().min(1).optional(),
+    playIntegrityToken: z.string().trim().min(1).optional(),
+    iosReceipt: z.string().trim().min(1).optional(),
+    iosSecret: z.string().trim().min(1).optional(),
   }),
 });
 
@@ -65,6 +69,10 @@ export const resendPhoneOtpSchema = z.object({
     verificationId: z
       .string({ required_error: 'verificationId is required' })
       .min(1, 'verificationId cannot be empty'),
+    recaptchaToken: z.string().trim().min(1).optional(),
+    playIntegrityToken: z.string().trim().min(1).optional(),
+    iosReceipt: z.string().trim().min(1).optional(),
+    iosSecret: z.string().trim().min(1).optional(),
   }),
 });
 

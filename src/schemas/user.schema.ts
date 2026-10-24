@@ -430,6 +430,10 @@ export const requestProfilePhoneOtpSchema = z.object({
           message: 'Invalid phone number format (must contain 4-15 digits)',
         }
       ),
+    recaptchaToken: z.string().trim().min(1).optional(),
+    playIntegrityToken: z.string().trim().min(1).optional(),
+    iosReceipt: z.string().trim().min(1).optional(),
+    iosSecret: z.string().trim().min(1).optional(),
   }),
 });
 
@@ -455,6 +459,10 @@ export const resendProfilePhoneOtpSchema = z.object({
       verificationId: z.string().trim().optional(),
       phone: z.string().trim().optional(),
       countryCode: z.string().trim().optional(),
+      recaptchaToken: z.string().trim().min(1).optional(),
+      playIntegrityToken: z.string().trim().min(1).optional(),
+      iosReceipt: z.string().trim().min(1).optional(),
+      iosSecret: z.string().trim().min(1).optional(),
     })
     .refine((data) => data.verificationId || data.phone, {
       message: 'Either verificationId or phone must be provided',

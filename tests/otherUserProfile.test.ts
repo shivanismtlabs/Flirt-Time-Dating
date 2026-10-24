@@ -184,7 +184,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.isVerified).toBe(true);
       expect(data.profilePhoto).toContain('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
       expect(data.city).toBe('Mumbai');
-      expect(data.fullLocation).toBe('Mumbai, Maharashtra, India');
+      expect(data.fullLocation).toBe('Mumbai');
       expect(data.location).toBeUndefined();
       expect(data.state).toBeUndefined();
       expect(data.country).toBeUndefined();

@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { otpService } from '../services/otp.service';
+import { clientProofFromBody } from '../services/firebasePhone.service';
 import { sendSuccess, sendError } from '../utils/response';
 
 /**
@@ -12,7 +13,9 @@ export const requestPhoneOtp = async (req: Request, res: Response) => {
   try {
     const { countryCode, phone } = req.body || {};
 
-    const result = await otpService.requestPhoneOtp(countryCode, phone);
+    const result = await otpService.requestPhoneOtp(countryCode, phone, {
+      clientVerification: clientProofFromBody(req.body),
+    });
 
     if (result.error) {
       return sendError(res, result.error, result.statusCode);

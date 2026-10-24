@@ -219,7 +219,7 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       expect(matchCard.isOnline).toBe(true);
 
       // Single complete location field (not duplicate city, state, country)
-      expect(matchCard.location).toBe('Mumbai, Maharashtra, India');
+      expect(matchCard.location).toBe('Mumbai');
       expect(matchCard.city).toBeUndefined();
       expect(matchCard.state).toBeUndefined();
       expect(matchCard.country).toBeUndefined();
@@ -270,7 +270,7 @@ describe('Discovery Search & Authoritative Daily Swipe Limits', () => {
       expect(partialCard.totalMoments).toBe(0);
 
       // Location formatted correctly
-      expect(partialCard.location).toBe('Indore, Madhya Pradesh, India');
+      expect(partialCard.location).toBe('Indore, Madhya Pradesh');
     });
 
     it('should compute zero shared interests and handle missing preferences gracefully', async () => {

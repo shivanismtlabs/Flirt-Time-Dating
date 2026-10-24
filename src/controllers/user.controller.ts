@@ -22,6 +22,7 @@ import {
 import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from '../services/s3.service';
 import { calculateAge } from '../services/discovery.service';
 import { otpService } from '../services/otp.service';
+import { clientProofFromBody } from '../services/firebasePhone.service';
 import { normalizeEmail } from '../utils/normalization';
 import { combineAndNormalizePhone, normalizePhone } from '../utils/phone';
 import { freeTierLimitService } from '../services/freeTierLimit.service';
@@ -1051,6 +1052,7 @@ export const requestProfilePhoneOtpHandler = async (req: AuthenticatedRequest, r
     const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
       purpose: 'profile_phone_change',
       userId,
+      clientVerification: clientProofFromBody(req.body),
     });
 
     if (result.error) {
@@ -1121,6 +1123,7 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
       const result = await otpService.resendPhoneOtp(verificationId, {
         purpose: 'profile_phone_change',
         userId,
+        clientVerification: clientProofFromBody(req.body),
       });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
@@ -1158,6 +1161,7 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
       const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
         purpose: 'profile_phone_change',
         userId,
+        clientVerification: clientProofFromBody(req.body),
       });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);

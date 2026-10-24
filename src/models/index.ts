@@ -1289,6 +1289,7 @@ export const initDb = async (force = false): Promise<void> => {
         try {
           await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
           await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "providerSession" TEXT;');
         } catch (_pvColErr) {
           // Safe to ignore if phone_verifications does not exist yet
         }

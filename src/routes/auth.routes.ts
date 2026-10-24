@@ -3,7 +3,7 @@ import { deleteAccountHandler } from '../controllers/user.controller';
 import { register, login, getProfile, logout, checkUsernameAvailabilityHandler } from '../controllers/auth.controller';
 import { appleAuth } from '../controllers/authApple.controller';
 import { firebaseAuth } from '../controllers/authFirebase.controller';
-import { requestPhoneOtp } from '../controllers/authPhoneRequest.controller';
+import { requestPhoneOtp, verifyIosClient } from '../controllers/authPhoneRequest.controller';
 import { verifyPhoneOtp } from '../controllers/authPhoneVerify.controller';
 import { resendPhoneOtp } from '../controllers/authPhoneResend.controller';
 import { requestEmailOtp } from '../controllers/authEmailRequest.controller';
@@ -16,6 +16,7 @@ import {
   appleAuthSchema,
   firebaseAuthSchema,
   requestPhoneOtpSchema,
+  verifyIosClientSchema,
   requestEmailOtpSchema,
   verifyPhoneOtpSchema,
   resendPhoneOtpSchema,
@@ -50,6 +51,7 @@ router.post('/logout', authenticate, validate(logoutSchema), logout);
 
 
 // Phone Auth Routes
+router.post('/phone/ios/verify-client', validate(verifyIosClientSchema), verifyIosClient);
 router.post('/phone/request-otp', validate(requestPhoneOtpSchema), requestPhoneOtp);
 router.post('/request-otp', validate(requestPhoneOtpSchema), requestPhoneOtp);
 

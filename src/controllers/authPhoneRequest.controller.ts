@@ -1,6 +1,10 @@
 import { Request, Response } from 'express';
 import { otpService } from '../services/otp.service';
-import { clientProofFromBody } from '../services/firebasePhone.service';
+import {
+  clientProofFromBody,
+  FirebasePhoneError,
+  verifyFirebaseIosClient,
+} from '../services/firebasePhone.service';
 import { sendSuccess, sendError } from '../utils/response';
 
 /**
@@ -29,5 +33,28 @@ export const requestPhoneOtp = async (req: Request, res: Response) => {
     );
   } catch (error: any) {
     return sendError(res, error.message || 'Internal server error while requesting OTP', 500);
+  }
+};
+
+/**
+ * Exchanges an APNs device token for the Firebase receipt.
+ * Route: POST /api/v1/auth/phone/ios/verify-client
+ * The secret is delivered to the phone by a silent push and is not returned here.
+ */
+export const verifyIosClient = async (req: Request, res: Response) => {
+  try {
+    const { apnsToken, isSandbox, iosBundleId } = req.body || {};
+    const result = await verifyFirebaseIosClient({
+      appToken: apnsToken,
+      isSandbox,
+      iosBundleId,
+    });
+    return sendSuccess(res, 'iOS app verification started', result);
+  } catch (error: unknown) {
+    if (error instanceof FirebasePhoneError) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    const message = error instanceof Error ? error.message : 'Internal server error while verifying the iOS app';
+    return sendError(res, message, 500);
   }
 };

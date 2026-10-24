@@ -119,6 +119,15 @@ export const getIosBundleIdentifier = (): string => {
   return normalizeBundleId(process.env.APPLE_BUNDLE_ID || env.APPLE_BUNDLE_ID || '') || '';
 };
 
+const isApnsDeviceToken = (value: string): boolean => /^[a-f0-9]{64}$/i.test(value);
+
+const isGeneratedUuid = (value: string): boolean =>
+  /^[a-f0-9]{12}4[a-f0-9]{3}[89ab][a-f0-9]{15}$/i.test(value);
+
+const iosHeaders = (bundleId: string): Record<string, string> => ({
+  'X-Ios-Bundle-Identifier': bundleId,
+});
+
 const clientTypeFromBody = (
   source: Record<string, unknown>,
   hasIosReceipt: boolean
@@ -148,14 +157,22 @@ const mapFirebasePhoneError = (
       return new FirebasePhoneError('Invalid phone number format', 400);
     case 'MISSING_CLIENT_IDENTIFIER':
     case 'CAPTCHA_CHECK_FAILED':
-    case 'INVALID_APP_CREDENTIAL':
-    case 'MISSING_APP_CREDENTIAL':
-    case 'MISSING_IOS_BUNDLE_ID':
-    case 'MISSING_IOS_APP_TOKEN':
-    case 'APP_NOT_VERIFIED':
     case 'MISSING_CLIENT_TYPE':
       return new FirebasePhoneError(
         'App verification is required before a code can be sent. Android sends playIntegrityToken. iOS sends iosReceipt and iosSecret, or a recaptchaToken.',
+        400
+      );
+    case 'MISSING_IOS_BUNDLE_ID':
+      return new FirebasePhoneError(
+        'iOS bundle id was missing or does not match the Firebase iOS app.',
+        400
+      );
+    case 'INVALID_APP_CREDENTIAL':
+    case 'MISSING_APP_CREDENTIAL':
+    case 'MISSING_IOS_APP_TOKEN':
+    case 'APP_NOT_VERIFIED':
+      return new FirebasePhoneError(
+        'App verification was rejected. iOS must send the receipt from verifyIosClient and the secret from the Firebase silent push. The APNs device token is not a valid iosReceipt.',
         400
       );
     case 'TOO_MANY_ATTEMPTS_TRY_LATER':
@@ -185,14 +202,16 @@ const mapFirebasePhoneError = (
 };
 
 const postIdentityToolkit = async (
-  method: 'sendVerificationCode' | 'signInWithPhoneNumber',
-  payload: Record<string, string>,
+  method: 'sendVerificationCode' | 'signInWithPhoneNumber' | 'verifyIosClient',
+  payload: Record<string, unknown>,
   extraHeaders?: Record<string, string>
 ): Promise<Record<string, unknown>> => {
   const fallback =
     method === 'sendVerificationCode'
       ? 'Could not send the verification code. Please try again.'
-      : 'Could not verify the code. Please try again.';
+      : method === 'verifyIosClient'
+        ? 'Could not verify the iOS app. Please try again.'
+        : 'Could not verify the code. Please try again.';
   const apiKey = getFirebaseWebApiKey();
   if (!apiKey) {
     throw new FirebasePhoneError('Phone verification is temporarily unavailable', 503);
@@ -247,6 +266,18 @@ export const sendFirebasePhoneCode = async (
     );
   }
 
+  if (
+    proof?.iosReceipt &&
+    proof.iosSecret &&
+    isApnsDeviceToken(proof.iosReceipt) &&
+    isGeneratedUuid(proof.iosSecret)
+  ) {
+    throw new FirebasePhoneError(
+      'iosReceipt is the APNs device token, and iosSecret was generated in the app. Exchange the device token with POST /api/v1/auth/phone/ios/verify-client, then send the returned receipt and the secret from the Firebase silent push.',
+      400
+    );
+  }
+
   const payload: Record<string, string> = { phoneNumber };
   const headers: Record<string, string> = {};
   if (proof?.recaptchaToken) payload.recaptchaToken = proof.recaptchaToken;
@@ -262,7 +293,7 @@ export const sendFirebasePhoneCode = async (
     if (!bundleId) {
       throw new FirebasePhoneError('iOS phone verification is not configured', 503);
     }
-    headers['X-Ios-Bundle-Identifier'] = bundleId;
+    Object.assign(headers, iosHeaders(bundleId));
   }
 
   const data = await postIdentityToolkit('sendVerificationCode', payload, headers);
@@ -271,6 +302,46 @@ export const sendFirebasePhoneCode = async (
     throw new FirebasePhoneError('Could not send the verification code. Please try again.', 502);
   }
   return sessionInfo;
+};
+
+/**
+ * Exchanges an APNs device token for the receipt Firebase expects.
+ * The matching secret arrives on the device in a silent push, not in this response.
+ */
+export const verifyFirebaseIosClient = async (input: {
+  appToken: string;
+  isSandbox?: boolean;
+  iosBundleId?: string;
+}): Promise<{ receipt: string; suggestedTimeout: number }> => {
+  const appToken = normalizeIosReceipt(input.appToken);
+  if (!appToken) {
+    throw new FirebasePhoneError('APNs device token is required', 400);
+  }
+
+  const bundleId = normalizeBundleId(input.iosBundleId) || getIosBundleIdentifier();
+  if (!bundleId) {
+    throw new FirebasePhoneError('iOS phone verification is not configured', 503);
+  }
+
+  const data = await postIdentityToolkit(
+    'verifyIosClient',
+    {
+      appToken,
+      isSandbox: input.isSandbox ?? !env.APNS_PRODUCTION,
+    },
+    iosHeaders(bundleId)
+  );
+
+  const receipt = typeof data.receipt === 'string' ? data.receipt.trim() : '';
+  if (!receipt) {
+    throw new FirebasePhoneError('Could not verify the iOS app. Please try again.', 502);
+  }
+
+  const timeout = Number(data.suggestedTimeout);
+  return {
+    receipt,
+    suggestedTimeout: Number.isFinite(timeout) && timeout > 0 ? timeout : 5,
+  };
 };
 
 const confirmFirebasePhoneCode = async (

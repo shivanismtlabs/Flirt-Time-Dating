@@ -48,6 +48,21 @@ export const requestPhoneOtpSchema = z.object({
   }),
 });
 
+export const verifyIosClientSchema = z.object({
+  body: z.object({
+    apnsToken: z
+      .string({ required_error: 'apnsToken is required' })
+      .trim()
+      .min(1, 'apnsToken cannot be empty'),
+    isSandbox: z.boolean().optional(),
+    iosBundleId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+      .optional(),
+  }),
+});
+
 export const requestEmailOtpSchema = z.object({
   body: z.object({
     email: z

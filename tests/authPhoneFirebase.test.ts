@@ -251,7 +251,52 @@ describe('Phone OTP through Firebase Auth', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.message).toMatch(/app verification is required/i);
+    expect(res.body.message).toMatch(/bundle id/i);
     expect(await PhoneVerification.count()).toBe(0);
+  });
+
+  it('rejects an APNs device token and a generated secret before calling Firebase', async () => {
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+91',
+      phone: '9000000004',
+      platform: 'ios',
+      iosReceipt: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      iosSecret: 'de8f7d4aade84bc6b9bc58436e577414',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/APNs device token/i);
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(await PhoneVerification.count()).toBe(0);
+  });
+
+  it('exchanges an APNs device token for a Firebase receipt', async () => {
+    mockedPost.mockImplementation(async (url: string) => {
+      if (String(url).includes('verifyIosClient')) {
+        return { data: { receipt: 'firebase-receipt-1', suggestedTimeout: '5' } };
+      }
+      throw new Error(`Unexpected Firebase call: ${url}`);
+    });
+
+    const res = await request(app).post('/api/v1/auth/phone/ios/verify-client').send({
+      apnsToken: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      isSandbox: true,
+      iosBundleId: 'com.flirttime.app',
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.data).toEqual({
+      receipt: 'firebase-receipt-1',
+      suggestedTimeout: 5,
+    });
+    const [url, body, config] = mockedPost.mock.calls[0];
+    expect(String(url)).toContain('accounts:verifyIosClient');
+    expect(body).toEqual({
+      appToken: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      isSandbox: true,
+    });
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe('com.flirttime.app');
+    expect(JSON.stringify(res.body)).not.toContain('iosSecret');
   });
 });

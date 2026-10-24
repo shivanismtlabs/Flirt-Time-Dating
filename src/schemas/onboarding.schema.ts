@@ -67,7 +67,7 @@ export const updateOnboardingStepSchema = z.object({
     step: z.enum(['completed', ...ONBOARDING_STEP_ORDER], {
       required_error: 'step is required',
       invalid_type_error:
-        'Invalid onboarding step. Allowed: basicInfo, preferences, genderPreference, religion, interests, photos, audio, faceVerification, completed',
+        'Invalid onboarding step. Allowed: basicInfo, gesture, preferences, genderPreference, religion, interests, photos, audio, faceVerification, completed',
     }),
   }),
 });

@@ -721,6 +721,7 @@ export class OnboardingService {
 
     const steps = {
       basicInfo: !!(user.fullName && user.dateOfBirth && user.gender),
+      gesture: !!user.isFaceVerified,
       preferences: !!user.lookingFor,
       genderPreference: !!user.genderPreference,
       religion: user.religion !== undefined, // Optional/can be skipped

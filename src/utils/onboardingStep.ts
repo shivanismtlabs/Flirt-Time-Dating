@@ -1,5 +1,6 @@
 export const ONBOARDING_STEP_ORDER = [
   'basicInfo',
+  'gesture',
   'preferences',
   'genderPreference',
   'religion',
@@ -13,7 +14,8 @@ export type OnboardingStepName = (typeof ONBOARDING_STEP_ORDER)[number];
 export type OnboardingStep = OnboardingStepName | 'completed';
 
 const NEXT_STEP: Record<OnboardingStepName, OnboardingStep> = {
-  basicInfo: 'preferences',
+  basicInfo: 'gesture',
+  gesture: 'preferences',
   preferences: 'genderPreference',
   genderPreference: 'religion',
   religion: 'interests',
@@ -45,6 +47,7 @@ export function resolveCurrentStep(
   stored: string | null | undefined,
   steps: {
     basicInfo: boolean;
+    gesture?: boolean;
     preferences: boolean;
     genderPreference: boolean;
     interests: boolean;
@@ -52,6 +55,15 @@ export function resolveCurrentStep(
   },
   isCompleted: boolean
 ): OnboardingStep {
+  const waitingForGesture =
+    steps.gesture === false &&
+    steps.basicInfo &&
+    !steps.preferences &&
+    (!stored || stepRank(stored) <= stepRank('preferences'));
+
+  if (waitingForGesture) {
+    return 'gesture';
+  }
   if (isOnboardingStep(stored)) {
     return stored;
   }
@@ -59,6 +71,7 @@ export function resolveCurrentStep(
     return 'completed';
   }
   if (!steps.basicInfo) return 'basicInfo';
+  if (steps.gesture === false) return 'gesture';
   if (!steps.preferences) return 'preferences';
   if (!steps.genderPreference) return 'genderPreference';
   if (!steps.interests) return 'interests';

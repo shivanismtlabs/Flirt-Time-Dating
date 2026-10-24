@@ -132,10 +132,12 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.body.data.status).toBe('approved');
       expect(res.body.data.similarity).toBe(100);
       expect(res.body.data.reasonCode).toBe('VERIFICATION_SUCCESSFUL');
+      expect(res.body.data.currentStep).toBe('preferences');
 
       // Verify user model updated with face verification and profile picture
       const updatedUser = await User.findByPk(testUser.id);
       expect(updatedUser?.isFaceVerified).toBe(true);
+      expect(updatedUser?.onboardingStep).toBe('preferences');
       expect(updatedUser?.profilePicture).toBe('verifications/user99/test_selfie.jpg');
     });
 

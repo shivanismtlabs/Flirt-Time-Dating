@@ -515,16 +515,25 @@ export const updateUserProfile = async (
     }
   }
 
-  user.isProfileComplete = true;
+  const basicInfoReady = !!(user.fullName && user.dateOfBirth && user.gender);
+  const waitingForGesture =
+    !user.isFaceVerified &&
+    !user.lookingFor &&
+    stepRank(user.onboardingStep) <= stepRank('preferences');
 
-  if (
-    stepRank(user.onboardingStep) < stepRank('preferences') &&
-    user.fullName &&
-    user.dateOfBirth &&
-    user.gender &&
-    !user.lookingFor
+  if (basicInfoReady && waitingForGesture) {
+    user.onboardingStep = 'gesture';
+    user.isProfileComplete = false;
+  } else if (
+    basicInfoReady &&
+    user.isFaceVerified &&
+    !user.lookingFor &&
+    stepRank(user.onboardingStep) < stepRank('preferences')
   ) {
     user.onboardingStep = 'preferences';
+    user.isProfileComplete = true;
+  } else if (!waitingForGesture || user.isFaceVerified) {
+    user.isProfileComplete = true;
   }
 
   try {

@@ -325,6 +325,7 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
         user.onboardingStep,
         {
           basicInfo: !!(user.fullName && user.dateOfBirth && user.gender),
+          gesture: !!user.isFaceVerified,
           preferences: !!user.lookingFor,
           genderPreference: !!user.genderPreference,
           interests: formattedInterests.length >= 1,

@@ -46,7 +46,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   describe('1. Successful Profile Onboarding Flow', () => {
-    it('should allow authenticated user to save profile and mark profile as complete', async () => {
+    it('should save profile and hold the user on the gesture step', async () => {
       const payload = {
         fullName: 'Mike Hussey',
         nickName: 'Mikey',
@@ -71,7 +71,8 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.dateOfBirth).toBe('1996-10-09');
       expect(res.body.data.gender).toBe('male');
       expect(res.body.data.about).toBe(payload.about);
-      expect(res.body.data.isProfileComplete).toBe(true);
+      expect(res.body.data.isProfileComplete).toBe(false);
+      expect(res.body.data.currentStep).toBe('gesture');
       expect(res.body.data.location).toBeDefined();
       expect(res.body.data.age).toBeDefined();
       expect(res.body.data.password).toBeUndefined();
@@ -82,7 +83,27 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedDbUser?.nickName).toBe('Mikey');
       expect(updatedDbUser?.dateOfBirth).toBe('1996-10-09');
       expect(updatedDbUser?.gender).toBe('male');
-      expect(updatedDbUser?.isProfileComplete).toBe(true);
+      expect(updatedDbUser?.isProfileComplete).toBe(false);
+      expect(updatedDbUser?.onboardingStep).toBe('gesture');
+    });
+
+    it('opens preferences after gesture verification is already approved', async () => {
+      testUser.isFaceVerified = true;
+      testUser.onboardingStep = 'gesture';
+      await testUser.save();
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          fullName: 'Mike Hussey',
+          dateOfBirth: '1996-10-09',
+          gender: 'male',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.isProfileComplete).toBe(true);
+      expect(res.body.data.currentStep).toBe('preferences');
     });
 
     it('should update profile with username, location, latitude, longitude and sync nickName', async () => {

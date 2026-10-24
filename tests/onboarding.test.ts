@@ -417,7 +417,7 @@ describe('Onboarding Preference & Media APIs', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.steps).toBeDefined();
       expect(res.body.data.completionPercentage).toBeDefined();
-      expect(res.body.data.currentStep).toBe('preferences');
+      expect(res.body.data.currentStep).toBe('gesture');
     });
 
     it('reopens the same onboarding step after the app is killed', async () => {

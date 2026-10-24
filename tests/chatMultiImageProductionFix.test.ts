@@ -167,6 +167,86 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
       expect(dbMsg?.messageType).toBe('image');
       expect(dbMsg?.senderId).toBe(senderUser.id);
     });
+
+    it('keeps one photo when the client repeats it as key, url, thumbnail, images, and medias', async () => {
+      const key = `chat/${senderUser.id}/one-photo.jpg`;
+      const url = `https://cdn.flirttime.test/${key}`;
+      const thumb = `https://cdn.flirttime.test/thumbnails/${key}`;
+      const res = await request(app)
+        .post(`/api/v1/chats/${testConversation.id}/messages`)
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          messageType: 'image',
+          imageUrl: url,
+          mediaUrl: url,
+          imageKey: key,
+          images: [{ key, url, imageUrl: url, thumbnailUrl: thumb }],
+          medias: [{ url: thumb, thumbnailUrl: thumb }],
+          imageUrls: [url, thumb],
+          mediaUrls: [url],
+          metadata: {
+            imageUrl: url,
+            images: [{ url }],
+            imageUrls: [key],
+            mediaUrls: [thumb],
+            medias: [{ url, thumbnailUrl: thumb }],
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.messageType).toBe('image');
+      expect(res.body.data.images.length).toBe(1);
+      expect(res.body.data.medias.length).toBe(1);
+      expect(res.body.data.imageUrls.length).toBe(1);
+      expect(res.body.data.metadata.images.length).toBe(1);
+      expect(res.body.data.metadata.galleryCount).toBe(1);
+
+      const stored = JSON.parse((await ChatMessage.findByPk(res.body.data.id))?.metadata || '{}');
+      expect(stored.images.length).toBe(1);
+      expect(await ChatMessage.count({ where: { conversationId: testConversation.id } })).toBe(1);
+    });
+
+    it('sends one photo over the socket when the payload repeats the same image', async () => {
+      const key = `chat/${senderUser.id}/socket-one-photo.jpg`;
+      const url = `https://cdn.flirttime.test/${key}`;
+      const thumb = `https://cdn.flirttime.test/thumbnails/${key}`;
+      const socketReceiver = createClientSocket(receiverToken);
+      const socketSender = createClientSocket(senderToken);
+      await Promise.all([
+        new Promise<void>((resolve) => socketReceiver.on('connect', () => resolve())),
+        new Promise<void>((resolve) => socketSender.on('connect', () => resolve())),
+      ]);
+
+      const received = new Promise<any>((resolve) => {
+        socketReceiver.on('chat:message_received', (data) => resolve(data));
+      });
+
+      const ack = await new Promise<any>((resolve) => {
+        socketSender.emit(
+          'chat:send_message',
+          {
+            conversationId: testConversation.id,
+            messageType: 'image',
+            imageUrl: url,
+            mediaUrl: url,
+            images: [{ key, url, thumbnailUrl: thumb }],
+            medias: [{ url: thumb }],
+            imageUrls: [url, thumb],
+            mediaUrls: [url],
+            metadata: { images: [{ url }], imageUrls: [key], mediaUrls: [thumb] },
+          },
+          (response: any) => resolve(response)
+        );
+      });
+
+      expect(ack.success).toBe(true);
+      expect(ack.data.images.length).toBe(1);
+      expect(ack.data.medias.length).toBe(1);
+      const incoming = await received;
+      expect(incoming.images.length).toBe(1);
+      expect(incoming.medias.length).toBe(1);
+      expect(await ChatMessage.count({ where: { conversationId: testConversation.id } })).toBe(1);
+    });
   });
 
   // 2. Sending multiple images in one message
@@ -199,6 +279,117 @@ describe('Critical Bug Fix: Multiple Images in Chat visible to Receiver (10 Requ
       expect(allDbMsgs[0].senderId).toBe(senderUser.id);
       const stored = JSON.parse(allDbMsgs[0].metadata || '{}');
       expect(stored.images.length).toBe(3);
+    });
+
+    it('keeps 2 and 4 photos in order inside one grouped message and in history', async () => {
+      const sendGroup = async (names: string[]) => {
+        const images = names.map((name) => ({ url: `chat/${senderUser.id}/${name}.jpg` }));
+        return request(app)
+          .post(`/api/v1/chats/${testConversation.id}/messages`)
+          .set('Authorization', `Bearer ${senderToken}`)
+          .send({ messageType: 'image', images, clientMessageId: `group-${names.length}-${names[0]}` });
+      };
+
+      const two = await sendGroup(['a', 'b']);
+      expect(two.status).toBe(201);
+      expect(two.body.data.messages.length).toBe(1);
+      expect(two.body.data.images.map((img: any) => img.key)).toEqual([
+        `chat/${senderUser.id}/a.jpg`,
+        `chat/${senderUser.id}/b.jpg`,
+      ]);
+      expect(two.body.data.medias.length).toBe(2);
+      expect(two.body.data.metadata.galleryCount).toBe(2);
+
+      const four = await sendGroup(['c', 'd', 'e', 'f']);
+      expect(four.status).toBe(201);
+      expect(four.body.data.images.map((img: any) => img.key)).toEqual([
+        `chat/${senderUser.id}/c.jpg`,
+        `chat/${senderUser.id}/d.jpg`,
+        `chat/${senderUser.id}/e.jpg`,
+        `chat/${senderUser.id}/f.jpg`,
+      ]);
+      expect(four.body.data.medias.length).toBe(4);
+      expect(four.body.data.messages.length).toBe(1);
+
+      const history = await request(app)
+        .get(`/api/v1/chats/${testConversation.id}/messages`)
+        .set('Authorization', `Bearer ${receiverToken}`);
+      expect(history.status).toBe(200);
+      const groups = history.body.data.messages.filter((msg: any) => msg.messageType === 'image');
+      expect(groups).toHaveLength(2);
+      expect(groups.map((msg: any) => msg.images.length)).toEqual([2, 4]);
+      expect(groups[0].medias.length).toBe(2);
+      expect(groups[1].images.map((img: any) => img.key)).toEqual([
+        `chat/${senderUser.id}/c.jpg`,
+        `chat/${senderUser.id}/d.jpg`,
+        `chat/${senderUser.id}/e.jpg`,
+        `chat/${senderUser.id}/f.jpg`,
+      ]);
+      expect(await ChatMessage.count({ where: { conversationId: testConversation.id } })).toBe(2);
+    });
+
+    it('does not create a second bubble when the same grouped send is retried', async () => {
+      const clientMessageId = '11111111-2222-4333-8444-555555555555';
+      const images = [
+        { url: `chat/${senderUser.id}/retry-a.jpg` },
+        { url: `chat/${senderUser.id}/retry-b.jpg` },
+      ];
+      const first = await request(app)
+        .post(`/api/v1/chats/${testConversation.id}/messages`)
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({ messageType: 'image', images, clientMessageId });
+      const second = await request(app)
+        .post(`/api/v1/chats/${testConversation.id}/messages`)
+        .set('Authorization', `Bearer ${senderToken}`)
+        .send({
+          messageType: 'image',
+          images,
+          imageUrls: images.map((img) => `https://cdn.flirttime.test/${img.url}`),
+          clientMessageId,
+        });
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).toBe(first.body.data.id);
+      expect(second.body.data.images.length).toBe(2);
+      expect(await ChatMessage.count({ where: { conversationId: testConversation.id } })).toBe(1);
+    });
+
+    it('delivers the full group once over the socket', async () => {
+      const socketReceiver = createClientSocket(receiverToken);
+      const socketSender = createClientSocket(senderToken);
+      await Promise.all([
+        new Promise<void>((resolve) => socketReceiver.on('connect', () => resolve())),
+        new Promise<void>((resolve) => socketSender.on('connect', () => resolve())),
+      ]);
+      const received = new Promise<any>((resolve) => {
+        socketReceiver.on('chat:message_received', (data) => resolve(data));
+      });
+      const ack = await new Promise<any>((resolve) => {
+        socketSender.emit(
+          'chat:send_message',
+          {
+            conversationId: testConversation.id,
+            messageType: 'image',
+            clientMessageId: 'socket-group-1',
+            images: [
+              { url: `chat/${senderUser.id}/socket-a.jpg` },
+              { url: `chat/${senderUser.id}/socket-b.jpg` },
+            ],
+          },
+          (response: any) => resolve(response)
+        );
+      });
+
+      expect(ack.success).toBe(true);
+      expect(ack.data.messages.length).toBe(1);
+      expect(ack.data.images.length).toBe(2);
+      expect(ack.data.medias.length).toBe(2);
+      const incoming = await received;
+      expect(incoming.id).toBe(ack.data.id);
+      expect(incoming.images.length).toBe(2);
+      expect(incoming.medias.length).toBe(2);
+      expect(await ChatMessage.count({ where: { conversationId: testConversation.id } })).toBe(1);
     });
   });
 

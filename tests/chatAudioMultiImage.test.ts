@@ -191,6 +191,35 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       expect(res.body.data.images.length).toBe(2);
     });
 
+    it('keeps a photo as an image when the client also echoes voiceUrl', async () => {
+      const photo = 'https://s3.flirttime.test/chat/photo-not-a-call.jpg';
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          messageType: 'image',
+          images: [{ url: photo }],
+          voiceUrl: photo,
+          audioUrl: photo,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.messageType).toBe('image');
+      expect(res.body.data.type).toBe('image');
+      expect(res.body.data.voiceUrl).toBeUndefined();
+      expect(res.body.data.audioUrl).toBeUndefined();
+      expect(res.body.data.metadata.voiceUrl).toBeUndefined();
+      expect(res.body.data.metadata.callType).toBeUndefined();
+
+      const history = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenB}`);
+      const latest = history.body.data.messages[history.body.data.messages.length - 1];
+      expect(latest.messageType).toBe('image');
+      expect(latest.type).toBe('image');
+      expect(latest.voiceUrl).toBeUndefined();
+    });
+
     it('should reopen a deleted conversation when multiple images are sent', async () => {
       await convAB.update({
         isDeletedForEveryone: true,

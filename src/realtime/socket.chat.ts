@@ -55,15 +55,16 @@ export const registerChatSocketHandlers = (
 
       let msgType = payload.messageType || payload.type;
       if (!msgType) {
-        if (payload.audioUrl || payload.audio || payload.voiceUrl) {
-          msgType = 'audio';
-        } else if (
+        const hasImage =
           payload.imageUrl ||
           payload.image ||
           normalizedImages.length > 0 ||
-          normalizedImageUrls.length > 0
-        ) {
+          normalizedImageUrls.length > 0;
+        const audioRef = payload.audioUrl || payload.audio || payload.voiceUrl;
+        if (hasImage) {
           msgType = 'image';
+        } else if (audioRef && !/\.(jpe?g|png|webp|gif|avif|heic|heif|bmp)(\?|#|$)/i.test(String(audioRef))) {
+          msgType = 'audio';
         } else {
           msgType = 'text';
         }

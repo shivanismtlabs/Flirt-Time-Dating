@@ -3,6 +3,7 @@ import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { chatService, ChatServiceError } from '../services/chat.service';
 import { s3Service } from '../services/s3.service';
+import { isAudioChatFile } from '../utils/chatMediaKind';
 import { pickRecipientIdentifier } from '../schemas/chat.schema';
 
 /**
@@ -303,11 +304,7 @@ export const uploadChatMediaHandler = async (req: AuthenticatedRequest, res: Res
       for (const file of attachedFiles) {
         const mime = (file.mimetype || '').toLowerCase();
         const origName = (file.originalname || '').toLowerCase();
-        const field = (file.fieldname || '').toLowerCase();
-        const isAudio =
-          mime.startsWith('audio/') ||
-          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
-          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName);
+        const isAudio = isAudioChatFile(file, req.body?.messageType || req.body?.type);
 
         let mimeType = file.mimetype || (isAudio ? 'audio/mpeg' : 'image/jpeg');
         if (isAudio && (!mime || mime === 'application/octet-stream' || mime.startsWith('application/'))) {

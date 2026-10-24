@@ -3,6 +3,7 @@
  * Production-ready business logic for Chat List, Conversation Details, Message History, and Real-Time Delivery.
  */
 
+import crypto from 'crypto';
 import { Op } from 'sequelize';
 import {
   sequelize,
@@ -218,18 +219,114 @@ export const toChatMedias = (images: any[] | undefined | null): any[] => {
     .filter(Boolean);
 };
 
-export const dedupeChatImages = <T extends { key?: string; imageUrl?: string; url?: string }>(
-  images: T[]
-): T[] => {
-  const seen = new Set<string>();
+const LOCAL_DEVICE_MEDIA = /^(file|content|ph|assets-library|blob):/i;
+
+/** Phone-local paths are not a second photo. The multipart file is the upload. */
+export const isLocalDeviceMediaRef = (raw: unknown): boolean =>
+  LOCAL_DEVICE_MEDIA.test(String(raw ?? '').trim());
+
+/**
+ * One photo is often sent as a storage key, a CDN URL, and a thumbnail URL.
+ * Those are the same object. External URLs that are not our storage stay as-is.
+ */
+export const canonicalChatMediaKey = (raw: unknown): string => {
+  const trimmed = String(raw ?? '').trim();
+  if (!trimmed || isLocalDeviceMediaRef(trimmed)) return '';
+  let path = trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      path = decodeURIComponent(new URL(trimmed).pathname);
+    } catch {
+      return s3Service.extractKey(trimmed);
+    }
+  }
+  path = path.replace(/^\/+/, '').split('?')[0].split('#')[0];
+  const thumbPrefix = `${env.AWS_S3_THUMBNAIL_PREFIX || 'thumbnails'}/`;
+  while (path.toLowerCase().startsWith(thumbPrefix.toLowerCase())) {
+    path = path.slice(thumbPrefix.length);
+  }
+  const marker = path.match(/(?:uploads|chat|photos|moments|quick-moments|avatars)\/.+/i);
+  if (marker) return marker[0];
+  return s3Service.extractKey(trimmed);
+};
+
+const chatImageIdentities = (img: any): string[] => {
+  if (!img) return [];
+  if (typeof img === 'string') {
+    const id = canonicalChatMediaKey(img) || img.trim();
+    return id ? [id.toLowerCase()] : [];
+  }
+  const values = [img.key, img.imageKey, img.imageUrl, img.url, img.mediaUrl, img.path, img.uri, img.src, img.thumbnailUrl];
+  const ids = new Set<string>();
+  for (const value of values) {
+    if (typeof value !== 'string' || !value.trim() || isLocalDeviceMediaRef(value)) continue;
+    const id = canonicalChatMediaKey(value) || value.trim();
+    if (id) ids.add(id.toLowerCase());
+  }
+  return [...ids];
+};
+
+const chatImageScore = (img: any): number => {
+  const key = typeof img === 'string' ? img : String(img?.key || img?.url || img?.imageUrl || '');
+  return /\/thumbnails\/|^thumbnails\//i.test(key) ? 0 : 1;
+};
+
+export const dedupeChatImages = <T>(images: T[]): T[] => {
+  const seen = new Map<string, { index: number; score: number }>();
   const unique: T[] = [];
   for (const img of images) {
-    const id = String(img.key || img.imageUrl || img.url || '').trim();
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    unique.push(img);
+    const ids = chatImageIdentities(img);
+    if (ids.length === 0) continue;
+    const score = chatImageScore(img);
+    const hit = ids.map((id) => seen.get(id)).find((entry) => !!entry);
+    if (!hit) {
+      const index = unique.length;
+      unique.push(img);
+      for (const id of ids) seen.set(id, { index, score });
+      continue;
+    }
+    if (score > hit.score) {
+      unique[hit.index] = img;
+      for (const id of ids) seen.set(id, { index: hit.index, score });
+    }
   }
   return unique;
+};
+
+const MULTI_IMAGE_FIELDS = new Set(['images', 'photos', 'files', 'medias', 'attachments']);
+
+/**
+ * The same photo posted once as `image` and again as `file` uploads once.
+ * Two parts on `images` stay two photos, even when the bytes match.
+ */
+export const dedupeChatFiles = (files: Express.Multer.File[]): Express.Multer.File[] => {
+  const seenHashField = new Map<string, string>();
+  const unique: Express.Multer.File[] = [];
+  for (const file of files) {
+    if (!file?.buffer?.length) {
+      unique.push(file);
+      continue;
+    }
+    const hash = crypto.createHash('sha1').update(file.buffer).digest('hex');
+    const field = String(file.fieldname || '').toLowerCase();
+    const previousField = seenHashField.get(hash);
+    if (previousField) {
+      const bothAreSelections = MULTI_IMAGE_FIELDS.has(previousField) && MULTI_IMAGE_FIELDS.has(field);
+      if (!bothAreSelections) continue;
+    } else {
+      seenHashField.set(hash, field);
+    }
+    unique.push(file);
+  }
+  return unique;
+};
+
+/** Storage key for one incoming photo reference. Local device URIs are ignored. */
+export const resolveIncomingImageKey = (raw: string, senderId: string): string | null => {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed || isLocalDeviceMediaRef(trimmed)) return null;
+  validateMediaAttachmentKey(trimmed, senderId);
+  return canonicalChatMediaKey(trimmed) || s3Service.extractKey(trimmed) || null;
 };
 
 type ChatUploadedImage = {
@@ -248,7 +345,7 @@ export const buildChatGalleryMeta = (
   uploadedImages: ChatUploadedImage[],
   caption?: string,
 ): Record<string, any> => {
-  const galleryImages = uploadedImages.map(decorateChatGalleryImage);
+  const galleryImages = dedupeChatImages(uploadedImages).map(decorateChatGalleryImage);
   const galleryUrls = galleryImages.map((img: any) => img.imageUrl).filter(Boolean);
   const first = galleryImages[0] || {};
   const meta: Record<string, any> = {
@@ -292,13 +389,38 @@ const uploadedFromStoredImages = (images: any[]): ChatUploadedImage[] =>
     };
   });
 
+const chatImageIdentity = (value: unknown): string => {
+  const canonical = canonicalChatMediaKey(value);
+  const raw = canonical || String(value ?? '').trim();
+  return raw.toLowerCase();
+};
+
+/** True when this photo is already stored on the message, even if the URL form differs. */
+export const isKnownChatImage = (
+  known: Set<string>,
+  img: { key?: string; imageUrl?: string; url?: string; mediaUrl?: string }
+): boolean => {
+  const ids = [img?.key, img?.imageUrl, img?.url, img?.mediaUrl].map(chatImageIdentity).filter(Boolean);
+  return ids.some((id) => known.has(id));
+};
+
 export const galleryKeysFromMeta = (meta: any, content?: string | null): Set<string> => {
   const keys = new Set<string>();
-  if (content) keys.add(String(content));
+  const add = (value: unknown) => {
+    const id = chatImageIdentity(value);
+    if (id) keys.add(id);
+  };
+  if (content) add(content);
   for (const img of Array.isArray(meta?.images) ? meta.images : []) {
-    const key = String(img?.key || img?.imageUrl || img?.url || '').trim();
-    if (key) keys.add(key);
+    if (typeof img === 'string') add(img);
+    else {
+      add(img?.key);
+      add(img?.imageUrl);
+      add(img?.url);
+      add(img?.mediaUrl);
+    }
   }
+  for (const url of [...(meta?.imageUrls || []), ...(meta?.mediaUrls || [])]) add(url);
   return keys;
 };
 
@@ -609,10 +731,37 @@ export const presentChatMessage = (dto: ChatMessageDTO): ChatMessageDTO => {
   if (messageType !== 'image') return dto;
   const next: ChatMessageDTO = { ...dto, messageType, type: 'image' };
   for (const key of IMAGE_CALL_KEYS) delete (next as any)[key];
+  const source =
+    Array.isArray(next.images) && next.images.length > 0
+      ? next.images
+      : Array.isArray(next.medias) && next.medias.length > 0
+        ? next.medias
+        : [];
+  if (source.length > 1) {
+    const images = dedupeChatImages(source).map(decorateChatGalleryImage);
+    const imageUrls = images.map((img: any) => img?.imageUrl || img?.url).filter(Boolean);
+    next.images = images;
+    next.imageUrls = imageUrls;
+    next.mediaUrls = imageUrls;
+    next.medias = toChatMedias(images);
+    const first = images[0] || {};
+    if (!next.imageUrl && (first.imageUrl || first.url)) {
+      next.imageUrl = first.imageUrl || first.url;
+      next.mediaUrl = next.imageUrl;
+      next.url = next.imageUrl;
+    }
+  }
   if (next.metadata && typeof next.metadata === 'object') {
     const meta = { ...next.metadata };
     for (const key of [...IMAGE_CALL_KEYS, 'call', 'callType', 'callId', 'channelName']) {
       delete meta[key];
+    }
+    if (source.length > 1 && Array.isArray(next.images)) {
+      meta.images = next.images;
+      meta.imageUrls = next.imageUrls;
+      meta.mediaUrls = next.mediaUrls;
+      meta.medias = next.medias;
+      meta.galleryCount = next.images.length;
     }
     next.metadata = meta;
   }
@@ -2327,6 +2476,7 @@ export class ChatService {
     if (attachedFiles.length === 0 && (data as any).file) {
       attachedFiles = [(data as any).file];
     }
+    attachedFiles = dedupeChatFiles(attachedFiles);
 
     const uploadedImages: Array<{
       url: string;
@@ -2443,8 +2593,9 @@ export class ChatService {
               item?.src ||
               item?.key ||
               '';
-        if (!raw) continue;
-        const cleanKey = validateMediaAttachmentKey(raw, senderId);
+        if (!raw || isLocalDeviceMediaRef(raw)) continue;
+        const cleanKey = resolveIncomingImageKey(raw, senderId);
+        if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -2470,8 +2621,9 @@ export class ChatService {
             (rawItem as any)?.src ||
             (rawItem as any)?.key ||
             '';
-        if (!raw || typeof raw !== 'string') continue;
-        const cleanKey = validateMediaAttachmentKey(raw, senderId);
+        if (!raw || typeof raw !== 'string' || isLocalDeviceMediaRef(raw)) continue;
+        const cleanKey = resolveIncomingImageKey(raw, senderId);
+        if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -2570,18 +2722,20 @@ export class ChatService {
           fileSize: buffer.length,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
-        const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
-        uploadedImages.push({
-          url: pubUrl,
-          imageUrl: pubUrl,
-          thumbnailUrl: thUrl,
-          mediaUrl: pubUrl,
-          key: cleanKey,
-          mimeType: 'image/jpeg',
-          fileSize: 0,
-        });
+        const cleanKey = resolveIncomingImageKey(messageContent, senderId);
+        if (cleanKey) {
+          const pubUrl = s3Service.getPublicUrl(cleanKey);
+          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          uploadedImages.push({
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: cleanKey,
+            mimeType: 'image/jpeg',
+            fileSize: 0,
+          });
+        }
       }
     } else if ((msgType === 'audio' || (!msgType && (data as any).audioUrl)) && uploadedAudios.length === 0) {
       const isBase64Audio =
@@ -2744,7 +2898,7 @@ export class ChatService {
           }
           for (const key of galleryKeysFromMeta(rowMeta, row.content)) existingKeys.add(key);
         }
-        const pendingImages = uploadedImages.filter((img) => img.key && !existingKeys.has(img.key));
+        const pendingImages = uploadedImages.filter((img) => img.key && !isKnownChatImage(existingKeys, img));
         const pendingAudios = uploadedAudios.filter((aud) => !existingKeys.has(aud.key));
         const isMediaSend = uploadedImages.length > 0 || uploadedAudios.length > 0;
         if (!isMediaSend || (pendingImages.length === 0 && pendingAudios.length === 0)) {
@@ -2945,10 +3099,10 @@ export class ChatService {
       preview: string;
     }> = [];
 
-    const galleryImages = uploadedImages.map(decorateChatGalleryImage);
-    const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
+    let galleryImages = uploadedImages.map(decorateChatGalleryImage);
+    let galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
 
-    // One message for the whole selection. Sender and receiver both read images/medias.
+    // One message for the whole selection. The grid reads images/medias in this order.
     if (uploadedImages.length > 0) {
       const itemMeta = buildChatGalleryMeta(
         metadataObj,
@@ -2956,6 +3110,8 @@ export class ChatService {
         (data as any).caption,
       );
       if (data.clientMessageId) itemMeta.galleryId = data.clientMessageId;
+      galleryImages = itemMeta.images;
+      galleryUrls = itemMeta.imageUrls;
       itemsToCreate.push({
         type: 'image',
         content: uploadedImages[0].key,
@@ -3247,7 +3403,7 @@ export class ChatService {
         for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message']) {
           emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
         }
-        for (const event of ['chat:message_sent', 'message:sent', 'new_message']) {
+        for (const event of ['chat:message_sent', 'message:sent']) {
           emitChatEventOnce(io, event, senderPayload, outgoingRooms);
         }
       }
@@ -3506,6 +3662,7 @@ export class ChatService {
     if (attachedFiles.length === 0 && (data as any).file) {
       attachedFiles = [(data as any).file];
     }
+    attachedFiles = dedupeChatFiles(attachedFiles);
 
     const uploadedImages: Array<{
       url: string;
@@ -3622,8 +3779,9 @@ export class ChatService {
               item?.src ||
               item?.key ||
               '';
-        if (!raw) continue;
-        const cleanKey = validateMediaAttachmentKey(raw, senderId);
+        if (!raw || isLocalDeviceMediaRef(raw)) continue;
+        const cleanKey = resolveIncomingImageKey(raw, senderId);
+        if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -3649,8 +3807,9 @@ export class ChatService {
             (rawItem as any)?.src ||
             (rawItem as any)?.key ||
             '';
-        if (!raw || typeof raw !== 'string') continue;
-        const cleanKey = validateMediaAttachmentKey(raw, senderId);
+        if (!raw || typeof raw !== 'string' || isLocalDeviceMediaRef(raw)) continue;
+        const cleanKey = resolveIncomingImageKey(raw, senderId);
+        if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
         const thUrl = s3Service.getThumbnailUrl(cleanKey);
         uploadedImages.push({
@@ -3736,18 +3895,20 @@ export class ChatService {
           fileSize: buffer.length,
         });
       } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
-        const cleanKey = validateMediaAttachmentKey(messageContent, senderId);
-        const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
-        uploadedImages.push({
-          url: pubUrl,
-          imageUrl: pubUrl,
-          thumbnailUrl: thUrl,
-          mediaUrl: pubUrl,
-          key: cleanKey,
-          mimeType: 'image/jpeg',
-          fileSize: 0,
-        });
+        const cleanKey = resolveIncomingImageKey(messageContent, senderId);
+        if (cleanKey) {
+          const pubUrl = s3Service.getPublicUrl(cleanKey);
+          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          uploadedImages.push({
+            url: pubUrl,
+            imageUrl: pubUrl,
+            thumbnailUrl: thUrl,
+            mediaUrl: pubUrl,
+            key: cleanKey,
+            mimeType: 'image/jpeg',
+            fileSize: 0,
+          });
+        }
       }
     } else if ((msgType === 'audio' || (!msgType && (data as any).audioUrl)) && uploadedAudios.length === 0) {
       const isBase64Audio =
@@ -4046,7 +4207,7 @@ export class ChatService {
               meta = {};
             }
             const knownKeys = galleryKeysFromMeta(meta, existingMessage.content);
-            const pendingGallery = uploadedImages.filter((img) => img.key && !knownKeys.has(img.key));
+            const pendingGallery = uploadedImages.filter((img) => img.key && !isKnownChatImage(knownKeys, img));
             if (pendingGallery.length > 0) {
               const merged = dedupeChatImages([
                 ...uploadedFromStoredImages(Array.isArray(meta?.images) ? meta.images : []),
@@ -4190,8 +4351,8 @@ export class ChatService {
           preview: string;
         }> = [];
 
-        const galleryImages = uploadedImages.map(decorateChatGalleryImage);
-        const galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
+        let galleryImages = uploadedImages.map(decorateChatGalleryImage);
+        let galleryUrls = galleryImages.map((img) => img.imageUrl).filter(Boolean);
 
         // One message for the whole selection so the other user sees the same group.
         if (uploadedImages.length > 0) {
@@ -4201,6 +4362,8 @@ export class ChatService {
             (data as any).caption,
           );
           if (clientMessageId) itemMeta.galleryId = clientMessageId;
+          galleryImages = itemMeta.images;
+          galleryUrls = itemMeta.imageUrls;
           itemsToCreate.push({
             type: 'image',
             content: uploadedImages[0].key,
@@ -4464,7 +4627,7 @@ export class ChatService {
             for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message']) {
               emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
             }
-            for (const event of ['chat:message_sent', 'message:sent', 'new_message']) {
+            for (const event of ['chat:message_sent', 'message:sent']) {
               emitChatEventOnce(io, event, senderPayload, outgoingRooms);
             }
           }
@@ -8819,7 +8982,7 @@ return {
               for (const event of ['chat:message_received', 'chat:message:new', 'message:received', 'new_message', 'chat:message_forwarded']) {
                 emitChatEventOnce(io, event, recipientPayload, incomingRooms, outgoingRooms);
               }
-              for (const event of ['chat:message_sent', 'message:sent', 'new_message', 'chat:message_forwarded']) {
+              for (const event of ['chat:message_sent', 'message:sent', 'chat:message_forwarded']) {
                 emitChatEventOnce(io, event, dto, outgoingRooms);
               }
             }

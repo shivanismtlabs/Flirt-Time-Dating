@@ -1,6 +1,7 @@
 import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { sendError } from '../utils/response';
+import { isAudioChatFile } from '../utils/chatMediaKind';
 import { env } from '../config/env';
 
 // Store in memory for immediate processing and memory cleanup (biometric privacy)
@@ -578,16 +579,7 @@ export const handleUploadChatMedia = (
     // Auto-detect message type and normalize fields if direct file is attached
     if (attachedFiles.length > 0) {
       req.file = attachedFiles[0];
-      const hasAudioFile = attachedFiles.some((f) => {
-        const mime = (f.mimetype || '').toLowerCase();
-        const origName = (f.originalname || '').toLowerCase();
-        const field = (f.fieldname || '').toLowerCase();
-        return (
-          mime.startsWith('audio/') ||
-          ['audio', 'voice', 'voicenote', 'recording', 'sound'].includes(field) ||
-          /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)$/i.test(origName)
-        );
-      });
+      const hasAudioFile = attachedFiles.some((f) => isAudioChatFile(f, req.body?.messageType || req.body?.type));
 
       const hasImageFile = attachedFiles.some((f) => {
         const mime = (f.mimetype || '').toLowerCase();

@@ -444,7 +444,7 @@ export const sendMessageSchema = z.object({
       const type =
         data.type ||
         data.messageType ||
-        (isAudioSignal ? 'audio' : isImageSignal ? 'image' : 'text');
+        (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {
@@ -710,7 +710,7 @@ export const sendMultiMessageSchema = z.object({
       const type =
         data.type ||
         data.messageType ||
-        (isAudioSignal ? 'audio' : isImageSignal ? 'image' : 'text');
+        (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
       if (type === 'text') {
         if (!data.content || data.content.trim().length === 0) {

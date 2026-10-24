@@ -22,7 +22,7 @@ import {
 } from '../models';
 import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
-import { isAudioChatFile, isImageMediaReference } from '../utils/chatMediaKind';
+import { audioReferenceFromPayload, isAudioChatFile, isImageMediaReference } from '../utils/chatMediaKind';
 import { calculateAge, calculateDistanceKm } from './discovery.service';
 import { isUserConnected, isUserViewingConversation, getUserRoomName } from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
@@ -727,9 +727,13 @@ const IMAGE_CALL_KEYS = ['audioUrl', 'voiceUrl', 'duration', 'durationMs'] as co
 
 /** Photo payloads must not carry voice-call fields. `type` stays `image`. */
 export const presentChatMessage = (dto: ChatMessageDTO): ChatMessageDTO => {
-  const messageType = String(dto.messageType || 'text');
-  if (messageType !== 'image') return dto;
-  const next: ChatMessageDTO = { ...dto, messageType, type: 'image' };
+  const messageType = String(dto.messageType || dto.type || 'text');
+  const sender = dto.sender
+    ? { ...dto.sender, name: dto.sender.name || dto.sender.displayName }
+    : dto.sender;
+  const stamped: ChatMessageDTO = { ...dto, messageType, type: messageType, sender };
+  if (messageType !== 'image') return stamped;
+  const next: ChatMessageDTO = { ...stamped, messageType, type: 'image' };
   for (const key of IMAGE_CALL_KEYS) delete (next as any)[key];
   const source =
     Array.isArray(next.images) && next.images.length > 0
@@ -783,6 +787,27 @@ export const buildViewerChatMessage = (
     messages?: ChatMessageDTO[];
     results?: any[];
   };
+  if (String(dto.messageType || '') === 'audio') {
+    const {
+      images: _images,
+      imageUrls: _imageUrls,
+      mediaUrls: _mediaUrls,
+      medias: _medias,
+      thumbnailUrl: _thumbnailUrl,
+      imageUrl: _imageUrl,
+      ...audioRest
+    } = rest;
+    return presentChatMessage({
+      ...audioRest,
+      ...contactFieldsFromMeta(dto.messageType, dto.metadata, { senderId: dto.senderId, isMine }),
+      messageType: 'audio',
+      type: 'audio',
+      isMine,
+      isSender: isMine,
+      direction: isMine ? 'sent' : 'received',
+      isIncoming: !isMine,
+    });
+  }
   const medias = toChatMedias(images);
   return presentChatMessage({
     ...rest,
@@ -2652,7 +2677,11 @@ export class ChatService {
     }
 
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
-    const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
+    const bodyAudio =
+      audioReferenceFromPayload(data, metadataObj, msgType === 'audio') ||
+      (data as any).audioUrl ||
+      (data as any).voiceUrl ||
+      (data as any).audio;
     const imageSend =
       msgType === 'image' || uploadedImages.length > 0 || isImageMediaReference(bodyAudio);
     if (bodyAudio && uploadedAudios.length === 0 && !imageSend) {
@@ -3825,7 +3854,11 @@ export class ChatService {
     }
 
     // 3. Process audio passed via JSON (data.audioUrl or data.voiceUrl or data.audio)
-    const bodyAudio = (data as any).audioUrl || (data as any).voiceUrl || (data as any).audio;
+    const bodyAudio =
+      audioReferenceFromPayload(data, metadataObj, msgType === 'audio') ||
+      (data as any).audioUrl ||
+      (data as any).voiceUrl ||
+      (data as any).audio;
     const imageSend =
       msgType === 'image' || uploadedImages.length > 0 || isImageMediaReference(bodyAudio);
     if (bodyAudio && uploadedAudios.length === 0 && !imageSend) {

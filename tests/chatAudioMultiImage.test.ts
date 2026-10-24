@@ -13,6 +13,7 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
   let userA: User;
   let userB: User;
   let tokenA: string;
+  let tokenB: string;
   let convAB: Conversation;
 
   // Sample audio buffer (simulating mobile voice note)
@@ -72,6 +73,11 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       email: userA.email,
       role: userA.role,
     });
+    tokenB = generateToken({
+      id: userB.id,
+      email: userB.email,
+      role: userB.role,
+    });
 
     const [u1, u2] = [userA.id, userB.id].sort();
     convAB = await Conversation.create({
@@ -108,6 +114,52 @@ describe('Chat Audio & Multi-Image Messaging (Send Status & Media Resolution)', 
       // Verify conversation preview
       const conv = await Conversation.findByPk(convAB.id);
       expect(conv?.lastMessage).toBe('🎤 Voice message');
+    });
+
+    it('accepts an audio URL nested in metadata and keeps the voice note on the sender side', async () => {
+      const res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          messageType: 'audio',
+          metadata: {
+            url: 'https://s3.flirttime.test/chat/voice-note.m4a',
+            duration: 6,
+          },
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.messageType).toBe('audio');
+      expect(res.body.data.type).toBe('audio');
+      expect(res.body.data.isMine).toBe(true);
+      expect(res.body.data.isSender).toBe(true);
+      expect(res.body.data.direction).toBe('sent');
+      expect(res.body.data.isIncoming).toBe(false);
+      expect(res.body.data.senderId).toBe(userA.id);
+      expect(res.body.data.sender.id).toBe(userA.id);
+      expect(res.body.data.sender.name).toBeTruthy();
+      expect(res.body.data.audioUrl).toContain('http');
+      expect(res.body.data.audioUrl).not.toMatch(/\.(jpe?g|png|webp)$/i);
+
+      const history = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      const mine = history.body.data.messages[history.body.data.messages.length - 1];
+      expect(mine.messageType).toBe('audio');
+      expect(mine.type).toBe('audio');
+      expect(mine.isMine).toBe(true);
+      expect(mine.direction).toBe('sent');
+      expect(mine.senderId).toBe(userA.id);
+
+      const incoming = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenB}`);
+      const theirs = incoming.body.data.messages[incoming.body.data.messages.length - 1];
+      expect(theirs.isMine).toBe(false);
+      expect(theirs.direction).toBe('received');
+      expect(theirs.type).toBe('audio');
+      expect(theirs.senderId).toBe(userA.id);
     });
 
     it('should support audio message sent via JSON body with audioUrl and duration', async () => {

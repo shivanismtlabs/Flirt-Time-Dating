@@ -1,7 +1,7 @@
 import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { sendError } from '../utils/response';
-import { isAudioChatFile } from '../utils/chatMediaKind';
+import { ensureAudioMessageContent, isAudioChatFile } from '../utils/chatMediaKind';
 import { env } from '../config/env';
 
 // Store in memory for immediate processing and memory cleanup (biometric privacy)
@@ -630,6 +630,8 @@ export const handleUploadChatMedia = (
         req.body.metadata = JSON.parse(req.body.metadata);
       } catch {}
     }
+
+    ensureAudioMessageContent(req.body);
 
     if (typeof req.body.images === 'string') {
       try {

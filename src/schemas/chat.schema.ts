@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ensureAudioMessageContent } from '../utils/chatMediaKind';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -148,6 +149,7 @@ export const directSendMessageSchema = z.object({
     replyToId: z.string().uuid('replyToId must be a valid UUID').optional(),
   })
   .superRefine((data, ctx) => {
+    ensureAudioMessageContent(data);
     let multiImageFirst: string | undefined;
     if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
       const first = (data as any).images[0];
@@ -406,6 +408,7 @@ export const sendMessageSchema = z.object({
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
     .superRefine((data, ctx) => {
+      ensureAudioMessageContent(data);
       let multiImageFirst: string | undefined;
       if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
         const first = (data as any).images[0];
@@ -654,6 +657,7 @@ export const sendMultiMessageSchema = z.object({
           metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
         })
         .superRefine((data, ctx) => {
+          ensureAudioMessageContent(data);
           const hasRecipients =
             (data.recipientIds && data.recipientIds.length > 0) ||
             !!data.recipientId ||

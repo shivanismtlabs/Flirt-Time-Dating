@@ -6,6 +6,7 @@
 
 import { AppSocket, AppSocketServer } from './socket.types';
 import { chatService, ChatServiceError, coerceMediaList } from '../services/chat.service';
+import { audioReferenceFromPayload } from '../utils/chatMediaKind';
 import { ChatMessage, Conversation, UserBlock } from '../models';
 import { Op } from 'sequelize';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
@@ -85,6 +86,14 @@ export const registerChatSocketHandlers = (
         payload.url ||
         payload.fileUrl;
 
+      if (!content) {
+        const audioRef = audioReferenceFromPayload(
+          payload,
+          payload.metadata,
+          msgType === 'audio' || msgType === 'voice'
+        );
+        if (audioRef) content = audioRef;
+      }
       if (!content && normalizedImages.length > 0) {
         const firstImg = normalizedImages[0];
         content =

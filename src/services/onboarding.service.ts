@@ -7,6 +7,14 @@ import {
   extractS3Key,
 } from './s3.service';
 import { extractAudioDuration } from '../utils/audioDuration';
+import {
+  isOnboardingStep,
+  nextOnboardingStep,
+  OnboardingStep,
+  OnboardingStepName,
+  resolveCurrentStep,
+  stepRank,
+} from '../utils/onboardingStep';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -50,7 +58,7 @@ export class OnboardingService {
   public async updatePreferences(userId: string, lookingFor: string) {
     const user = await this.getUserOrThrow(userId);
     user.lookingFor = lookingFor;
-    await user.save();
+    await this.moveToNextStep(user, 'preferences');
     return {
       lookingFor: user.lookingFor,
     };
@@ -70,7 +78,7 @@ export class OnboardingService {
   public async updateGenderPreference(userId: string, genderPreference: string) {
     const user = await this.getUserOrThrow(userId);
     user.genderPreference = genderPreference;
-    await user.save();
+    await this.moveToNextStep(user, 'genderPreference');
     return {
       genderPreference: user.genderPreference,
     };
@@ -90,7 +98,7 @@ export class OnboardingService {
   public async updateReligion(userId: string, religion?: string | null) {
     const user = await this.getUserOrThrow(userId);
     user.religion = religion || null;
-    await user.save();
+    await this.moveToNextStep(user, 'religion');
     return {
       religion: user.religion,
     };
@@ -120,7 +128,7 @@ export class OnboardingService {
   }
 
   public async updateUserInterests(userId: string, interestIds: string[]) {
-    await this.getUserOrThrow(userId);
+    const user = await this.getUserOrThrow(userId);
 
     // Remove duplicates
     const uniqueIds = Array.from(new Set(interestIds));
@@ -155,6 +163,8 @@ export class OnboardingService {
 
       await UserInterest.bulkCreate(recordsToCreate, { transaction });
     });
+
+    await this.moveToNextStep(user, 'interests');
 
     return {
       interests: existingInterests,
@@ -364,6 +374,13 @@ export class OnboardingService {
         status: p.status,
       }));
 
+      if (savedPhotos.length >= OnboardingService.MIN_PHOTOS_COUNT) {
+        await this.moveToNextStep(user, 'photos');
+      } else if (stepRank(user.onboardingStep) < stepRank('photos')) {
+        user.onboardingStep = 'photos';
+        await user.save();
+      }
+
       return {
         photos: formatted,
         photo: formatted[0],
@@ -517,6 +534,9 @@ export class OnboardingService {
 
         // Update user's main profilePicture column
         user.profilePicture = s3Key;
+        if (stepRank(user.onboardingStep) < stepRank('photos')) {
+          user.onboardingStep = 'photos';
+        }
         await user.save({ transaction });
 
         return {
@@ -656,7 +676,7 @@ export class OnboardingService {
 
     user.voicePromptUrl = s3Key;
     user.voicePromptDuration = (durationSeconds && durationSeconds > 0) ? durationSeconds : 30;
-    await user.save();
+    await this.moveToNextStep(user, 'audio');
 
     return {
       voicePromptUrl: user.voicePromptUrl,
@@ -731,8 +751,50 @@ export class OnboardingService {
     return {
       isCompleted,
       completionPercentage,
+      currentStep: resolveCurrentStep(user.onboardingStep, steps, isCompleted),
       steps,
     };
+  }
+
+  public async saveCurrentStep(userId: string, step: string) {
+    if (!isOnboardingStep(step)) {
+      throw new OnboardingServiceError('Invalid onboarding step', 400, 'INVALID_ONBOARDING_STEP');
+    }
+
+    const user = await this.getUserOrThrow(userId);
+    user.onboardingStep = step;
+    await user.save();
+
+    return { currentStep: step as OnboardingStep };
+  }
+
+  /**
+   * Moves the saved screen forward after a step is stored.
+   * A later screen is left in place. A finished profile with no saved
+   * screen is not pulled back into an earlier required step.
+   */
+  private async moveToNextStep(user: User, completedStep: OnboardingStepName) {
+    const next = nextOnboardingStep(completedStep);
+    if (stepRank(user.onboardingStep) < stepRank(next)) {
+      if (!user.onboardingStep) {
+        const [interestCount, photoCount] = await Promise.all([
+          UserInterest.count({ where: { userId: user.id } }),
+          UserPhoto.count({ where: { userId: user.id } }),
+        ]);
+        const requiredDone =
+          !!(user.fullName && user.dateOfBirth && user.gender) &&
+          !!user.lookingFor &&
+          !!user.genderPreference &&
+          interestCount >= 1 &&
+          photoCount >= OnboardingService.MIN_PHOTOS_COUNT;
+        if (!(requiredDone && stepRank(next) < stepRank('audio'))) {
+          user.onboardingStep = next;
+        }
+      } else {
+        user.onboardingStep = next;
+      }
+    }
+    await user.save();
   }
 }
 

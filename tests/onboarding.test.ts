@@ -417,6 +417,49 @@ describe('Onboarding Preference & Media APIs', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.steps).toBeDefined();
       expect(res.body.data.completionPercentage).toBeDefined();
+      expect(res.body.data.currentStep).toBe('preferences');
+    });
+
+    it('reopens the same onboarding step after the app is killed', async () => {
+      const saved = await request(app)
+        .put('/api/v1/onboarding/step')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ step: 'interests' });
+
+      expect(saved.status).toBe(200);
+      expect(saved.body.data.currentStep).toBe('interests');
+
+      const reopened = await request(app)
+        .get('/api/v1/onboarding/progress')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(reopened.status).toBe(200);
+      expect(reopened.body.data.currentStep).toBe('interests');
+    });
+
+    it('moves to the next screen after a step is saved', async () => {
+      const saved = await request(app)
+        .put('/api/v1/onboarding/preferences')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ lookingFor: 'relationship' });
+
+      expect(saved.status).toBe(200);
+
+      const progress = await request(app)
+        .get('/api/v1/onboarding/progress')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(progress.status).toBe(200);
+      expect(progress.body.data.currentStep).toBe('genderPreference');
+    });
+
+    it('rejects an unknown onboarding step', async () => {
+      const res = await request(app)
+        .put('/api/v1/onboarding/step')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ step: 'not-a-step' });
+
+      expect(res.status).toBe(400);
     });
   });
 });

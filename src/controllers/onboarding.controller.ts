@@ -370,6 +370,17 @@ export const deleteAudio = async (req: AuthenticatedRequest, res: Response) => {
   }
 };
 
+export const saveCurrentStep = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = getUserIdOrThrow(req, res);
+    if (!userId) return;
+    const result = await onboardingService.saveCurrentStep(userId, req.body.step);
+    return sendSuccess(res, 'Onboarding step saved successfully', result);
+  } catch (err: any) {
+    return handleControllerError(res, err);
+  }
+};
+
 // 7. Onboarding Progress
 export const getProgress = async (req: AuthenticatedRequest, res: Response) => {
   try {

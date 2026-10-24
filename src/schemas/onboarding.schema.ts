@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ONBOARDING_STEP_ORDER } from '../utils/onboardingStep';
 
 export const updatePreferencesSchema = z.object({
   body: z.object({
@@ -59,4 +60,14 @@ export const updateInterestsSchema = z.object({
         path: ['interestIds'],
       }
     ),
+});
+
+export const updateOnboardingStepSchema = z.object({
+  body: z.object({
+    step: z.enum(['completed', ...ONBOARDING_STEP_ORDER], {
+      required_error: 'step is required',
+      invalid_type_error:
+        'Invalid onboarding step. Allowed: basicInfo, preferences, genderPreference, religion, interests, photos, audio, faceVerification, completed',
+    }),
+  }),
 });

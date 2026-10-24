@@ -435,6 +435,9 @@ export class FaceVerificationService {
           if (!user.profilePicture) {
             user.profilePicture = s3Key;
           }
+          if (user.onboardingStep === 'audio' || user.onboardingStep === 'faceVerification') {
+            user.onboardingStep = 'completed';
+          }
           await user.save({ transaction });
         }
 

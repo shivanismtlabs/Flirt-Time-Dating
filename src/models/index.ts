@@ -965,6 +965,10 @@ export const initDb = async (force = false): Promise<void> => {
                 ALTER TABLE "users" ADD COLUMN "isProfileComplete" BOOLEAN DEFAULT false;
               END IF;
 
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'onboardingStep') THEN
+                ALTER TABLE "users" ADD COLUMN "onboardingStep" VARCHAR(40);
+              END IF;
+
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'isFaceVerified') THEN
                 ALTER TABLE "users" ADD COLUMN "isFaceVerified" BOOLEAN DEFAULT false;
               END IF;
@@ -1298,6 +1302,7 @@ export const initDb = async (force = false): Promise<void> => {
 
         try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastActiveAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "onboardingStep" VARCHAR(40);');
         } catch (_laColErr) {
           // Safe to ignore if users does not exist yet
         }
@@ -1355,6 +1360,9 @@ export const initDb = async (force = false): Promise<void> => {
         } catch (_) {}
         try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN "lastActiveAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN "onboardingStep" VARCHAR(40);');
         } catch (_) {}
         try {
           await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');

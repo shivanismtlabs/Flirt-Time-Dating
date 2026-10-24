@@ -73,6 +73,7 @@ export interface UserAttributes {
   activeSubscriptionPlanId?: number | null;
   notificationSettings?: NotificationSettings | null;
   lastActiveAt?: Date | null;
+  onboardingStep?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -125,6 +126,7 @@ export interface UserCreationAttributes
     | 'activeSubscriptionPlanId'
     | 'notificationSettings'
     | 'lastActiveAt'
+    | 'onboardingStep'
   > {}
 
 export class User extends Model<UserAttributes, UserCreationAttributes> implements UserAttributes {
@@ -174,6 +176,7 @@ export class User extends Model<UserAttributes, UserCreationAttributes> implemen
   declare public activeSubscriptionPlanId: number | null;
   declare public notificationSettings: NotificationSettings | null;
   declare public lastActiveAt: Date | null;
+  declare public onboardingStep: string | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
@@ -401,6 +404,10 @@ User.init(
     },
     lastActiveAt: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+    onboardingStep: {
+      type: DataTypes.STRING(40),
       allowNull: true,
     },
   },

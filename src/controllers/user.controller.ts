@@ -25,6 +25,8 @@ import { otpService } from '../services/otp.service';
 import { normalizeEmail } from '../utils/normalization';
 import { combineAndNormalizePhone, normalizePhone } from '../utils/phone';
 import { freeTierLimitService } from '../services/freeTierLimit.service';
+import { resolveCurrentStep } from '../utils/onboardingStep';
+import { OnboardingService } from '../services/onboarding.service';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -319,6 +321,21 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       moreAboutMe,
       notify_settings: userNotifySettings,
       notificationSettings: userNotifySettings,
+      currentStep: resolveCurrentStep(
+        user.onboardingStep,
+        {
+          basicInfo: !!(user.fullName && user.dateOfBirth && user.gender),
+          preferences: !!user.lookingFor,
+          genderPreference: !!user.genderPreference,
+          interests: formattedInterests.length >= 1,
+          photos: formattedPhotos.length >= OnboardingService.MIN_PHOTOS_COUNT,
+        },
+        !!(user.fullName && user.dateOfBirth && user.gender) &&
+          !!user.lookingFor &&
+          !!user.genderPreference &&
+          formattedInterests.length >= 1 &&
+          formattedPhotos.length >= OnboardingService.MIN_PHOTOS_COUNT
+      ),
     };
 
     // 8. Clean response payload with no internal or redundant data

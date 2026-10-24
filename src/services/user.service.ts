@@ -4,6 +4,7 @@ import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
 import { calculateProfileMatchPercentage } from '../utils/compatibility';
+import { stepRank } from '../utils/onboardingStep';
 
 export interface LocationDTO {
   city: string | null;
@@ -488,6 +489,16 @@ export const updateUserProfile = async (
 
   user.isProfileComplete = true;
 
+  if (
+    stepRank(user.onboardingStep) < stepRank('preferences') &&
+    user.fullName &&
+    user.dateOfBirth &&
+    user.gender &&
+    !user.lookingFor
+  ) {
+    user.onboardingStep = 'preferences';
+  }
+
   try {
     await user.save();
   } catch (err: any) {
@@ -545,6 +556,7 @@ export const updateUserProfile = async (
       : null,
     moreAboutMe,
     isProfileComplete: user.isProfileComplete,
+    currentStep: user.onboardingStep || null,
     isVerified: !!user.isFaceVerified,
     isSubscribed: !!user.isSubscribed,
     subscriptionExpiresAt: user.subscriptionExpiresAt || null,

@@ -1,28 +1,15 @@
-export const ONBOARDING_STEP_ORDER = [
-  'basicInfo',
-  'gesture',
-  'preferences',
-  'genderPreference',
-  'religion',
-  'interests',
-  'photos',
-  'audio',
-  'faceVerification',
-] as const;
+/** iOS onboarding screens, in order. Resume uses only these values. */
+export const ONBOARDING_STEP_ORDER = ['basicInfo', 'photos', 'gesture'] as const;
+
+export const CLIENT_ONBOARDING_STEPS = [...ONBOARDING_STEP_ORDER, 'completed'] as const;
 
 export type OnboardingStepName = (typeof ONBOARDING_STEP_ORDER)[number];
 export type OnboardingStep = OnboardingStepName | 'completed';
 
 const NEXT_STEP: Record<OnboardingStepName, OnboardingStep> = {
-  basicInfo: 'gesture',
-  gesture: 'preferences',
-  preferences: 'genderPreference',
-  genderPreference: 'religion',
-  religion: 'interests',
-  interests: 'photos',
-  photos: 'audio',
-  audio: 'faceVerification',
-  faceVerification: 'completed',
+  basicInfo: 'photos',
+  photos: 'gesture',
+  gesture: 'completed',
 };
 
 export function isOnboardingStep(value: unknown): value is OnboardingStep {
@@ -43,38 +30,32 @@ export function nextOnboardingStep(completedStep: OnboardingStepName): Onboardin
   return NEXT_STEP[completedStep];
 }
 
+/**
+ * Resume step for the iOS flow: basicInfo → photos → gesture → completed.
+ * Stored values outside that set are folded in from profile data so splash
+ * never routes to a screen this client does not have.
+ */
 export function resolveCurrentStep(
   stored: string | null | undefined,
   steps: {
     basicInfo: boolean;
-    gesture?: boolean;
-    preferences: boolean;
-    genderPreference: boolean;
-    interests: boolean;
     photos: boolean;
-  },
-  isCompleted: boolean
+    gesture: boolean;
+  }
 ): OnboardingStep {
-  const waitingForGesture =
-    steps.gesture === false &&
-    steps.basicInfo &&
-    !steps.preferences &&
-    (!stored || stepRank(stored) <= stepRank('preferences'));
-
-  if (waitingForGesture) {
-    return 'gesture';
-  }
-  if (isOnboardingStep(stored)) {
-    return stored;
-  }
-  if (isCompleted) {
+  if (stored === 'completed' || steps.gesture) {
     return 'completed';
   }
+
+  if (stored === 'basicInfo' || stored === 'photos' || stored === 'gesture') {
+    // Older profile saves parked the user on gesture before any photo existed.
+    if (stored === 'gesture' && steps.basicInfo && !steps.photos) {
+      return 'photos';
+    }
+    return stored;
+  }
+
   if (!steps.basicInfo) return 'basicInfo';
-  if (steps.gesture === false) return 'gesture';
-  if (!steps.preferences) return 'preferences';
-  if (!steps.genderPreference) return 'genderPreference';
-  if (!steps.interests) return 'interests';
   if (!steps.photos) return 'photos';
-  return 'completed';
+  return 'gesture';
 }

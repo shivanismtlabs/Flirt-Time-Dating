@@ -4,7 +4,6 @@ import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
 import { calculateProfileMatchPercentage } from '../utils/compatibility';
-import { stepRank } from '../utils/onboardingStep';
 
 export interface LocationDTO {
   city: string | null;
@@ -516,24 +515,18 @@ export const updateUserProfile = async (
   }
 
   const basicInfoReady = !!(user.fullName && user.dateOfBirth && user.gender);
-  const waitingForGesture =
-    !user.isFaceVerified &&
-    !user.lookingFor &&
-    stepRank(user.onboardingStep) <= stepRank('preferences');
+  const hasProfilePhoto = !!user.profilePicture;
 
-  if (basicInfoReady && waitingForGesture) {
-    user.onboardingStep = 'gesture';
-    user.isProfileComplete = false;
-  } else if (
-    basicInfoReady &&
-    user.isFaceVerified &&
-    !user.lookingFor &&
-    stepRank(user.onboardingStep) < stepRank('preferences')
-  ) {
-    user.onboardingStep = 'preferences';
+  if (user.isFaceVerified) {
+    user.onboardingStep = 'completed';
     user.isProfileComplete = true;
-  } else if (!waitingForGesture || user.isFaceVerified) {
-    user.isProfileComplete = true;
+  } else if (basicInfoReady && user.onboardingStep !== 'completed') {
+    const stored = user.onboardingStep;
+    // Name / DOB / gender save opens the profile photo screen.
+    // A gesture pointer with no photo is the previous flow; send them to photos.
+    if (!stored || stored === 'basicInfo' || (stored === 'gesture' && !hasProfilePhoto)) {
+      user.onboardingStep = 'photos';
+    }
   }
 
   try {

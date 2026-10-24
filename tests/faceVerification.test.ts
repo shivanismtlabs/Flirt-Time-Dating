@@ -113,6 +113,8 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
     it('should successfully detect real face and approve verification for first-time user without prior profile picture', async () => {
       // Set user's profilePicture to null
       testUser.profilePicture = null;
+      testUser.onboardingStep = 'basicInfo';
+      testUser.isProfileComplete = false;
       await testUser.save();
 
       const validImage = await createSingleFaceImage(400, 400);
@@ -132,12 +134,13 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.body.data.status).toBe('approved');
       expect(res.body.data.similarity).toBe(100);
       expect(res.body.data.reasonCode).toBe('VERIFICATION_SUCCESSFUL');
-      expect(res.body.data.currentStep).toBe('preferences');
+      expect(res.body.data.currentStep).toBe('completed');
 
       // Verify user model updated with face verification and profile picture
       const updatedUser = await User.findByPk(testUser.id);
       expect(updatedUser?.isFaceVerified).toBe(true);
-      expect(updatedUser?.onboardingStep).toBe('preferences');
+      expect(updatedUser?.isProfileComplete).toBe(true);
+      expect(updatedUser?.onboardingStep).toBe('completed');
       expect(updatedUser?.profilePicture).toBe('verifications/user99/test_selfie.jpg');
     });
 
@@ -210,6 +213,9 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
 
   describe('7. Multiple Faces Detected in Selfie', () => {
     it('should reject with MULTIPLE_FACES_DETECTED when more than 1 face is in frame', async () => {
+      testUser.onboardingStep = 'gesture';
+      await testUser.save();
+
       const validImage = await createMultiFaceImage(600, 400);
 
       jest.spyOn(rekognitionService, 'detectFaces').mockResolvedValueOnce({
@@ -232,6 +238,11 @@ describe('Laravel-Compatible Face Recognition API (POST /api/v1/gesture-upload)'
       expect(res.body.data.status).toBe('rejected');
       expect(res.body.data.faceCount).toBe(2);
       expect(res.body.data.rejectionReason).toBe('MULTIPLE_FACES_DETECTED');
+      expect(res.body.data.currentStep).toBe('gesture');
+
+      const user = await User.findByPk(testUser.id);
+      expect(user?.isFaceVerified).toBe(false);
+      expect(user?.onboardingStep).toBe('gesture');
     });
   });
 

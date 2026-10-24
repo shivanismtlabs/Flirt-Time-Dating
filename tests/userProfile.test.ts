@@ -46,7 +46,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   describe('1. Successful Profile Onboarding Flow', () => {
-    it('should save profile and hold the user on the gesture step', async () => {
+    it('should save profile and open the profile photo step', async () => {
       const payload = {
         fullName: 'Mike Hussey',
         nickName: 'Mikey',
@@ -72,7 +72,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.gender).toBe('male');
       expect(res.body.data.about).toBe(payload.about);
       expect(res.body.data.isProfileComplete).toBe(false);
-      expect(res.body.data.currentStep).toBe('gesture');
+      expect(res.body.data.currentStep).toBe('photos');
       expect(res.body.data.location).toBeDefined();
       expect(res.body.data.age).toBeDefined();
       expect(res.body.data.password).toBeUndefined();
@@ -84,10 +84,10 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedDbUser?.dateOfBirth).toBe('1996-10-09');
       expect(updatedDbUser?.gender).toBe('male');
       expect(updatedDbUser?.isProfileComplete).toBe(false);
-      expect(updatedDbUser?.onboardingStep).toBe('gesture');
+      expect(updatedDbUser?.onboardingStep).toBe('photos');
     });
 
-    it('opens preferences after gesture verification is already approved', async () => {
+    it('marks the profile complete when gesture verification is already approved', async () => {
       testUser.isFaceVerified = true;
       testUser.onboardingStep = 'gesture';
       await testUser.save();
@@ -103,7 +103,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.isProfileComplete).toBe(true);
-      expect(res.body.data.currentStep).toBe('preferences');
+      expect(res.body.data.currentStep).toBe('completed');
     });
 
     it('should update profile with username, location, latitude, longitude and sync nickName', async () => {

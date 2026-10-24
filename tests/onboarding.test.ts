@@ -415,29 +415,71 @@ describe('Onboarding Preference & Media APIs', () => {
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(res.status).toBe(200);
-      expect(res.body.data.steps).toBeDefined();
+      expect(res.body.data.steps).toEqual({
+        basicInfo: true,
+        photos: false,
+        gesture: false,
+      });
       expect(res.body.data.completionPercentage).toBeDefined();
-      expect(res.body.data.currentStep).toBe('gesture');
+      expect(res.body.data.currentStep).toBe('photos');
     });
 
     it('reopens the same onboarding step after the app is killed', async () => {
       const saved = await request(app)
         .put('/api/v1/onboarding/step')
         .set('Authorization', `Bearer ${authToken}`)
-        .send({ step: 'interests' });
+        .send({ step: 'photos' });
 
       expect(saved.status).toBe(200);
-      expect(saved.body.data.currentStep).toBe('interests');
+      expect(saved.body.data.currentStep).toBe('photos');
 
       const reopened = await request(app)
         .get('/api/v1/onboarding/progress')
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(reopened.status).toBe(200);
-      expect(reopened.body.data.currentStep).toBe('interests');
+      expect(reopened.body.data.currentStep).toBe('photos');
     });
 
-    it('moves to the next screen after a step is saved', async () => {
+    it('reopens the gesture screen after a profile photo is saved', async () => {
+      user.profilePicture = `photos/${user.id}/primary.jpg`;
+      await user.save();
+
+      const saved = await request(app)
+        .put('/api/v1/onboarding/step')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ step: 'gesture' });
+
+      expect(saved.status).toBe(200);
+      expect(saved.body.data.currentStep).toBe('gesture');
+
+      const reopened = await request(app)
+        .get('/api/v1/onboarding/progress')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(reopened.status).toBe(200);
+      expect(reopened.body.data.currentStep).toBe('gesture');
+    });
+
+    it('does not resume on steps this client does not use', async () => {
+      user.onboardingStep = 'preferences';
+      await user.save();
+
+      const progress = await request(app)
+        .get('/api/v1/onboarding/progress')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(progress.status).toBe(200);
+      expect(progress.body.data.currentStep).toBe('photos');
+      expect(progress.body.data.steps).not.toHaveProperty('preferences');
+      expect(progress.body.data.steps).not.toHaveProperty('genderPreference');
+      expect(progress.body.data.steps).not.toHaveProperty('religion');
+      expect(progress.body.data.steps).not.toHaveProperty('interests');
+      expect(progress.body.data.steps).not.toHaveProperty('audio');
+      expect(progress.body.data.steps).not.toHaveProperty('faceVerification');
+    });
+
+    it('keeps the iOS step when an unused onboarding screen is saved', async () => {
       const saved = await request(app)
         .put('/api/v1/onboarding/preferences')
         .set('Authorization', `Bearer ${authToken}`)
@@ -450,7 +492,16 @@ describe('Onboarding Preference & Media APIs', () => {
         .set('Authorization', `Bearer ${authToken}`);
 
       expect(progress.status).toBe(200);
-      expect(progress.body.data.currentStep).toBe('genderPreference');
+      expect(progress.body.data.currentStep).toBe('photos');
+    });
+
+    it('rejects an onboarding step outside the iOS flow', async () => {
+      const res = await request(app)
+        .put('/api/v1/onboarding/step')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({ step: 'preferences' });
+
+      expect(res.status).toBe(400);
     });
 
     it('rejects an unknown onboarding step', async () => {

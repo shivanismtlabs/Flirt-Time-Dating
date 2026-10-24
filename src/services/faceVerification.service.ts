@@ -6,7 +6,6 @@ import { FaceVerification, FaceVerificationStatus } from '../models/faceVerifica
 import { s3Service, S3ServiceError } from './s3.service';
 import { rekognitionService, RekognitionServiceError } from './rekognition.service';
 import { env } from '../config/env';
-import { stepRank } from '../utils/onboardingStep';
 
 export interface ProcessVerificationInput {
   userId: string;
@@ -253,6 +252,7 @@ export class FaceVerificationService {
             status: 'unavailable_single_frame',
             message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
           },
+          currentStep: user.onboardingStep || null,
         };
       }
 
@@ -322,6 +322,7 @@ export class FaceVerificationService {
             status: 'unavailable_single_frame',
             message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
           },
+          currentStep: user.onboardingStep || null,
         };
       }
 
@@ -437,12 +438,8 @@ export class FaceVerificationService {
           if (!user.profilePicture) {
             user.profilePicture = s3Key;
           }
-          if (user.onboardingStep === 'audio' || user.onboardingStep === 'faceVerification') {
-            user.onboardingStep = 'completed';
-          } else if (stepRank(user.onboardingStep) < stepRank('preferences')) {
-            user.onboardingStep = 'preferences';
-            user.isProfileComplete = true;
-          }
+          user.onboardingStep = 'completed';
+          user.isProfileComplete = true;
           await user.save({ transaction });
         }
 

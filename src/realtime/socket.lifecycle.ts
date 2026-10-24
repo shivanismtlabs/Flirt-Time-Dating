@@ -206,6 +206,10 @@ export const handleSocketConnection = (
     transport: socket.conn.transport.name,
   });
 
+  void import('../services/notification.service')
+    .then(({ notificationService }) => notificationService.publishUnreadCount(user.userId))
+    .catch(() => undefined);
+
   // 5. Track transport upgrades (e.g., polling -> websocket) without logging sensitive data
   socket.conn.on('upgrade', (transport: any) => {
     socketLogger.info('Socket transport upgraded', {

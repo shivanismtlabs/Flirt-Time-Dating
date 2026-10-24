@@ -3,7 +3,7 @@ import { getFirebaseMessaging } from '../config/firebase';
 import { Notification, UserDevice, User, UserPhoto, NotificationSetting } from '../models';
 import { formatThumbnailUrl } from './s3.service';
 import { resolveDisplayName } from './discovery.service';
-import { isUserConnected } from '../realtime/socket.lifecycle';
+import { getUserRoomName, isUserConnected } from '../realtime/socket.lifecycle';
 import type { MulticastMessage, BatchResponse } from 'firebase-admin/messaging';
 import { normalizeVoipToken } from '../utils/voipToken';
 
@@ -506,6 +506,7 @@ export class NotificationService {
         data: payloadData,
         isRead: false,
       });
+      await this.publishUnreadCount(recipientId);
     } catch (dbErr: any) {
       console.error('[Notification Dispatch DB Error]:', dbErr.message);
       throw dbErr;
@@ -1370,6 +1371,27 @@ export class NotificationService {
   }
 
   /**
+   * Pushes the current unread badge to the user's open sockets.
+   * Payload is only { unreadCount }.
+   */
+  public async publishUnreadCount(userId: string): Promise<void> {
+    try {
+      const { getSocketServer } = await import('../realtime/socket.server');
+      const io = getSocketServer();
+      const unreadCount = await this.getUnreadCount(userId);
+      const payload = { unreadCount };
+      io.to(getUserRoomName(userId)).emit('notification:count', payload);
+      if (userId.toLowerCase() !== userId) {
+        io.to(getUserRoomName(userId.toLowerCase())).emit('notification:count', payload);
+      }
+    } catch (err: any) {
+      if (!String(err?.message || '').includes('has not been initialized')) {
+        console.warn('[Notification Count Socket]:', err?.message || err);
+      }
+    }
+  }
+
+  /**
    * Marks a single in-app notification as read idempotently
    */
   public async markAsRead(userId: string, notificationId: string) {
@@ -1381,8 +1403,12 @@ export class NotificationService {
       return null;
     }
 
+    const wasUnread = !notification.isRead;
     notification.isRead = true;
     await notification.save();
+    if (wasUnread) {
+      await this.publishUnreadCount(userId);
+    }
     return notification;
   }
 
@@ -1394,6 +1420,9 @@ export class NotificationService {
       { isRead: true },
       { where: { recipientId: userId, isRead: false } }
     );
+    if (updatedCount > 0) {
+      await this.publishUnreadCount(userId);
+    }
     return { updatedCount };
   }
 
@@ -1409,7 +1438,11 @@ export class NotificationService {
       throw new NotificationServiceError('Notification not found', 404, 'NOT_FOUND');
     }
 
+    const wasUnread = !notification.isRead;
     await notification.destroy();
+    if (wasUnread) {
+      await this.publishUnreadCount(userId);
+    }
     return true;
   }
 

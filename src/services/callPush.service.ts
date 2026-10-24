@@ -4,6 +4,7 @@ import { getFirebaseMessaging } from '../config/firebase';
 import { Notification, UserDevice } from '../models';
 import { getApnsVoipStatus, sendVoipPushToTokens } from './apnsVoip.service';
 import { normalizeVoipToken } from '../utils/voipToken';
+import { notificationService } from './notification.service';
 
 export type IncomingCallPushInput = {
   calleeId: string;
@@ -62,6 +63,7 @@ export async function notifyIncomingCallPush(input: IncomingCallPushInput): Prom
         },
         isRead: false,
       });
+      await notificationService.publishUnreadCount(input.calleeId);
     }
   } catch (err: any) {
     console.warn('[CallPush] could not store incoming-call row:', err?.message || err);

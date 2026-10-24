@@ -103,6 +103,11 @@ export interface ServerToClientEvents {
   }) => void;
 
   /**
+   * Unread in-app notification badge. Emitted to the user's room.
+   */
+  'notification:count': (data: { unreadCount: number }) => void;
+
+  /**
    * Real-time Conversation List Update Events
    * Emitted to both sender and recipient user rooms whenever a message is sent,
    * edited, deleted, or unread status changes so the conversation list updates in real-time.

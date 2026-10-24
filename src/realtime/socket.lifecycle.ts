@@ -51,10 +51,25 @@ export const getUserRoomName = (userId: string): string => {
 };
 
 /**
+ * Live socket ids for a user. Matching ignores id casing so a call event
+ * still reaches the phone when the token and the call row differ by case.
+ */
+export const getUserSocketIds = (userId: string): string[] => {
+  const target = String(userId || '').trim().toLowerCase();
+  if (!target) return [];
+  const ids = new Set<string>();
+  for (const [key, sockets] of userSocketsMap) {
+    if (String(key).trim().toLowerCase() !== target) continue;
+    for (const id of sockets) ids.add(id);
+  }
+  return [...ids];
+};
+
+/**
  * Returns the number of currently active sockets for a given user.
  */
 export const getUserActiveSocketCount = (userId: string): number => {
-  return userSocketsMap.get(userId)?.size ?? 0;
+  return getUserSocketIds(userId).length;
 };
 
 /**

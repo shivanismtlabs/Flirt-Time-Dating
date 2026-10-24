@@ -31,23 +31,37 @@ export const createMomentSchema = z.object({
     locationLabel: z
       .string()
       .trim()
-      .max(100, 'Location label must not exceed 100 characters')
+      .max(500, 'Location label must not exceed 500 characters')
       .optional()
       .nullable(),
     location: z
       .union([
-        z.string().trim().max(100),
+        z.string().trim().max(500),
         z.object({
-          name: z.string().trim().max(100).optional(),
+          name: z.string().trim().max(200).optional(),
           city: z.string().trim().max(100).optional(),
-          label: z.string().trim().max(100).optional(),
-          address: z.string().trim().max(100).optional(),
-          latitude: z.number().optional(),
-          longitude: z.number().optional(),
+          state: z.string().trim().max(100).optional(),
+          country: z.string().trim().max(100).optional(),
+          county: z.string().trim().max(100).optional(),
+          label: z.string().trim().max(200).optional(),
+          address: z.string().trim().max(200).optional(),
+          fullLocation: z.string().trim().max(200).optional(),
+          latitude: z.union([z.number(), z.string()]).optional().nullable(),
+          longitude: z.union([z.number(), z.string()]).optional().nullable(),
+          lat: z.union([z.number(), z.string()]).optional().nullable(),
+          lng: z.union([z.number(), z.string()]).optional().nullable(),
         }),
       ])
       .optional()
       .nullable(),
+    latitude: z.union([z.number(), z.string()]).optional().nullable(),
+    longitude: z.union([z.number(), z.string()]).optional().nullable(),
+    lat: z.union([z.number(), z.string()]).optional().nullable(),
+    lng: z.union([z.number(), z.string()]).optional().nullable(),
+    city: z.string().trim().max(100).optional().nullable(),
+    state: z.string().trim().max(100).optional().nullable(),
+    country: z.string().trim().max(100).optional().nullable(),
+    address: z.string().trim().max(200).optional().nullable(),
     imageKey: z.string().min(1).optional(),
     imageKeys: z
       .union([

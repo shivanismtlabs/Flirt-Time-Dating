@@ -204,6 +204,83 @@ export class VideoCallService {
     }
   }
 
+  private closeReason(call: VideoCall): 'cancelled' | 'rejected' | 'missed' | 'ended' {
+    if (call.status === 'rejected') return 'rejected';
+    if (call.status === 'missed') {
+      return call.endedBy && call.endedBy === call.callerId ? 'cancelled' : 'missed';
+    }
+    return 'ended';
+  }
+
+  /**
+   * Push the terminal call state to both people. A hangup, decline, miss, or
+   * cancel has to update every device still showing the call, including the
+   * phone that sent it.
+   */
+  private async broadcastCallClosed(
+    call: VideoCall,
+    reason: 'cancelled' | 'rejected' | 'missed' | 'ended',
+    options?: {
+      endedBy?: string | null;
+      declineReason?: string;
+      direct?: { emit: (event: string, payload?: unknown) => void } | null;
+      onlyUserId?: string | null;
+    }
+  ): Promise<void> {
+    const io = this.getIoSafe();
+    if (!io) return;
+    try {
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
+      const { caller, callee } = await this.loadCallUsers(call);
+      const callDto = this.toCallDto(
+        call,
+        caller,
+        callee,
+        reason === 'cancelled' ? 'cancelled' : undefined
+      );
+      const targets = options?.onlyUserId
+        ? [options.onlyUserId]
+        : [call.callerId, call.calleeId];
+      const endedBy = options?.endedBy || call.endedBy || undefined;
+      const direct = options?.direct;
+
+      for (const userId of targets) {
+        if (!userId) continue;
+        if (reason === 'rejected') {
+          emitVideoCallRejected(io, userId, {
+            callId: call.id,
+            status: 'rejected',
+            by: endedBy || call.calleeId,
+            reason: options?.declineReason || 'rejected',
+            callType,
+            call: callDto as unknown as Record<string, unknown>,
+          }, direct);
+          continue;
+        }
+        if (reason === 'cancelled' || reason === 'missed') {
+          emitVideoCallMissed(io, userId, {
+            callId: call.id,
+            status: 'missed',
+            reason: reason === 'cancelled' ? 'cancelled' : 'missed',
+            callType,
+            call: callDto as unknown as Record<string, unknown>,
+          }, direct);
+          continue;
+        }
+        emitVideoCallEnded(io, userId, {
+          callId: call.id,
+          status: 'ended',
+          endedBy,
+          reason: 'ended',
+          callType,
+          call: callDto as unknown as Record<string, unknown>,
+        }, direct);
+      }
+    } catch {
+      // The call row is already saved. A socket miss must not undo it.
+    }
+  }
+
   private clearRingTimeout(callId: string): void {
     const timer = this.ringTimers.get(callId);
     if (timer) {
@@ -456,12 +533,7 @@ export class VideoCallService {
     if (!call || call.status !== 'ringing') return;
     const now = new Date();
     await call.update({ status: 'missed', endedAt: now });
-    const io = this.getIoSafe();
-    if (io) {
-      const callType = call.callType === 'audio' ? 'audio' : 'video';
-      emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed', callType });
-      emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed', callType });
-    }
+    await this.broadcastCallClosed(call, 'missed');
     await this.insertCallHistoryMessage(call, 'missed');
   }
 
@@ -470,30 +542,44 @@ export class VideoCallService {
    */
   private async cleanupStaleRingingCalls(userId: string): Promise<void> {
     const now = new Date();
-    // 1. Mark expired ringing calls as missed
-    await VideoCall.update(
-      { status: 'missed' },
-      {
-        where: {
-          [Op.or]: [{ callerId: userId }, { calleeId: userId }],
-          status: 'ringing',
-          expiresAt: { [Op.lt]: now },
-        },
-      }
-    );
+    const expired = await VideoCall.findAll({
+      where: {
+        [Op.or]: [{ callerId: userId }, { calleeId: userId }],
+        status: 'ringing',
+        expiresAt: { [Op.lt]: now },
+      },
+    });
+    for (const call of expired) {
+      const [affected] = await VideoCall.update(
+        { status: 'missed', endedAt: now },
+        { where: { id: call.id, status: 'ringing' } }
+      );
+      if (!affected) continue;
+      call.status = 'missed';
+      call.endedAt = now;
+      await this.broadcastCallClosed(call, 'missed');
+      await this.insertCallHistoryMessage(call, 'missed');
+    }
 
-    // 2. Mark abandoned calls (> 30 min in accepted state) as ended so user is never permanently stuck
     const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000);
-    await VideoCall.update(
-      { status: 'ended', endedAt: now },
-      {
-        where: {
-          [Op.or]: [{ callerId: userId }, { calleeId: userId }],
-          status: 'accepted',
-          startedAt: { [Op.lt]: thirtyMinutesAgo },
-        },
-      }
-    );
+    const abandoned = await VideoCall.findAll({
+      where: {
+        [Op.or]: [{ callerId: userId }, { calleeId: userId }],
+        status: 'accepted',
+        startedAt: { [Op.lt]: thirtyMinutesAgo },
+      },
+    });
+    for (const call of abandoned) {
+      const [affected] = await VideoCall.update(
+        { status: 'ended', endedAt: now },
+        { where: { id: call.id, status: 'accepted' } }
+      );
+      if (!affected) continue;
+      call.status = 'ended';
+      call.endedAt = now;
+      await this.broadcastCallClosed(call, 'ended', { endedBy: call.endedBy });
+      await this.insertCallHistoryMessage(call, 'ended');
+    }
   }
 
   /**
@@ -782,12 +868,7 @@ export class VideoCallService {
     if (call.status === 'ringing' && call.expiresAt && call.expiresAt < now) {
       this.clearRingTimeout(call.id);
       await call.update({ status: 'missed', endedAt: now });
-      const io = this.getIoSafe();
-      if (io) {
-        const callType = call.callType === 'audio' ? 'audio' : 'video';
-        emitVideoCallMissed(io, call.callerId, { callId: call.id, status: 'missed', reason: 'missed', callType });
-        emitVideoCallMissed(io, call.calleeId, { callId: call.id, status: 'missed', reason: 'missed', callType });
-      }
+      await this.broadcastCallClosed(call, 'missed');
       await this.insertCallHistoryMessage(call, 'missed');
       throw new VideoCallServiceError('Call has expired', 410, 'CALL_EXPIRED');
     }
@@ -836,11 +917,14 @@ export class VideoCallService {
 
     const io = this.getIoSafe();
     if (io) {
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
       emitVideoCallAccepted(io, call.callerId, {
         callId: call.id,
         status: 'accepted',
         participantJoined: calleeId,
         session: callerSession,
+        callType,
+        call: callerSession.call,
       });
     }
 
@@ -888,6 +972,7 @@ export class VideoCallService {
 
     // Idempotent rejection: if already rejected, ended, or missed, return current state safely
     if (call.status === 'rejected' || call.status === 'ended' || call.status === 'missed') {
+      await this.broadcastCallClosed(call, this.closeReason(call), { endedBy: call.endedBy });
       const { caller, callee } = await this.loadCallUsers(call);
       return {
         callId: call.id,
@@ -914,27 +999,19 @@ export class VideoCallService {
     });
 
     const declineReason = String(reason || '').trim().toLowerCase() === 'busy' ? 'busy' : 'rejected';
-    const { caller, callee } = await this.loadCallUsers(call);
-    const callDto = this.toCallDto(call, caller, callee);
-
-    const io = this.getIoSafe();
-    if (io) {
-      emitVideoCallRejected(io, call.callerId, {
-        callId: call.id,
-        status: 'rejected',
-        by: calleeId,
-        reason: declineReason,
-        call: callDto as unknown as Record<string, unknown>,
-      });
-    }
+    await this.broadcastCallClosed(call, 'rejected', {
+      endedBy: calleeId,
+      declineReason,
+    });
 
     await this.insertCallHistoryMessage(call, 'declined');
+    const { caller, callee } = await this.loadCallUsers(call);
 
     return {
       callId: call.id,
       status: 'rejected',
       callEnded: true,
-      call: callDto,
+      call: this.toCallDto(call, caller, callee),
     };
   }
 
@@ -966,6 +1043,7 @@ export class VideoCallService {
     if (['ended', 'rejected', 'missed', 'failed'].includes(call.status)) {
       const reason =
         call.status === 'rejected' ? 'rejected' : call.status === 'missed' ? 'missed' : 'ended';
+      await this.broadcastCallClosed(call, this.closeReason(call), { endedBy: call.endedBy });
       return {
         callId: call.id,
         status: call.status,
@@ -987,27 +1065,7 @@ export class VideoCallService {
       endedBy: userId,
     });
 
-    const otherUserId = isCaller ? call.calleeId : call.callerId;
-    const io = this.getIoSafe();
-    if (io) {
-      const callType = call.callType === 'audio' ? 'audio' : 'video';
-      if (finalStatus === 'missed') {
-        emitVideoCallMissed(io, otherUserId, {
-          callId: call.id,
-          status: 'missed',
-          reason: 'cancelled',
-          callType,
-        });
-      } else {
-        emitVideoCallEnded(io, otherUserId, {
-          callId: call.id,
-          status: 'ended',
-          endedBy: userId,
-          reason: 'ended',
-          callType,
-        });
-      }
-    }
+    await this.broadcastCallClosed(call, reason, { endedBy: userId });
 
     await this.insertCallHistoryMessage(call, reason);
 
@@ -1137,6 +1195,58 @@ export class VideoCallService {
       return this.rejectCall(userId, call.id);
     }
     return this.endCall(userId, call.id);
+  }
+
+  /**
+   * Socket just connected. Replay a live incoming ring, or a call that ended
+   * while this phone was offline, so the screen matches the server.
+   */
+  public async syncConnectedCallSocket(
+    userId: string,
+    direct: { emit: (event: string, payload?: unknown) => void }
+  ): Promise<void> {
+    if (!userId || !direct) return;
+    const call = await VideoCall.findOne({
+      where: { [Op.or]: [{ callerId: userId }, { calleeId: userId }] },
+      order: [['updatedAt', 'DESC']],
+    });
+    if (!call) return;
+
+    const now = Date.now();
+    const stillRinging =
+      call.status === 'ringing' &&
+      call.expiresAt &&
+      new Date(call.expiresAt).getTime() > now &&
+      String(call.calleeId) === String(userId);
+
+    if (stillRinging) {
+      const io = this.getIoSafe();
+      if (!io) return;
+      const { caller, callee } = await this.loadCallUsers(call);
+      const callerSummary = this.toCallUser(caller);
+      if (!callerSummary) return;
+      const session = this.buildSession(call, userId, caller, callee);
+      const callType = call.callType === 'audio' ? 'audio' : 'video';
+      emitVideoCallIncoming(io, userId, {
+        callId: call.id,
+        channelName: call.channelName,
+        caller: callerSummary,
+        status: 'ringing',
+        expiresAt: new Date(call.expiresAt).toISOString(),
+        callType,
+        call: session.call as unknown as Record<string, unknown>,
+      }, direct);
+      return;
+    }
+
+    if (call.status === 'ringing' || call.status === 'accepted') return;
+    const endedAt = call.endedAt ? new Date(call.endedAt).getTime() : 0;
+    if (!endedAt || now - endedAt > 60_000) return;
+    await this.broadcastCallClosed(call, this.closeReason(call), {
+      endedBy: call.endedBy,
+      direct,
+      onlyUserId: userId,
+    });
   }
 
   /**

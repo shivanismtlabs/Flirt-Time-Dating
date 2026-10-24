@@ -1,4 +1,5 @@
 import request from 'supertest';
+import axios from 'axios';
 import app from '../src/app';
 import {
   sequelize,
@@ -239,6 +240,76 @@ describe('Permanent Moments Feature APIs', () => {
       });
       expect(savedMedia).toHaveLength(1);
       expect(savedMedia[0].mediaUrl).toBe(testKey);
+    });
+
+    it('does not stamp the default Mumbai city when the upload has no location', async () => {
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_noloc.jpg`;
+
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: testKey,
+          caption: 'No place selected',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.locationLabel).toBeNull();
+      expect(res.body.data.location).toBeNull();
+
+      const savedMoment = await Moment.findByPk(res.body.data.momentId);
+      expect(savedMoment?.locationLabel).toBeNull();
+    });
+
+    it('uses coordinates from the upload instead of the default Mumbai city', async () => {
+      const geocode = jest.spyOn(axios, 'get').mockResolvedValue({
+        data: {
+          address: {
+            city: 'Indore',
+            state: 'Madhya Pradesh',
+          },
+        },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config: {},
+      } as any);
+
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_coords.jpg`;
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: testKey,
+          caption: 'Out in the city',
+          latitude: 22.7196,
+          longitude: 75.8577,
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.locationLabel).toBe('Indore, Madhya Pradesh');
+      expect(res.body.data.location).toEqual({ name: 'Indore, Madhya Pradesh' });
+      geocode.mockRestore();
+    });
+
+    it('uses the saved profile city when the upload does not include a place', async () => {
+      creatorUser.city = 'Pune, Maharashtra';
+      creatorUser.latitude = 18.5204;
+      creatorUser.longitude = 73.8567;
+      await creatorUser.save();
+
+      const testKey = `moments/${creatorUser.id}/${Date.now()}_profile.jpg`;
+      const res = await request(app)
+        .post('/api/v1/moments')
+        .set('Authorization', `Bearer ${creatorToken}`)
+        .send({
+          imageKey: testKey,
+          caption: 'From my city',
+        });
+
+      expect(res.status).toBe(201);
+      expect(res.body.data.locationLabel).toBe('Pune, Maharashtra');
+      expect(res.body.data.location).toEqual({ name: 'Pune, Maharashtra' });
     });
 
     it('should successfully create a moment with pre-uploaded S3 mediaUrls in JSON body', async () => {

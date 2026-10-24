@@ -31,6 +31,7 @@ import {
   publishMomentRealtime,
   MomentLiveUpdateInput,
 } from '../realtime/socket.moment';
+import { resolveMomentLocationLabel } from '../utils/momentLocation';
 
 export class MomentServiceError extends Error {
   public statusCode: number;
@@ -163,6 +164,8 @@ export class MomentService {
     caption?: string | null;
     audience?: MomentAudience;
     locationLabel?: string | null;
+    latitude?: number | null;
+    longitude?: number | null;
     files?: Express.Multer.File[];
     mediaUrls?: string[];
   }) {
@@ -171,6 +174,8 @@ export class MomentService {
       caption,
       audience = 'everyone',
       locationLabel,
+      latitude = null,
+      longitude = null,
       files = [],
       mediaUrls = [],
     } = input;
@@ -351,6 +356,14 @@ export class MomentService {
     // 5. Permanent Moment - no 24-hour expiry
     const publishedAt = new Date();
     const expiresAt = null;
+    const resolvedLocationLabel = await resolveMomentLocationLabel({
+      uploadedLabel: locationLabel,
+      latitude,
+      longitude,
+      profileCity: creator.city,
+      profileLatitude: creator.latitude,
+      profileLongitude: creator.longitude,
+    });
 
     // 6. Atomic database persistence
     const t = await sequelize.transaction();
@@ -365,7 +378,7 @@ export class MomentService {
             status: 'active',
             publishedAt,
             expiresAt: null,
-            locationLabel: locationLabel?.trim() || creator.city || null,
+            locationLabel: resolvedLocationLabel,
           },
           { transaction: t }
         );
@@ -393,7 +406,7 @@ export class MomentService {
               status: 'active',
               publishedAt,
               expiresAt: new Date(Date.now() + 100 * 365 * 24 * 60 * 60 * 1000),
-              locationLabel: locationLabel?.trim() || creator.city || null,
+              locationLabel: resolvedLocationLabel,
             },
             { transaction: t }
           );
@@ -789,8 +802,8 @@ export class MomentService {
         timeRemainingMinutes: null,
         relativeAge: formatRelativeAge(m.publishedAt),
         timeAgo: formatTimeAgoShort(m.publishedAt),
-        locationLabel: m.locationLabel || targetUser.city || null,
-        location: m.locationLabel ? { name: m.locationLabel } : (targetUser.city ? { name: targetUser.city } : null),
+        locationLabel: m.locationLabel || null,
+        location: m.locationLabel ? { name: m.locationLabel } : null,
         creator: creatorInfo,
         media: sortedMedia.map((media: any) => ({
           mediaId: media.id,
@@ -1310,8 +1323,8 @@ export class MomentService {
         expiresAt: m.expiresAt || null,
         relativeAge: formatRelativeAge(m.publishedAt),
         timeAgo: formatTimeAgoShort(m.publishedAt),
-        locationLabel: m.locationLabel || (creator ? creator.city : null) || null,
-        location: m.locationLabel ? { name: m.locationLabel } : (creator && creator.city ? { name: creator.city } : null),
+        locationLabel: m.locationLabel || null,
+        location: m.locationLabel ? { name: m.locationLabel } : null,
         creator: creator
           ? {
               id: creator.id,
@@ -1586,8 +1599,8 @@ export class MomentService {
       timeAgo: formatTimeAgoShort(moment.publishedAt),
       expiresAt: moment.expiresAt || null,
       timeRemainingMinutes: null,
-      locationLabel: moment.locationLabel || creator.city || null,
-      location: moment.locationLabel ? { name: moment.locationLabel } : (creator && creator.city ? { name: creator.city } : null),
+      locationLabel: moment.locationLabel || null,
+      location: moment.locationLabel ? { name: moment.locationLabel } : null,
       likesCount,
       commentsCount,
       giftsCount,

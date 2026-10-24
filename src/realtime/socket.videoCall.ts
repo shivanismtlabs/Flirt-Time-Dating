@@ -12,7 +12,7 @@
  */
 
 import { AppSocket, AppSocketServer } from './socket.types';
-import { getUserActiveSocketCount, getUserRoomName } from './socket.lifecycle';
+import { getUserActiveSocketCount, getUserRoomName, getUserSocketIds } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
 import { resolveCallMediaType } from '../schemas/videoCall.schema';
 
@@ -47,6 +47,8 @@ export interface VideoCallAcceptedPayload {
   status: string;
   participantJoined?: string;
   session?: CallSessionPayload;
+  callType?: 'audio' | 'video';
+  call?: any;
 }
 
 export interface VideoCallRejectedPayload {
@@ -54,6 +56,7 @@ export interface VideoCallRejectedPayload {
   status: string;
   by?: string;
   reason?: string;
+  callType?: 'audio' | 'video';
   call?: any;
 }
 
@@ -63,6 +66,7 @@ export interface VideoCallEndedPayload {
   endedBy?: string;
   reason?: string;
   callType?: 'audio' | 'video';
+  call?: any;
 }
 
 export interface VideoCallBusyPayload {
@@ -76,17 +80,53 @@ export interface VideoCallMissedPayload {
   status: string;
   reason?: string;
   callType?: 'audio' | 'video';
+  call?: any;
 }
 
-const DISCONNECT_HANGUP_GRACE_MS = 900;
+/** Socket a call snapshot should update, instead of every device for that user. */
+export type DirectCallEmitter = { emit: (event: string, payload?: unknown) => void };
+
+/**
+ * A voice or video call often blips the socket for several seconds.
+ * Ending the call at 900ms emitted "call ended" into an empty room, so neither
+ * phone updated. Explicit hangup is still immediate. This only covers a drop.
+ */
+const DISCONNECT_HANGUP_GRACE_MS = 12000;
 const disconnectHangups = new Map<string, ReturnType<typeof setTimeout>>();
 
-function emitToUser(io: AppSocketServer, userId: string, event: string, payload: unknown): void {
+function emitToUser(
+  io: AppSocketServer,
+  userId: string,
+  event: string,
+  payload: unknown,
+  direct?: DirectCallEmitter | null
+): void {
+  if (!userId) return;
+  if (direct) {
+    direct.emit(event, payload);
+    return;
+  }
+  // Deliver on the socket id. Room join is async, so a room-only emit during
+  // connect (or after a call blip) never reached the phone.
+  const socketIds = getUserSocketIds(userId);
+  if (socketIds.length > 0) {
+    for (const socketId of socketIds) {
+      io.to(socketId).emit(event as any, payload);
+    }
+    return;
+  }
   const room = getUserRoomName(userId);
   io.to(room).emit(event as any, payload);
   if (userId.toLowerCase() !== userId) {
     io.to(getUserRoomName(userId.toLowerCase())).emit(event as any, payload);
   }
+}
+
+function resolveMediaType(
+  explicit?: string | null,
+  nested?: { type?: string } | null
+): 'audio' | 'video' {
+  return asMediaType(explicit) || asMediaType(nested?.type) || (isAudioCall(explicit, nested) ? 'audio' : 'video');
 }
 
 function asMediaType(value: unknown): 'audio' | 'video' | undefined {
@@ -105,15 +145,16 @@ function isAudioCall(callType?: string | null, call?: { type?: string } | null):
 export const emitVideoCallIncoming = (
   io: AppSocketServer,
   calleeId: string,
-  payload: VideoCallIncomingPayload
+  payload: VideoCallIncomingPayload,
+  direct?: DirectCallEmitter | null
 ): void => {
   try {
-    const callType = isAudioCall(payload.callType, payload.call) ? 'audio' : 'video';
+    const callType = resolveMediaType(payload.callType, payload.call);
     const outgoing = { ...payload, callType, type: callType };
     if (callType === 'video') {
-      emitToUser(io, calleeId, 'video_call:incoming', outgoing);
+      emitToUser(io, calleeId, 'video_call:incoming', outgoing, direct);
     }
-    emitToUser(io, calleeId, 'call:incoming', outgoing);
+    emitToUser(io, calleeId, 'call:incoming', outgoing, direct);
     socketLogger.info('Emitted call:incoming', { calleeId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:incoming', error, { calleeId, callId: payload.callId });
@@ -123,23 +164,32 @@ export const emitVideoCallIncoming = (
 export const emitVideoCallAccepted = (
   io: AppSocketServer,
   callerId: string,
-  payload: VideoCallAcceptedPayload
+  payload: VideoCallAcceptedPayload,
+  direct?: DirectCallEmitter | null
 ): void => {
   try {
-    const callType = isAudioCall(payload.session?.call?.type, payload.session?.call) ? 'audio' : 'video';
-    const legacy = { callId: payload.callId, status: payload.status, callType, type: callType };
+    const nested = payload.session?.call || payload.call;
+    const callType = resolveMediaType(payload.callType, nested);
+    const legacy = {
+      callId: payload.callId,
+      status: payload.status,
+      callType,
+      type: callType,
+      ...(payload.participantJoined ? { participantJoined: payload.participantJoined } : {}),
+      ...(nested ? { call: nested } : {}),
+    };
     if (callType === 'video') {
-      emitToUser(io, callerId, 'video_call:accepted', legacy);
+      emitToUser(io, callerId, 'video_call:accepted', legacy, direct);
     }
-    emitToUser(io, callerId, 'call:accepted', legacy);
+    emitToUser(io, callerId, 'call:accepted', legacy, direct);
     if (payload.session) {
       emitToUser(io, callerId, 'call:join', {
         success: true,
         data: payload.session,
         participantJoined: payload.participantJoined,
-      });
+      }, direct);
     }
-    socketLogger.info('Emitted video_call:accepted', { callerId, callId: payload.callId });
+    socketLogger.info('Emitted call:accepted', { callerId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:accepted', error, { callerId, callId: payload.callId });
   }
@@ -148,13 +198,21 @@ export const emitVideoCallAccepted = (
 export const emitVideoCallRejected = (
   io: AppSocketServer,
   callerId: string,
-  payload: VideoCallRejectedPayload
+  payload: VideoCallRejectedPayload,
+  direct?: DirectCallEmitter | null
 ): void => {
   try {
-    const callType = isAudioCall(payload.call?.type, payload.call) ? 'audio' : 'video';
-    const legacy = { callId: payload.callId, status: payload.status, callType, type: callType };
+    const callType = resolveMediaType(payload.callType, payload.call);
+    const legacy = {
+      callId: payload.callId,
+      status: payload.status,
+      callType,
+      type: callType,
+      callEnded: true,
+      ...(payload.call ? { call: payload.call } : {}),
+    };
     if (callType === 'video') {
-      emitToUser(io, callerId, 'video_call:rejected', legacy);
+      emitToUser(io, callerId, 'video_call:rejected', legacy, direct);
     }
     const declined = {
       callId: payload.callId,
@@ -162,17 +220,22 @@ export const emitVideoCallRejected = (
       by: payload.by,
       callEnded: true,
       reason: payload.reason || 'rejected',
+      callType,
+      type: callType,
       call: payload.call ?? null,
     };
-    emitToUser(io, callerId, 'call:rejected', declined);
-    emitToUser(io, callerId, 'call:declined', declined);
+    emitToUser(io, callerId, 'call:rejected', declined, direct);
+    emitToUser(io, callerId, 'call:declined', declined, direct);
     emitToUser(io, callerId, 'call:end:ack', {
       callId: payload.callId,
       status: payload.call?.status || 'declined',
       reason: payload.reason === 'busy' ? 'busy' : 'rejected',
       callEnded: true,
-    });
-    socketLogger.info('Emitted video_call:rejected', { callerId, callId: payload.callId });
+      callType,
+      type: callType,
+      ...(payload.call ? { call: payload.call } : {}),
+    }, direct);
+    socketLogger.info('Emitted call:rejected', { callerId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:rejected', error, { callerId, callId: payload.callId });
   }
@@ -181,35 +244,44 @@ export const emitVideoCallRejected = (
 export const emitVideoCallEnded = (
   io: AppSocketServer,
   targetUserId: string,
-  payload: VideoCallEndedPayload
+  payload: VideoCallEndedPayload,
+  direct?: DirectCallEmitter | null
 ): void => {
   try {
-    const callType = isAudioCall(payload.callType) ? 'audio' : 'video';
+    const callType = resolveMediaType(payload.callType, payload.call);
     const legacy = {
       callId: payload.callId,
       status: payload.status,
       endedBy: payload.endedBy,
+      reason: payload.reason || 'ended',
       callType,
       type: callType,
+      callEnded: true,
+      ...(payload.call ? { call: payload.call } : {}),
     };
     if (callType === 'video') {
-      emitToUser(io, targetUserId, 'video_call:ended', legacy);
+      emitToUser(io, targetUserId, 'video_call:ended', legacy, direct);
     }
-    emitToUser(io, targetUserId, 'call:ended', legacy);
+    emitToUser(io, targetUserId, 'call:ended', legacy, direct);
     emitToUser(io, targetUserId, 'call:end:ack', {
       callId: payload.callId,
       status: payload.status === 'accepted' ? 'ongoing' : payload.status,
       reason: payload.reason || 'ended',
       callEnded: true,
       endedBy: payload.endedBy,
-    });
+      callType,
+      type: callType,
+      ...(payload.call ? { call: payload.call } : {}),
+    }, direct);
     emitToUser(io, targetUserId, 'call:participant:left', {
       callId: payload.callId,
       userId: payload.endedBy,
       callEnded: true,
       status: payload.status,
-    });
-    socketLogger.info('Emitted video_call:ended', { targetUserId, callId: payload.callId });
+      callType,
+      type: callType,
+    }, direct);
+    socketLogger.info('Emitted call:ended', { targetUserId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:ended', error, { targetUserId, callId: payload.callId });
   }
@@ -232,29 +304,37 @@ export const emitVideoCallBusy = (
 export const emitVideoCallMissed = (
   io: AppSocketServer,
   targetUserId: string,
-  payload: VideoCallMissedPayload
+  payload: VideoCallMissedPayload,
+  direct?: DirectCallEmitter | null
 ): void => {
   try {
-    const callType = isAudioCall(payload.callType) ? 'audio' : 'video';
-    const outgoing = { ...payload, callType, type: callType };
+    const callType = resolveMediaType(payload.callType, payload.call);
+    const outgoing = { ...payload, callType, type: callType, callEnded: true };
     if (callType === 'video') {
-      emitToUser(io, targetUserId, 'video_call:missed', outgoing);
+      emitToUser(io, targetUserId, 'video_call:missed', outgoing, direct);
     }
-    emitToUser(io, targetUserId, 'call:missed', outgoing);
+    emitToUser(io, targetUserId, 'call:missed', outgoing, direct);
     emitToUser(io, targetUserId, 'call:end:ack', {
       callId: payload.callId,
       status: 'missed',
       reason: payload.reason || 'missed',
       callEnded: true,
-    });
+      callType,
+      type: callType,
+      ...(payload.call ? { call: payload.call } : {}),
+    }, direct);
     if (payload.reason === 'cancelled') {
       emitToUser(io, targetUserId, 'call:cancelled', {
         callId: payload.callId,
         status: 'cancelled',
         reason: 'cancelled',
-      });
+        callEnded: true,
+        callType,
+        type: callType,
+        ...(payload.call ? { call: payload.call } : {}),
+      }, direct);
     }
-    socketLogger.info('Emitted video_call:missed', { targetUserId, callId: payload.callId });
+    socketLogger.info('Emitted call:missed', { targetUserId, callId: payload.callId, callType });
   } catch (error) {
     socketLogger.error('Failed to emit video_call:missed', error, { targetUserId, callId: payload.callId });
   }
@@ -324,6 +404,21 @@ export const registerVideoCallSocketHandlers = (
   _io: AppSocketServer
 ): void => {
   const currentUserId = socket.data.user.userId;
+  clearDisconnectHangup(currentUserId);
+  void import('../services/videoCall.service')
+    .then(({ videoCallService }) =>
+      videoCallService.syncConnectedCallSocket(currentUserId, {
+        emit: (event, payload) => {
+          socket.emit(event as any, payload);
+        },
+      })
+    )
+    .catch((err) => {
+      socketLogger.warn('Call socket sync failed', {
+        userId: currentUserId,
+        error: errorMessage(err, 'sync failed'),
+      });
+    });
 
   const handleCreateCall = async (
     data: {
@@ -444,6 +539,8 @@ export const registerVideoCallSocketHandlers = (
         callId,
         status: result.reason === 'cancelled' ? 'cancelled' : result.status,
         reason: result.reason,
+        callEnded: true,
+        endedBy: currentUserId,
       });
     } catch (err: any) {
       socketLogger.warn('call:end failed', { userId: currentUserId, callId, error: err?.message });
@@ -494,6 +591,9 @@ export const registerVideoCallSocketHandlers = (
   socket.on('call:leave' as any, handleLeaveCall);
   socket.on('video_call:leave' as any, handleLeaveCall);
 
+  socket.on('disconnecting', () => {
+    scheduleDisconnectHangup(currentUserId);
+  });
   socket.on('disconnect', () => {
     scheduleDisconnectHangup(currentUserId);
   });

@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
+import { readUploadedMomentLocation } from '../utils/momentLocation';
 import { momentService, MomentServiceError } from '../services/moment.service';
 import {
   moderationService,
@@ -41,8 +42,6 @@ export const createMomentHandler = async (
     const {
       caption,
       audience,
-      locationLabel,
-      location,
       imageKey,
       imageKeys,
       mediaUrls,
@@ -50,30 +49,7 @@ export const createMomentHandler = async (
       images,
     } = req.body || {};
 
-    // Resolve location label from string or location object (supports string, JSON string, or object)
-    let resolvedLocation: string | null = null;
-    if (typeof location === 'string' && location.trim()) {
-      const locStr = location.trim();
-      if (locStr.startsWith('{') && locStr.endsWith('}')) {
-        try {
-          const parsed = JSON.parse(locStr);
-          resolvedLocation = parsed.name || parsed.city || parsed.label || parsed.address || locStr;
-        } catch (_e) {
-          resolvedLocation = locStr;
-        }
-      } else {
-        resolvedLocation = locStr;
-      }
-    } else if (location && typeof location === 'object') {
-      resolvedLocation =
-        (location.name && String(location.name).trim()) ||
-        (location.city && String(location.city).trim()) ||
-        (location.label && String(location.label).trim()) ||
-        (location.address && String(location.address).trim()) ||
-        null;
-    } else if (typeof locationLabel === 'string' && locationLabel.trim()) {
-      resolvedLocation = locationLabel.trim();
-    }
+    const uploadedLocation = readUploadedMomentLocation(req.body);
 
     // Collect pre-uploaded URLs or S3 keys
     let preUploadedUrls: string[] = [];
@@ -116,7 +92,9 @@ export const createMomentHandler = async (
       creatorId,
       caption,
       audience,
-      locationLabel: resolvedLocation,
+      locationLabel: uploadedLocation.label,
+      latitude: uploadedLocation.latitude,
+      longitude: uploadedLocation.longitude,
       files,
       mediaUrls: preUploadedUrls,
     });

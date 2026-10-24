@@ -23,6 +23,7 @@ export interface FirebasePhoneClientProof {
   playIntegrityToken?: string;
   iosReceipt?: string;
   iosSecret?: string;
+  iosBundleId?: string;
   clientType?: 'CLIENT_TYPE_IOS' | 'CLIENT_TYPE_ANDROID' | 'CLIENT_TYPE_WEB';
 }
 
@@ -80,6 +81,9 @@ export const clientProofFromBody = (body: unknown): FirebasePhoneClientProof | u
     playIntegrityToken: pick('playIntegrityToken', 'play_integrity_token'),
     iosReceipt,
     iosSecret: pick('iosSecret', 'ios_secret', 'apnsSecret', 'apns_secret'),
+    iosBundleId: normalizeBundleId(
+      pick('iosBundleId', 'ios_bundle_id', 'bundleId', 'bundle_id')
+    ),
     clientType: clientTypeFromBody(source, Boolean(iosReceipt)),
   };
 
@@ -98,6 +102,21 @@ const normalizeIosReceipt = (value: string | undefined): string | undefined => {
   if (!value) return undefined;
   const cleaned = value.trim().replace(/^<|>$/g, '').replace(/\s+/g, '');
   return cleaned || undefined;
+};
+
+const normalizeBundleId = (value: string | undefined): string | undefined => {
+  if (!value) return undefined;
+  const cleaned = value.trim();
+  if (!/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/.test(cleaned)) return undefined;
+  return cleaned;
+};
+
+/**
+ * Bundle ID registered for the iOS app in Firebase. sendVerificationCode
+ * rejects an iOS receipt when this is missing from X-Ios-Bundle-Identifier.
+ */
+export const getIosBundleIdentifier = (): string => {
+  return normalizeBundleId(process.env.APPLE_BUNDLE_ID || env.APPLE_BUNDLE_ID || '') || '';
 };
 
 const clientTypeFromBody = (
@@ -130,6 +149,10 @@ const mapFirebasePhoneError = (
     case 'MISSING_CLIENT_IDENTIFIER':
     case 'CAPTCHA_CHECK_FAILED':
     case 'INVALID_APP_CREDENTIAL':
+    case 'MISSING_APP_CREDENTIAL':
+    case 'MISSING_IOS_BUNDLE_ID':
+    case 'MISSING_IOS_APP_TOKEN':
+    case 'APP_NOT_VERIFIED':
     case 'MISSING_CLIENT_TYPE':
       return new FirebasePhoneError(
         'App verification is required before a code can be sent. Android sends playIntegrityToken. iOS sends iosReceipt and iosSecret, or a recaptchaToken.',
@@ -163,7 +186,8 @@ const mapFirebasePhoneError = (
 
 const postIdentityToolkit = async (
   method: 'sendVerificationCode' | 'signInWithPhoneNumber',
-  payload: Record<string, string>
+  payload: Record<string, string>,
+  extraHeaders?: Record<string, string>
 ): Promise<Record<string, unknown>> => {
   const fallback =
     method === 'sendVerificationCode'
@@ -180,7 +204,10 @@ const postIdentityToolkit = async (
       payload,
       {
         timeout: 15000,
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...extraHeaders,
+        },
       }
     );
     return (response.data || {}) as Record<string, unknown>;
@@ -188,6 +215,14 @@ const postIdentityToolkit = async (
     const responseData = (error as { response?: { status?: number; data?: { error?: { message?: string } } } })
       ?.response;
     const rawMessage = responseData?.data?.error?.message || '';
+    const upstreamCode = rawMessage
+      ? firebaseErrorCode(rawMessage)
+      : (error as { code?: string }).code || 'UNKNOWN';
+    console.error('[FirebasePhone] Identity Toolkit request failed', {
+      method,
+      httpStatus: responseData?.status,
+      code: upstreamCode,
+    });
     if (rawMessage) {
       throw mapFirebasePhoneError(rawMessage, responseData?.status, fallback);
     }
@@ -213,6 +248,7 @@ export const sendFirebasePhoneCode = async (
   }
 
   const payload: Record<string, string> = { phoneNumber };
+  const headers: Record<string, string> = {};
   if (proof?.recaptchaToken) payload.recaptchaToken = proof.recaptchaToken;
   if (proof?.playIntegrityToken) payload.playIntegrityToken = proof.playIntegrityToken;
   if (proof?.iosReceipt) payload.iosReceipt = proof.iosReceipt;
@@ -221,7 +257,15 @@ export const sendFirebasePhoneCode = async (
   else if (proof?.playIntegrityToken) payload.clientType = 'CLIENT_TYPE_ANDROID';
   else if (proof?.clientType) payload.clientType = proof.clientType;
 
-  const data = await postIdentityToolkit('sendVerificationCode', payload);
+  if (payload.clientType === 'CLIENT_TYPE_IOS' || proof?.iosReceipt) {
+    const bundleId = proof?.iosBundleId || getIosBundleIdentifier();
+    if (!bundleId) {
+      throw new FirebasePhoneError('iOS phone verification is not configured', 503);
+    }
+    headers['X-Ios-Bundle-Identifier'] = bundleId;
+  }
+
+  const data = await postIdentityToolkit('sendVerificationCode', payload, headers);
   const sessionInfo = typeof data.sessionInfo === 'string' ? data.sessionInfo : '';
   if (!sessionInfo) {
     throw new FirebasePhoneError('Could not send the verification code. Please try again.', 502);

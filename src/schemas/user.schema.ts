@@ -434,6 +434,11 @@ export const requestProfilePhoneOtpSchema = z.object({
     playIntegrityToken: z.string().trim().min(1).optional(),
     iosReceipt: z.string().trim().min(1).optional(),
     iosSecret: z.string().trim().min(1).optional(),
+    iosBundleId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+      .optional(),
   }),
 });
 
@@ -463,6 +468,11 @@ export const resendProfilePhoneOtpSchema = z.object({
       playIntegrityToken: z.string().trim().min(1).optional(),
       iosReceipt: z.string().trim().min(1).optional(),
       iosSecret: z.string().trim().min(1).optional(),
+      iosBundleId: z
+        .string()
+        .trim()
+        .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+        .optional(),
     })
     .refine((data) => data.verificationId || data.phone, {
       message: 'Either verificationId or phone must be provided',

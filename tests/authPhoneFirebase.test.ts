@@ -4,6 +4,7 @@ import app from '../src/app';
 import { sequelize, PhoneVerification, User, UserIdentity } from '../src/models';
 import { smsProvider } from '../src/services/sms.service';
 import { verifyToken } from '../src/utils/jwt';
+import { getIosBundleIdentifier } from '../src/services/firebasePhone.service';
 
 jest.mock('axios');
 
@@ -90,13 +91,31 @@ describe('Phone OTP through Firebase Auth', () => {
     });
 
     expect(res.status).toBe(200);
-    const [, body] = mockedPost.mock.calls[0];
+    const [, body, config] = mockedPost.mock.calls[0];
     expect(body).toEqual({
       phoneNumber: '+15551234567',
       iosReceipt: 'abc123receipt',
       iosSecret: 'ios-secret-value',
       clientType: 'CLIENT_TYPE_IOS',
     });
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe(getIosBundleIdentifier());
+  });
+
+  it('forwards the client iOS bundle id on the Firebase request', async () => {
+    mockSend('firebase-session-ios-bundle');
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234588',
+      platform: 'ios',
+      iosReceipt: 'abc123receipt',
+      iosSecret: 'ios-secret-value',
+      iosBundleId: 'com.client.bundle',
+    });
+
+    expect(res.status).toBe(200);
+    const [, , config] = mockedPost.mock.calls[0];
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe('com.client.bundle');
   });
 
   it('rejects an iOS request that sends only the APNs receipt', async () => {
@@ -210,6 +229,28 @@ describe('Phone OTP through Firebase Auth', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/app verification is required/i);
+    expect(await PhoneVerification.count()).toBe(0);
+  });
+
+  it('maps a missing iOS bundle id from Firebase to app verification, not a gateway error', async () => {
+    const error = new Error('MISSING_IOS_BUNDLE_ID') as Error & {
+      response: { status: number; data: { error: { message: string } } };
+    };
+    error.response = {
+      status: 400,
+      data: { error: { message: 'MISSING_IOS_BUNDLE_ID' } },
+    };
+    mockedPost.mockRejectedValue(error);
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+91',
+      phone: '9000000003',
+      iosReceipt: 'receipt',
+      iosSecret: 'secret',
+    });
+
+    expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/app verification is required/i);
     expect(await PhoneVerification.count()).toBe(0);
   });

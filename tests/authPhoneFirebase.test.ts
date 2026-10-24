@@ -4,7 +4,7 @@ import app from '../src/app';
 import { sequelize, PhoneVerification, User, UserIdentity } from '../src/models';
 import { smsProvider } from '../src/services/sms.service';
 import { verifyToken } from '../src/utils/jwt';
-import { getIosBundleIdentifier } from '../src/services/firebasePhone.service';
+import { getFirebaseIosBundleId, getIosBundleIdentifier } from '../src/services/firebasePhone.service';
 
 jest.mock('axios');
 
@@ -98,7 +98,9 @@ describe('Phone OTP through Firebase Auth', () => {
       iosSecret: 'ios-secret-value',
       clientType: 'CLIENT_TYPE_IOS',
     });
-    expect(config.headers['X-Ios-Bundle-Identifier']).toBe(getIosBundleIdentifier());
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe(getFirebaseIosBundleId());
+    expect(JSON.stringify(res.body)).not.toContain('ios-secret-value');
+    expect(res.body.data.otp).toBeUndefined();
   });
 
   it('forwards the client iOS bundle id on the Firebase request', async () => {
@@ -116,6 +118,106 @@ describe('Phone OTP through Firebase Auth', () => {
     expect(res.status).toBe(200);
     const [, , config] = mockedPost.mock.calls[0];
     expect(config.headers['X-Ios-Bundle-Identifier']).toBe('com.client.bundle');
+  });
+
+  it('uses the Firebase iOS bundle before the App Store bundle', async () => {
+    mockSend('firebase-session-firebase-bundle');
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234570',
+      platform: 'ios',
+      iosReceipt: 'firebase-receipt-value',
+      iosSecret: 'push-secret-value',
+    });
+
+    expect(res.status).toBe(200);
+    const [, , config] = mockedPost.mock.calls[0];
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe(getFirebaseIosBundleId());
+    expect(mockedPost).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries with the App Store bundle when Firebase rejects the first bundle', async () => {
+    const primary = getFirebaseIosBundleId();
+    const fallback = getIosBundleIdentifier();
+    mockedPost.mockImplementation(async (_url: string, _body: unknown, config: { headers: Record<string, string> }) => {
+      if (primary !== fallback && config.headers['X-Ios-Bundle-Identifier'] === fallback) {
+        return { data: { sessionInfo: 'firebase-session-alt-bundle' } };
+      }
+      if (primary === fallback && config.headers['X-Ios-Bundle-Identifier'] === primary) {
+        return { data: { sessionInfo: 'firebase-session-alt-bundle' } };
+      }
+      const error = new Error('INVALID_APP_CREDENTIAL') as Error & {
+        response: { status: number; data: { error: { message: string } } };
+      };
+      error.response = {
+        status: 400,
+        data: { error: { message: 'INVALID_APP_CREDENTIAL : Invalid receipt.' } },
+      };
+      throw error;
+    });
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234577',
+      platform: 'ios',
+      iosReceipt: 'firebase-receipt-value',
+      iosSecret: 'push-secret-value',
+    });
+
+    expect(res.status).toBe(200);
+    const bundles = mockedPost.mock.calls.map(
+      (call: unknown[]) => (call[2] as { headers: Record<string, string> }).headers['X-Ios-Bundle-Identifier']
+    );
+    expect(bundles[0]).toBe(primary);
+    if (primary !== fallback) expect(bundles).toContain(fallback);
+    expect(JSON.stringify(res.body)).not.toContain('push-secret-value');
+  });
+
+  it('does not replace an explicit incorrect bundle id', async () => {
+    const error = new Error('MISSING_IOS_BUNDLE_ID') as Error & {
+      response: { status: number; data: { error: { message: string } } };
+    };
+    error.response = {
+      status: 400,
+      data: { error: { message: 'MISSING_IOS_BUNDLE_ID' } },
+    };
+    mockedPost.mockRejectedValue(error);
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234571',
+      platform: 'ios',
+      iosReceipt: 'firebase-receipt-value',
+      iosSecret: 'push-secret-value',
+      iosBundleId: 'com.wrong.bundle',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/bundle id/i);
+    expect(mockedPost).toHaveBeenCalledTimes(1);
+    const [, , config] = mockedPost.mock.calls[0];
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe('com.wrong.bundle');
+    expect(JSON.stringify(res.body)).not.toContain('push-secret-value');
+    expect(await PhoneVerification.count()).toBe(0);
+  });
+
+  it('does not send an APNs device token field as the receipt', async () => {
+    mockSend('firebase-session-no-apns-alias');
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234572',
+      apnsToken: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      recaptchaToken: 'client-recaptcha',
+    });
+
+    expect(res.status).toBe(200);
+    const [, body] = mockedPost.mock.calls[0];
+    expect(body.iosReceipt).toBeUndefined();
+    expect(body.recaptchaToken).toBe('client-recaptcha');
+    expect(JSON.stringify(body)).not.toContain('f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64');
   });
 
   it('rejects an iOS request that sends only the APNs receipt', async () => {
@@ -268,6 +370,41 @@ describe('Phone OTP through Firebase Auth', () => {
     expect(res.body.message).toMatch(/APNs device token/i);
     expect(mockedPost).not.toHaveBeenCalled();
     expect(await PhoneVerification.count()).toBe(0);
+    expect(JSON.stringify(res.body)).not.toContain('de8f7d4aade84bc6b9bc58436e577414');
+  });
+
+  it('rejects an APNs token sent as iosReceipt even when the secret is not a UUID', async () => {
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+91',
+      phone: '9000000005',
+      platform: 'ios',
+      iosReceipt: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      iosSecret: '-TkV-bfn2x4qwDxh',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/APNs device token/i);
+    expect(mockedPost).not.toHaveBeenCalled();
+    expect(JSON.stringify(res.body)).not.toContain('-TkV-bfn2x4qwDxh');
+  });
+
+  it('returns a gateway error when Google cannot be reached and does not leak the secret', async () => {
+    mockedPost.mockRejectedValue(new Error('socket hang up'));
+
+    const res = await request(app).post('/api/v1/auth/phone/request-otp').send({
+      countryCode: '+1',
+      phone: '5551234573',
+      platform: 'ios',
+      iosReceipt: 'firebase-receipt-value',
+      iosSecret: 'push-secret-value',
+    });
+
+    expect(res.status).toBe(502);
+    expect(res.body.success).toBe(false);
+    expect(res.body.message).toMatch(/could not send the verification code/i);
+    expect(JSON.stringify(res.body)).not.toContain('push-secret-value');
+    expect(JSON.stringify(res.body)).not.toContain('firebase-receipt-value');
+    expect(await PhoneVerification.count()).toBe(0);
   });
 
   it('exchanges an APNs device token for a Firebase receipt', async () => {
@@ -298,5 +435,28 @@ describe('Phone OTP through Firebase Auth', () => {
     });
     expect(config.headers['X-Ios-Bundle-Identifier']).toBe('com.flirttime.app');
     expect(JSON.stringify(res.body)).not.toContain('iosSecret');
+  });
+
+  it('verifies the iOS client with the Firebase bundle when the request omits one', async () => {
+    mockedPost.mockImplementation(async (url: string) => {
+      if (String(url).includes('verifyIosClient')) {
+        return { data: { receipt: 'firebase-receipt-2', suggestedTimeout: '5' } };
+      }
+      throw new Error(`Unexpected Firebase call: ${url}`);
+    });
+
+    const res = await request(app).post('/api/v1/auth/phone/ios/verify-client').send({
+      apnsToken: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      isSandbox: false,
+    });
+
+    expect(res.status).toBe(200);
+    const [, body, config] = mockedPost.mock.calls[0];
+    expect(body).toEqual({
+      appToken: 'f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64',
+      isSandbox: false,
+    });
+    expect(config.headers['X-Ios-Bundle-Identifier']).toBe(getFirebaseIosBundleId());
+    expect(JSON.stringify(res.body)).not.toContain('f8424e7ab72278084e3c324039977abe5bb0bc951813a426e5bf017cd2456f64');
   });
 });

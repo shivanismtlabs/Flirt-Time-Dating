@@ -7,6 +7,32 @@ import { hashPassword, comparePassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
+import { checkUsernameAvailability, ServiceError } from '../services/user.service';
+
+/**
+ * Signup username availability check.
+ * GET /api/v1/auth/username/availability?username=
+ *
+ * Public: the signup screen calls this before an account exists.
+ * Success:
+ * {
+ *   "success": true,
+ *   "message": "Username is available" | "Username is already taken",
+ *   "data": { "username": "alex", "available": true }
+ * }
+ */
+export const checkUsernameAvailabilityHandler = async (req: Request, res: Response) => {
+  try {
+    const result = await checkUsernameAvailability(String(req.query.username ?? ''));
+    const message = result.available ? 'Username is available' : 'Username is already taken';
+    return sendSuccess(res, message, result);
+  } catch (error: any) {
+    if (error instanceof ServiceError) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    return sendError(res, error.message || 'Error checking username availability', 500);
+  }
+};
 
 export const register = async (req: Request, res: Response) => {
   try {

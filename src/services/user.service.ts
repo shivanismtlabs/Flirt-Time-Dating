@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, fn, col, where as sqlWhere } from 'sequelize';
 import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from '../models/user.model';
 import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
@@ -186,6 +186,34 @@ export const formatMoreAboutMe = (user: {
     relationship,
     children,
     items,
+  };
+};
+
+export interface UsernameAvailabilityDTO {
+  username: string;
+  available: boolean;
+}
+
+/**
+ * Signup username check. Matches the 3–50 character rule used by registration
+ * and reports a name as taken when any account already uses it, ignoring case.
+ * Does not return the matching account.
+ */
+export const checkUsernameAvailability = async (
+  username: string
+): Promise<UsernameAvailabilityDTO> => {
+  const cleanUsername = String(username ?? '').trim();
+  if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+    throw new ServiceError('Username must be between 3 and 50 characters', 400);
+  }
+
+  const takenCount = await User.count({
+    where: sqlWhere(fn('LOWER', col('username')), cleanUsername.toLowerCase()),
+  });
+
+  return {
+    username: cleanUsername,
+    available: takenCount === 0,
   };
 };
 

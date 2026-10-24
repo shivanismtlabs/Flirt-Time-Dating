@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { deleteAccountHandler } from '../controllers/user.controller';
-import { register, login, getProfile, logout } from '../controllers/auth.controller';
+import { register, login, getProfile, logout, checkUsernameAvailabilityHandler } from '../controllers/auth.controller';
 import { appleAuth } from '../controllers/authApple.controller';
 import { firebaseAuth } from '../controllers/authFirebase.controller';
 import { requestPhoneOtp } from '../controllers/authPhoneRequest.controller';
@@ -23,12 +23,20 @@ import {
   resendEmailOtpSchema,
   deleteAccountSchema,
   logoutSchema,
+  checkUsernameAvailabilitySchema,
 } from '../schemas/auth.schema';
 import { authenticate } from '../middlewares/auth.middleware';
+import { usernameAvailabilityLimiter } from '../middlewares/rateLimiter.middleware';
 
 const router = Router();
 
 // Standard Auth
+router.get(
+  '/username/availability',
+  usernameAvailabilityLimiter,
+  validate(checkUsernameAvailabilitySchema),
+  checkUsernameAvailabilityHandler
+);
 router.post('/register', validate(registerSchema), register);
 router.post('/login', validate(loginSchema), login);
 router.post('/apple', validate(appleAuthSchema), appleAuth);

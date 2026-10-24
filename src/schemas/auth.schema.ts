@@ -127,6 +127,16 @@ export const deleteAccountSchema = z.object({
     .optional(),
 });
 
+export const checkUsernameAvailabilitySchema = z.object({
+  query: z.object({
+    username: z
+      .string({ required_error: 'username is required' })
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters'),
+  }),
+});
+
 export const logoutSchema = z.object({
   body: z
     .object({

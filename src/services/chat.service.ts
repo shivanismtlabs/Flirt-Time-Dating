@@ -44,6 +44,10 @@ import {
 
 export const MESSAGE_EDIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes window for editing sent messages
 export const MESSAGE_DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours window for Delete for Everyone
+/** Shown to the other person after delete for everyone. */
+export const DELETED_MESSAGE_FOR_OTHERS = 'This message was deleted';
+/** Shown to the person who deleted the message for everyone. */
+export const DELETED_MESSAGE_FOR_ACTOR = 'You deleted this message';
 import { env } from '../config/env';
 import { notificationService } from './notification.service';
 
@@ -725,8 +729,71 @@ export const contactFieldsFromMeta = (
 
 const IMAGE_CALL_KEYS = ['audioUrl', 'voiceUrl', 'duration', 'durationMs'] as const;
 
+/** Viewer-specific placeholder when a message was deleted for everyone. */
+export function deletedForEveryoneCopy(
+  meta: any,
+  viewerId: string,
+  senderId?: string | null
+): string | null {
+  if (!meta || typeof meta !== 'object' || meta.isDeletedForEveryone !== true) return null;
+  const actor = String(meta.deletedForEveryoneBy || senderId || '').trim().toLowerCase();
+  const viewer = String(viewerId || '').trim().toLowerCase();
+  return actor && actor === viewer ? DELETED_MESSAGE_FOR_ACTOR : DELETED_MESSAGE_FOR_OTHERS;
+}
+
 /** Photo payloads must not carry voice-call fields. `type` stays `image`. */
 export const presentChatMessage = (dto: ChatMessageDTO): ChatMessageDTO => {
+  const meta = dto.metadata && typeof dto.metadata === 'object' ? dto.metadata : null;
+  if (meta?.isDeletedForEveryone || dto.deletedForEveryone) {
+    const sender = dto.sender
+      ? { ...dto.sender, name: dto.sender.name || dto.sender.displayName }
+      : dto.sender;
+    const content = dto.isMine ? DELETED_MESSAGE_FOR_ACTOR : DELETED_MESSAGE_FOR_OTHERS;
+    return {
+      id: dto.id,
+      conversationId: dto.conversationId,
+      senderId: dto.senderId,
+      recipientId: dto.recipientId,
+      content,
+      messageType: 'text',
+      type: 'text',
+      metadata: {
+        deletedAt: meta?.deletedForEveryoneAt || null,
+      },
+      status: dto.status,
+      receiptStatus: dto.receiptStatus || dto.status,
+      messageStatus: dto.messageStatus,
+      seen: dto.seen,
+      direction: dto.direction,
+      isIncoming: dto.isIncoming,
+      isDelivered: dto.isDelivered,
+      deliveredAt: dto.deliveredAt ?? null,
+      isRead: dto.isRead,
+      readAt: dto.readAt ?? null,
+      sentAt: dto.sentAt,
+      createdAt: dto.createdAt,
+      isMine: dto.isMine,
+      isSender: dto.isSender ?? dto.isMine,
+      isPinned: false,
+      pinned: false,
+      pinnedAt: null,
+      pinnedBy: null,
+      isEdited: false,
+      editedAt: null,
+      replyToMessageId: null,
+      replyTo: null,
+      deletedForEveryone: true,
+      reactions: [],
+      reactionCounts: { total: 0 },
+      myReaction: null,
+      userReaction: null,
+      otherUserReaction: null,
+      reaction: null,
+      emoji: null,
+      hasReacted: false,
+      sender,
+    };
+  }
   const messageType = String(dto.messageType || dto.type || 'text');
   const sender = dto.sender
     ? { ...dto.sender, name: dto.sender.name || dto.sender.displayName }
@@ -856,6 +923,7 @@ export interface LastMessageDTO {
   isRead?: boolean;
   deliveredAt?: Date | string | null;
   readAt?: Date | string | null;
+  deletedForEveryone?: boolean;
 }
 
 export interface ChatListItemDTO {
@@ -938,6 +1006,8 @@ export interface ChatMessageDTO {
   messages?: ChatMessageDTO[];
   reactions?: MessageReactionDTO[];
   reactionCounts?: Record<string, number>;
+  /** Delete-for-everyone placeholder. Content is already the viewer-specific sentence. */
+  deletedForEveryone?: boolean;
   myReaction?: string | null;
   userReaction?: string | null;
   otherUserReaction?: string | null;
@@ -1451,6 +1521,9 @@ export class ChatService {
         latest &&
         String(latest.senderId || '').trim().toLowerCase() === normCurrentUserId;
       const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
+      const recalledCopy = deletedForEveryoneCopy(latest?.metadata, currentUserId, latest?.senderId);
+      const previewContent = recalledCopy || conv.lastMessage;
+      const previewType = recalledCopy ? 'text' : latest?.messageType || 'text';
 
       const item: ChatListItemDTO = {
         conversationId: conv.id,
@@ -1463,15 +1536,16 @@ export class ChatService {
           profilePhotoUrl: photo,
           isOnline: isUserConnected(otherUser.id),
         },
-        lastMessage: conv.lastMessage
+        lastMessage: previewContent
           ? {
-            content: conv.lastMessage,
+            content: previewContent,
             sentAt: conv.lastMessageAt || conv.updatedAt,
             senderId: latest?.senderId,
             senderName,
             isMine: !!senderIsViewer,
             direction: senderIsViewer ? 'sent' as const : 'received' as const,
-            messageType: latest?.messageType || 'text',
+            messageType: previewType,
+            deletedForEveryone: !!recalledCopy,
             status: latest?.isRead ? 'read' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
             receiptStatus: latest?.isRead ? 'read' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
             messageStatus: latest?.isRead ? 'seen' as const : latest?.isDelivered ? 'delivered' as const : 'sent' as const,
@@ -1480,7 +1554,7 @@ export class ChatService {
             isRead: !!latest?.isRead,
             deliveredAt: latest?.deliveredAt || null,
             readAt: latest?.readAt || null,
-            ...contactFieldsFromMeta(latest?.messageType, latest?.metadata, {
+            ...contactFieldsFromMeta(previewType, recalledCopy ? null : latest?.metadata, {
               senderId: latest?.senderId,
               isMine: !!senderIsViewer,
             }),
@@ -1824,17 +1898,12 @@ export class ChatService {
       whereClause.id = { [Op.in]: pinnedMessageIds };
     }
 
-    // Exclude messages deleted for everyone or deleted for requesting user
+    // Hide delete-for-me rows. Delete-for-everyone stays as a placeholder bubble.
     whereClause[Op.and] = whereClause[Op.and] || [];
     whereClause[Op.and].push({
       [Op.or]: [
         { metadata: null },
-        {
-          [Op.and]: [
-            { metadata: { [Op.notLike]: '%"isDeletedForEveryone":true%' } },
-            { metadata: { [Op.notLike]: `%"deletedForUserIds":%${currentUserId}%` } },
-          ],
-        },
+        { metadata: { [Op.notLike]: `%"deletedForUserIds":%${currentUserId}%` } },
       ],
     });
 
@@ -1873,12 +1942,11 @@ export class ChatService {
     rememberSender(user1);
     rememberSender(user2);
 
-    // Safety filter to exclude any deleted messages
+    // Delete for me stays hidden. Delete for everyone remains so both sides see the placeholder.
     const visibleRows = rows.filter((msg) => {
       if (!msg.metadata) return true;
       try {
         const meta = JSON.parse(msg.metadata);
-        if (meta.isDeletedForEveryone || meta.isDeleted) return false;
         if (Array.isArray(meta.deletedForUserIds) && meta.deletedForUserIds.includes(currentUserId)) return false;
       } catch {}
       return true;
@@ -1936,6 +2004,45 @@ export class ChatService {
         } catch {
           parsedMetadata = msg.metadata;
         }
+      }
+
+      if (parsedMetadata && typeof parsedMetadata === 'object' && parsedMetadata.isDeletedForEveryone) {
+        const isMine = String(msg.senderId || '').trim().toLowerCase() === normCurrentUserId;
+        const status: 'sent' | 'delivered' | 'read' = msg.isRead
+          ? 'read'
+          : msg.isDelivered
+            ? 'delivered'
+            : 'sent';
+        return presentChatMessage({
+          id: msg.id,
+          conversationId: msg.conversationId,
+          senderId: msg.senderId,
+          recipientId: msg.recipientId,
+          content: msg.content,
+          messageType: 'text',
+          metadata: parsedMetadata,
+          status,
+          receiptStatus: status,
+          messageStatus: status === 'read' ? 'seen' : status,
+          seen: !!msg.isRead,
+          direction: isMine ? 'sent' : 'received',
+          isIncoming: !isMine,
+          isDelivered: !!msg.isDelivered,
+          deliveredAt: msg.deliveredAt || null,
+          isRead: !!msg.isRead,
+          readAt: msg.readAt || null,
+          sentAt: msg.createdAt,
+          createdAt: msg.createdAt,
+          isMine,
+          isSender: isMine,
+          deletedForEveryone: true,
+          sender: senderMap.get(senderKey(msg.senderId)) || {
+            id: msg.senderId,
+            displayName: isMine ? 'You' : 'Participant',
+            name: isMine ? 'You' : 'Participant',
+            profileImageUrl: null,
+          },
+        });
       }
 
       if (parsedMetadata && typeof parsedMetadata === 'object') {
@@ -5691,7 +5798,8 @@ export class ChatService {
     },
     lastMessagePreview: string,
     senderId: string,
-    recipientId: string
+    recipientId: string,
+    viewerPreviews?: { sender?: string; recipient?: string }
   ): Promise<void> {
     try {
       const io = getSocketServer();
@@ -5729,22 +5837,25 @@ export class ChatService {
       const messageTimestamp =
         message.createdAt instanceof Date ? message.createdAt.toISOString() : message.createdAt;
 
-      const lastMessageObj = {
+      const senderPreview = viewerPreviews?.sender || lastMessagePreview;
+      const recipientPreview = viewerPreviews?.recipient || lastMessagePreview;
+      const lastMessageFor = (content: string) => ({
         id: message.id,
-        content: lastMessagePreview,
+        content,
         messageType: message.messageType || 'text',
         senderId: message.senderId,
         sentAt: messageTimestamp,
         createdAt: messageTimestamp,
-      };
+        ...(viewerPreviews ? { deletedForEveryone: true } : {}),
+      });
 
       // Payload customized for Sender's conversation list:
       // Other participant is the Recipient
       const senderPayload = {
         conversationId,
         id: conversationId,
-        lastMessage: lastMessageObj,
-        lastMessageText: lastMessagePreview,
+        lastMessage: lastMessageFor(senderPreview),
+        lastMessageText: senderPreview,
         lastMessageAt: messageTimestamp,
         unreadCount: senderUnreadCount,
         participant: {
@@ -5781,8 +5892,8 @@ export class ChatService {
       const recipientPayload = {
         conversationId,
         id: conversationId,
-        lastMessage: lastMessageObj,
-        lastMessageText: lastMessagePreview,
+        lastMessage: lastMessageFor(recipientPreview),
+        lastMessageText: recipientPreview,
         lastMessageAt: messageTimestamp,
         unreadCount: recipientUnreadCount,
         participant: {
@@ -5901,7 +6012,9 @@ export class ChatService {
         latestMeta = null;
       }
     }
-    const latestType = latestMessage?.messageType || 'text';
+    const recalledCopy = deletedForEveryoneCopy(latestMeta, viewerId, latestMessage?.senderId);
+    const latestType = recalledCopy ? 'text' : latestMessage?.messageType || 'text';
+    const previewText = recalledCopy || conversation.lastMessage;
     const viewerSentIt =
       latestMessage &&
       String(latestMessage.senderId || '').trim().toLowerCase() ===
@@ -5913,19 +6026,20 @@ export class ChatService {
     return {
       conversationId: conversation.id,
       id: conversation.id,
-      lastMessage: conversation.lastMessage
+      lastMessage: previewText
         ? {
             id: latestMessage?.id,
-            content: conversation.lastMessage,
+            content: previewText,
             messageType: latestType,
+            deletedForEveryone: !!recalledCopy,
             senderId: latestMessage?.senderId || null,
             isMine: !!viewerSentIt,
             sentAt: sentAt || new Date(conversation.updatedAt).toISOString(),
             createdAt: sentAt || new Date(conversation.updatedAt).toISOString(),
-            ...contactFieldsFromMeta(latestType, latestMeta),
+            ...contactFieldsFromMeta(latestType, recalledCopy ? null : latestMeta),
           }
         : null,
-      lastMessageText: conversation.lastMessage || null,
+      lastMessageText: previewText || null,
       lastMessageAt: sentAt,
       unreadCount,
       participant: {
@@ -7290,6 +7404,9 @@ export class ChatService {
       const senderIsViewer =
         latest && String(latest.senderId || '').trim().toLowerCase() === normViewerId;
       const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
+      const recalledCopy = deletedForEveryoneCopy(latest?.metadata, userId, latest?.senderId);
+      const previewText = recalledCopy || conv.lastMessage || null;
+      const previewType = (recalledCopy ? 'text' : latest?.messageType || 'text') as ChatMessageType;
 
       results.push({
         id: conv.id,
@@ -7310,14 +7427,14 @@ export class ChatService {
           profilePhotoUrl: photo,
           isOnline: isUserConnected(partner.id),
         },
-        lastMessage: conv.lastMessage || null,
+        lastMessage: previewText,
         lastMessageAt: conv.lastMessageAt ? conv.lastMessageAt.toISOString() : null,
         lastMessageSenderId: latest?.senderId || null,
         lastMessageSenderName: senderName,
-        messageType: (latest?.messageType || 'text') as ChatMessageType,
+        messageType: previewType,
         isMine: !!senderIsViewer,
         direction: senderIsViewer ? 'sent' : 'received',
-        ...contactFieldsFromMeta(latest?.messageType, latest?.metadata, {
+        ...contactFieldsFromMeta(previewType, recalledCopy ? null : latest?.metadata, {
           senderId: latest?.senderId,
           isMine: !!senderIsViewer,
         }),
@@ -7928,7 +8045,19 @@ return {
     conversationId: string;
     messageId: string;
     deleteType: 'me' | 'everyone';
+    content?: string;
+    messageType?: 'text';
+    deletedForEveryone?: boolean;
   }> {
+    const everyoneResult = () => ({
+      conversationId,
+      messageId,
+      deleteType: 'everyone' as const,
+      content: DELETED_MESSAGE_FOR_ACTOR,
+      messageType: 'text' as const,
+      deletedForEveryone: true,
+    });
+
     if (!deleteType || (deleteType !== 'me' && deleteType !== 'everyone')) {
       throw new ChatServiceError('deleteType must be either "me" or "everyone"', 400, 'VALIDATION_ERROR');
     }
@@ -7999,7 +8128,7 @@ return {
 
     if (deleteType === 'everyone') {
       if (initialMeta.isDeletedForEveryone) {
-        return { conversationId, messageId, deleteType: 'everyone' };
+        return everyoneResult();
       }
     } else {
       const deletedForUserIds: string[] = Array.isArray(initialMeta.deletedForUserIds)
@@ -8012,11 +8141,13 @@ return {
 
     const now = new Date();
     let shouldEmitSocket = false;
+    let recalledLatest = false;
     let attempts = 0;
     const maxAttempts = 4;
 
     while (attempts < maxAttempts) {
       attempts++;
+      recalledLatest = false;
       const t = await sequelize.transaction();
       try {
         const lockedMessage = await ChatMessage.findByPk(messageId, {
@@ -8040,7 +8171,7 @@ return {
         if (deleteType === 'everyone') {
           if (currentMeta.isDeletedForEveryone) {
             await t.commit();
-            return { conversationId, messageId, deleteType: 'everyone' };
+            return everyoneResult();
           }
 
           currentMeta.isDeletedForEveryone = true;
@@ -8055,8 +8186,11 @@ return {
           delete currentMeta.audioUrl;
           delete currentMeta.mediaUrl;
           delete currentMeta.url;
+          delete currentMeta.replyTo;
+          delete currentMeta.replyToMessageId;
 
-          lockedMessage.content = 'This message was deleted';
+          lockedMessage.content = DELETED_MESSAGE_FOR_OTHERS;
+          lockedMessage.messageType = 'text';
           lockedMessage.metadata = JSON.stringify(currentMeta);
           await lockedMessage.save({ transaction: t });
 
@@ -8072,28 +8206,10 @@ return {
             Math.abs(new Date(conversation.lastMessageAt).getTime() - new Date(lockedMessage.createdAt).getTime()) < 3000;
 
           if (isLastMessage) {
-            const prevMsg = await ChatMessage.findOne({
-              where: {
-                conversationId,
-                id: { [Op.ne]: messageId },
-              },
-              order: [['createdAt', 'DESC']],
-              transaction: t,
-            });
-
-            if (prevMsg) {
-              let preview = prevMsg.content;
-              if (prevMsg.messageType === 'image') preview = '📷 Photo';
-              else if (prevMsg.messageType === 'audio') preview = '🎤 Voice message';
-              else if (prevMsg.messageType === 'location') preview = '📍 Location';
-              else if (prevMsg.messageType === 'contact') preview = '👤 Contact';
-              conversation.lastMessage = preview;
-              conversation.lastMessageAt = prevMsg.createdAt;
-            } else {
-              conversation.lastMessage = null;
-              conversation.lastMessageAt = null;
-            }
+            conversation.lastMessage = DELETED_MESSAGE_FOR_OTHERS;
+            conversation.lastMessageAt = lockedMessage.createdAt;
             await conversation.save({ transaction: t });
+            recalledLatest = true;
           }
 
           shouldEmitSocket = true;
@@ -8141,29 +8257,41 @@ return {
     if (shouldEmitSocket) {
       try {
         const io = getSocketServer();
-        const payload = {
-          conversationId,
-          messageId,
-          deleteType,
+        const otherUserId = conversation.user1Id === userId ? conversation.user2Id : conversation.user1Id;
+        const emitDeleted = (targetUserId: string, extra?: Record<string, unknown>) => {
+          const payload = {
+            conversationId,
+            messageId,
+            deleteType,
+            ...extra,
+          };
+          io.to(getUserRoomName(targetUserId)).emit('chat:message_deleted', payload);
+          io.to(getUserRoomName(targetUserId)).emit('message:deleted' as any, payload);
         };
 
         if (deleteType === 'me') {
-          io.to(getUserRoomName(userId)).emit('chat:message_deleted', payload);
-          io.to(getUserRoomName(userId)).emit('message:deleted' as any, payload);
+          emitDeleted(userId);
         } else {
-          io.to(getUserRoomName(conversation.user1Id)).emit('chat:message_deleted', payload);
-          io.to(getUserRoomName(conversation.user1Id)).emit('message:deleted' as any, payload);
-          io.to(getUserRoomName(conversation.user2Id)).emit('chat:message_deleted', payload);
-          io.to(getUserRoomName(conversation.user2Id)).emit('message:deleted' as any, payload);
+          emitDeleted(userId, {
+            content: DELETED_MESSAGE_FOR_ACTOR,
+            messageType: 'text',
+            deletedForEveryone: true,
+          });
+          emitDeleted(otherUserId, {
+            content: DELETED_MESSAGE_FOR_OTHERS,
+            messageType: 'text',
+            deletedForEveryone: true,
+          });
         }
 
         // Real-time conversation list update after message deletion
-        const otherUserId = conversation.user1Id === userId ? conversation.user2Id : conversation.user1Id;
         const currentConv = await Conversation.findByPk(conversationId);
         if (currentConv) {
+          const senderPreview = recalledLatest ? DELETED_MESSAGE_FOR_ACTOR : currentConv.lastMessage || '';
+          const recipientPreview = recalledLatest ? DELETED_MESSAGE_FOR_OTHERS : currentConv.lastMessage || '';
           const fakeMsg = {
             id: messageId,
-            content: currentConv.lastMessage || '',
+            content: recipientPreview,
             messageType: 'text',
             senderId: userId,
             createdAt: currentConv.lastMessageAt || new Date(),
@@ -8171,12 +8299,17 @@ return {
           await this.emitConversationUpdate(
             conversationId,
             fakeMsg,
-            currentConv.lastMessage || '',
+            recipientPreview,
             userId,
-            otherUserId
+            otherUserId,
+            recalledLatest ? { sender: senderPreview, recipient: recipientPreview } : undefined
           );
         }
       } catch {}
+    }
+
+    if (deleteType === 'everyone') {
+      return everyoneResult();
     }
 
     return {

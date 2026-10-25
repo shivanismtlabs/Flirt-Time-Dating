@@ -227,11 +227,17 @@ export interface ServerToClientEvents {
     conversationId: string;
     messageId: string;
     deleteType: 'me' | 'everyone';
+    content?: string;
+    messageType?: string;
+    deletedForEveryone?: boolean;
   }) => void;
   'message:deleted': (data: {
     conversationId: string;
     messageId: string;
     deleteType: 'me' | 'everyone';
+    content?: string;
+    messageType?: string;
+    deletedForEveryone?: boolean;
   }) => void;
 
   /**

@@ -314,18 +314,34 @@ describe('Conversation Message Delete API (Delete for Me & Delete for Everyone)'
         conversationId: convAB.id,
         messageId: msg.id,
         deleteType: 'everyone',
+        content: 'You deleted this message',
+        messageType: 'text',
+        deletedForEveryone: true,
       });
 
-      // Neither Alice nor Bob should see the message in getMessages
       const aliceHistory = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages`)
         .set('Authorization', `Bearer ${tokenA}`);
-      expect(aliceHistory.body.data.messages.map((m: any) => m.id)).not.toContain(msg.id);
+      const aliceMsg = aliceHistory.body.data.messages.find((m: any) => m.id === msg.id);
+      expect(aliceMsg).toBeTruthy();
+      expect(aliceMsg.content).toBe('You deleted this message');
+      expect(aliceMsg.messageType).toBe('text');
+      expect(aliceMsg.deletedForEveryone).toBe(true);
+      expect(aliceMsg.imageUrl).toBeUndefined();
+      expect(aliceMsg.images).toBeUndefined();
 
       const bobHistory = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages`)
         .set('Authorization', `Bearer ${tokenB}`);
-      expect(bobHistory.body.data.messages.map((m: any) => m.id)).not.toContain(msg.id);
+      const bobMsg = bobHistory.body.data.messages.find((m: any) => m.id === msg.id);
+      expect(bobMsg).toBeTruthy();
+      expect(bobMsg.content).toBe('This message was deleted');
+      expect(bobMsg.messageType).toBe('text');
+      expect(bobMsg.deletedForEveryone).toBe(true);
+      expect(bobMsg.imageUrl).toBeUndefined();
+
+      const updatedConv = await Conversation.findByPk(convAB.id);
+      expect(updatedConv?.lastMessage).toBe('This message was deleted');
 
       // Pins should be wiped
       const pinCount = await ChatMessagePin.count({ where: { messageId: msg.id } });
@@ -703,11 +719,17 @@ describe('Conversation Message Delete API (Delete for Me & Delete for Everyone)'
         conversationId: convAB.id,
         messageId: msg.id,
         deleteType: 'everyone',
+        content: 'You deleted this message',
+        messageType: 'text',
+        deletedForEveryone: true,
       });
       expect(payloadB).toEqual({
         conversationId: convAB.id,
         messageId: msg.id,
         deleteType: 'everyone',
+        content: 'This message was deleted',
+        messageType: 'text',
+        deletedForEveryone: true,
       });
     });
 
@@ -786,6 +808,9 @@ describe('Conversation Message Delete API (Delete for Me & Delete for Everyone)'
         conversationId: convAB.id,
         messageId: msg.id,
         deleteType: 'everyone',
+        content: 'You deleted this message',
+        messageType: 'text',
+        deletedForEveryone: true,
       });
     });
   });

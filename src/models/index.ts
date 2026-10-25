@@ -1631,6 +1631,9 @@ export const ensureChatTables = async (): Promise<void> => {
       // 3. Receipt index
       try {
         await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_recipient_deliv" ON "chat_messages" ("recipientId", "isDelivered");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_type" ON "chat_messages" ("messageType");');
+        await sequelize.query(`CREATE INDEX IF NOT EXISTS "idx_chat_messages_moment_reply_id" ON "chat_messages" (substring(metadata from '"momentId":"([0-9a-fA-F-]{36})"')) WHERE "messageType" = 'moment_reply';`);
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_moments_status_published" ON "moments" ("status", "publishedAt" DESC);');
       } catch (_idxErr: any) {}
 
       // 4. Video calls callType

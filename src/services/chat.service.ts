@@ -735,6 +735,93 @@ const findRecentDuplicateLocation = async (
   return null;
 };
 
+const MEDIA_REPEAT_WINDOW_MS = 8000;
+
+/** One id per photo or voice note, ignoring thumbnail copies of the same file. */
+const stableMediaIds = (values: unknown[]): string => {
+  const ids = new Set<string>();
+  for (const value of values) {
+    const found = chatImageIdentities(value).find((id) => !id.includes('thumbnails/'));
+    if (found) ids.add(found);
+  }
+  return [...ids].sort().join('|');
+};
+
+const mediaSendLockKey = (senderId: string, recipientId: string, signature: string): string => {
+  if (!signature) return '';
+  return `media:${String(senderId).toLowerCase()}:${String(recipientId).toLowerCase()}:${signature}`;
+};
+
+const findRecentDuplicateImage = async (
+  conversationId: string,
+  senderId: string,
+  wantedIds: string,
+  transaction?: any
+): Promise<ChatMessage | null> => {
+  if (!wantedIds) return null;
+  const since = new Date(Date.now() - MEDIA_REPEAT_WINDOW_MS);
+  const rows = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      messageType: 'image',
+      createdAt: { [Op.gte]: since },
+    },
+    order: [['createdAt', 'DESC']],
+    limit: 8,
+    transaction,
+  });
+  for (const row of rows) {
+    let meta: any = {};
+    try {
+      meta = JSON.parse(row.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    const stored = Array.isArray(meta.images) && meta.images.length > 0 ? meta.images : [row.content];
+    if (stableMediaIds(stored) === wantedIds) return row;
+  }
+  return null;
+};
+
+const findRecentDuplicateAudios = async (
+  conversationId: string,
+  senderId: string,
+  wantedIds: string,
+  transaction?: any
+): Promise<ChatMessage[] | null> => {
+  const wanted = wantedIds.split('|').filter(Boolean);
+  if (wanted.length === 0) return null;
+  const since = new Date(Date.now() - MEDIA_REPEAT_WINDOW_MS);
+  const rows = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      messageType: 'audio',
+      createdAt: { [Op.gte]: since },
+    },
+    order: [['createdAt', 'DESC']],
+    limit: 8,
+    transaction,
+  });
+  const matched: ChatMessage[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    let meta: any = {};
+    try {
+      meta = JSON.parse(row.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    const id = stableMediaIds([row.content, meta.audioUrl, meta.voiceUrl, meta.url, meta.key]);
+    if (!id || !wanted.includes(id) || seen.has(id)) continue;
+    seen.add(id);
+    matched.push(row);
+  }
+  if (seen.size !== wanted.length) return null;
+  return matched;
+};
+
 /**
  * One socket can sit in the user room and the open conversation room.
  * Separate emits deliver the same event once per room, so the chat appends
@@ -3487,6 +3574,19 @@ export class ChatService {
         ? locationSendLockKey(senderId, recipientId, metadataObj.latitude, metadataObj.longitude)
         : ''
     );
+    const imageRepeatIds =
+      uploadedImages.length > 0 && uploadedAudios.length === 0 ? stableMediaIds(uploadedImages) : '';
+    const audioRepeatIds =
+      uploadedAudios.length > 0 && uploadedImages.length === 0
+        ? stableMediaIds(uploadedAudios.map((aud) => aud.key || aud.audioUrl || aud.url))
+        : '';
+    const releaseMediaLock = await acquireChatSendLock(
+      imageRepeatIds
+        ? mediaSendLockKey(senderId, recipientId, `image:${imageRepeatIds}`)
+        : audioRepeatIds
+          ? mediaSendLockKey(senderId, recipientId, `audio:${audioRepeatIds}`)
+          : ''
+    );
     let reusedExisting = false;
     const t = await sequelize.transaction();
     const savedMessages: ChatMessage[] = [];
@@ -3519,6 +3619,34 @@ export class ChatService {
           reusedExisting = true;
           savedMessages.push(duplicateLocation);
           lastMessagePreview = metadataObj.name ? `📍 ${metadataObj.name}` : '📍 Location';
+        }
+      }
+
+      if (!reusedExisting && imageRepeatIds) {
+        const duplicateImage = await findRecentDuplicateImage(
+          conversationId,
+          senderId,
+          imageRepeatIds,
+          t
+        );
+        if (duplicateImage) {
+          reusedExisting = true;
+          savedMessages.push(duplicateImage);
+          lastMessagePreview = '📷 Photo';
+        }
+      }
+
+      if (!reusedExisting && audioRepeatIds) {
+        const duplicateAudios = await findRecentDuplicateAudios(
+          conversationId,
+          senderId,
+          audioRepeatIds,
+          t
+        );
+        if (duplicateAudios) {
+          reusedExisting = true;
+          savedMessages.push(...duplicateAudios);
+          lastMessagePreview = '🎤 Voice message';
         }
       }
 
@@ -3569,6 +3697,7 @@ export class ChatService {
     } finally {
       releaseContactLock();
       releaseLocationLock();
+      releaseMediaLock();
     }
 
     // 8. Build DTOs for all created messages
@@ -4539,6 +4668,19 @@ export class ChatService {
           ? locationSendLockKey(senderId, recipientId, metadataObj.latitude, metadataObj.longitude)
           : ''
       );
+      const imageRepeatIds =
+        uploadedImages.length > 0 && uploadedAudios.length === 0 ? stableMediaIds(uploadedImages) : '';
+      const audioRepeatIds =
+        uploadedAudios.length > 0 && uploadedImages.length === 0
+          ? stableMediaIds(uploadedAudios.map((aud) => aud.key || aud.audioUrl || aud.url))
+          : '';
+      const releaseMediaLock = await acquireChatSendLock(
+        imageRepeatIds
+          ? mediaSendLockKey(senderId, recipientId, `image:${imageRepeatIds}`)
+          : audioRepeatIds
+            ? mediaSendLockKey(senderId, recipientId, `audio:${audioRepeatIds}`)
+            : ''
+      );
       const t = await sequelize.transaction();
       let savedMessage: ChatMessage | null = null;
       let lastMessagePreview: string = '';
@@ -4805,6 +4947,34 @@ export class ChatService {
             reusedMultiContact = true;
             savedMessages.push(duplicateLocation);
             lastMessagePreview = metadataObj.name ? `📍 ${metadataObj.name}` : '📍 Location';
+          }
+        }
+
+        if (!reusedMultiContact && imageRepeatIds) {
+          const duplicateImage = await findRecentDuplicateImage(
+            conversationId,
+            senderId,
+            imageRepeatIds,
+            t
+          );
+          if (duplicateImage) {
+            reusedMultiContact = true;
+            savedMessages.push(duplicateImage);
+            lastMessagePreview = '📷 Photo';
+          }
+        }
+
+        if (!reusedMultiContact && audioRepeatIds) {
+          const duplicateAudios = await findRecentDuplicateAudios(
+            conversationId,
+            senderId,
+            audioRepeatIds,
+            t
+          );
+          if (duplicateAudios) {
+            reusedMultiContact = true;
+            savedMessages.push(...duplicateAudios);
+            lastMessagePreview = '🎤 Voice message';
           }
         }
 
@@ -5133,6 +5303,7 @@ export class ChatService {
       } finally {
         releaseContactLock();
         releaseLocationLock();
+        releaseMediaLock();
         releaseIdempotencyLock();
       }
     }

@@ -156,6 +156,61 @@ describe('FlirtTime Chat Attachments — Photo, Camera, Location & Contact', () 
       expect(updatedConv?.lastMessage).toBe('📷 Photo');
     });
 
+    it('should keep a single bubble when the same photo is sent twice at once', async () => {
+      const photoKey = `chat/${userA.id}/1700000000_same_photo.jpg`;
+      const otherKey = `chat/${userA.id}/1700000000_other_photo.jpg`;
+      const [first, second] = await Promise.all([
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({ messageType: 'image', content: photoKey }),
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({ messageType: 'image', imageUrl: `https://cdn.flirttime.test/${photoKey}` }),
+      ]);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).toBe(first.body.data.id);
+
+      const other = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ messageType: 'image', content: otherKey });
+
+      expect(other.status).toBe(201);
+      expect(other.body.data.id).not.toBe(first.body.data.id);
+      expect(
+        await ChatMessage.count({ where: { conversationId: convAB.id, messageType: 'image' } })
+      ).toBe(2);
+    });
+
+    it('should keep a single bubble when the same voice note is sent twice at once', async () => {
+      const audioKey = `chat/${userA.id}/voice-once.m4a`;
+      const [first, second] = await Promise.all([
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({ messageType: 'audio', content: audioKey, duration: 4 }),
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({
+            messageType: 'audio',
+            audioUrl: `https://cdn.flirttime.test/${audioKey}`,
+            duration: 4,
+          }),
+      ]);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).toBe(first.body.data.id);
+      expect(
+        await ChatMessage.count({ where: { conversationId: convAB.id, messageType: 'audio' } })
+      ).toBe(1);
+    });
+
     it('should reject empty content for image message with 400', async () => {
       const res = await request(app)
         .post(`/api/v1/chats/${convAB.id}/messages`)

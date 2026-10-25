@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import {
   sequelize,
   User,
@@ -671,33 +671,8 @@ export class MomentService {
 
     if (momentIds.length > 0) {
       try {
-        const replyMessages = await ChatMessage.findAll({
-          where: {
-            messageType: 'moment_reply',
-            [Op.or]: momentIds.map((id) => ({
-              metadata: { [Op.like]: `%"momentId":"${id}"%` },
-            })),
-          },
-          attributes: ['metadata'],
-        });
-
-        for (const msg of replyMessages) {
-          if (msg.metadata) {
-            try {
-              const parsed =
-                typeof msg.metadata === 'string'
-                  ? JSON.parse(msg.metadata)
-                  : msg.metadata;
-              if (parsed.type === 'gift') continue;
-              if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
-                repliesCountMap.set(
-                  parsed.momentId,
-                  (repliesCountMap.get(parsed.momentId) || 0) + 1
-                );
-              }
-            } catch {}
-          }
-        }
+        const counted = await this.countMomentReplies(momentIds);
+        for (const [id, total] of counted) repliesCountMap.set(id, total);
       } catch {}
 
       try {
@@ -1122,35 +1097,28 @@ export class MomentService {
     }
 
     // 5. Handle 'feed' mode (flat chronological stream)
-    const feedInclude = [
-      {
-        model: User,
-        as: 'user',
-        where: { isActive: true },
-        attributes: [
-          'id',
-          'username',
-          'fullName',
-          'firstName',
-          'nickName',
-          'profilePicture',
-          'isFaceVerified',
-          'city',
-        ],
-      },
-      {
-        model: MomentMedia,
-        as: 'media',
-      },
-      {
-        model: MomentReaction,
-        as: 'reactions',
-      },
-    ];
-
-    const feedOrder: any[] = [
-      ['publishedAt', 'DESC'],
-      [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+    // The page still returns the same creator, media, and reaction fields.
+    // The total count does not join those tables, so one feed call does not scan every like.
+    const feedUserInclude = {
+      model: User,
+      as: 'user',
+      where: { isActive: true },
+      required: true,
+      attributes: [
+        'id',
+        'username',
+        'fullName',
+        'firstName',
+        'nickName',
+        'profilePicture',
+        'isFaceVerified',
+        'city',
+      ],
+    };
+    const feedPageInclude = [
+      feedUserInclude,
+      { model: MomentMedia, as: 'media' },
+      { model: MomentReaction, as: 'reactions' },
     ];
 
     // Pin a requested moment to the front only when it already belongs in this feed.
@@ -1160,7 +1128,7 @@ export class MomentService {
         where: {
           [Op.and]: [...whereConditions, { id: options.momentId }],
         },
-        include: feedInclude,
+        include: feedPageInclude,
       });
     }
 
@@ -1173,30 +1141,33 @@ export class MomentService {
     let otherCount = 0;
     let otherMoments: any[] = [];
 
+    const countMoments = () =>
+      Moment.count({
+        where: listWhere,
+        include: [{ ...feedUserInclude, attributes: [] }],
+        distinct: true,
+      });
+
     if (listLimit <= 0) {
-      otherCount = await Moment.count({
-        where: listWhere,
-        include: [
-          {
-            model: User,
-            as: 'user',
-            where: { isActive: true },
-            attributes: [],
-          },
-        ],
-        distinct: true,
-      });
+      otherCount = await countMoments();
     } else {
-      const listed = await Moment.findAndCountAll({
-        where: listWhere,
-        include: feedInclude,
-        distinct: true,
-        order: feedOrder,
-        limit: listLimit,
-        offset: Math.max(0, listOffset),
-      });
-      otherCount = listed.count;
-      otherMoments = listed.rows;
+      const [counted, listed] = await Promise.all([
+        countMoments(),
+        Moment.findAll({
+          where: listWhere,
+          include: feedPageInclude,
+          order: [
+            ['publishedAt', 'DESC'],
+            ['id', 'DESC'],
+            [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+          ],
+          subQuery: true,
+          limit: listLimit,
+          offset: Math.max(0, listOffset),
+        }),
+      ]);
+      otherCount = counted;
+      otherMoments = listed;
     }
 
     const count = priorityMoment ? Number(otherCount) + 1 : otherCount;
@@ -1214,33 +1185,8 @@ export class MomentService {
 
     if (momentIds.length > 0) {
       try {
-        const replyMessages = await ChatMessage.findAll({
-          where: {
-            messageType: 'moment_reply',
-            [Op.or]: momentIds.map((id) => ({
-              metadata: { [Op.like]: `%"momentId":"${id}"%` },
-            })),
-          },
-          attributes: ['metadata'],
-        });
-
-        for (const msg of replyMessages) {
-          if (msg.metadata) {
-            try {
-              const parsed =
-                typeof msg.metadata === 'string'
-                  ? JSON.parse(msg.metadata)
-                  : msg.metadata;
-              if (parsed.type === 'gift') continue;
-              if (parsed.momentId && repliesCountMap.has(parsed.momentId)) {
-                repliesCountMap.set(
-                  parsed.momentId,
-                  (repliesCountMap.get(parsed.momentId) || 0) + 1
-                );
-              }
-            } catch {}
-          }
-        }
+        const counted = await this.countMomentReplies(momentIds);
+        for (const [id, total] of counted) repliesCountMap.set(id, total);
       } catch {}
 
       try {
@@ -1531,18 +1477,7 @@ export class MomentService {
     // Count comments/replies for this moment (excluding gift transactions)
     let commentsCount = 0;
     try {
-      commentsCount = await ChatMessage.count({
-        where: {
-          messageType: 'moment_reply',
-          metadata: {
-            [Op.like]: `%"momentId":"${moment.id}"%`,
-            [Op.notLike]: '%"type":"gift"%',
-          },
-          content: {
-            [Op.notLike]: '🎁%',
-          },
-        },
-      });
+      commentsCount = (await this.countMomentReplies([moment.id], { excludeGiftContent: true })).get(moment.id) || 0;
     } catch {}
 
     let giftsCount = 0;
@@ -4392,6 +4327,65 @@ export class MomentService {
     }
 
     return countsMap;
+  }
+
+  /**
+   * Comment totals for the moments on this page.
+   * Postgres uses the moment id stored in metadata so it does not scan every chat row.
+   */
+  private async countMomentReplies(
+    momentIds: string[],
+    options?: { excludeGiftContent?: boolean }
+  ): Promise<Map<string, number>> {
+    const counts = new Map<string, number>();
+    const ids = [...new Set(momentIds.filter(Boolean))];
+    for (const id of ids) counts.set(id, 0);
+    if (ids.length === 0) return counts;
+
+    if (sequelize.getDialect() === 'postgres') {
+      const giftContentSql = options?.excludeGiftContent
+        ? `AND COALESCE(content, '') NOT LIKE '🎁%'`
+        : '';
+      const rows = await sequelize.query<{ momentId: string; count: number }>(
+        `SELECT substring(metadata from '"momentId":"([0-9a-fA-F-]{36})"') AS "momentId",
+                COUNT(*)::int AS "count"
+         FROM chat_messages
+         WHERE "messageType" = 'moment_reply'
+           AND substring(metadata from '"momentId":"([0-9a-fA-F-]{36})"') IN (:momentIds)
+           AND COALESCE(metadata, '') NOT LIKE '%"type":"gift"%'
+           ${giftContentSql}
+         GROUP BY 1`,
+        { replacements: { momentIds: ids }, type: QueryTypes.SELECT }
+      );
+      for (const row of rows) {
+        if (row.momentId && counts.has(row.momentId)) counts.set(row.momentId, Number(row.count) || 0);
+      }
+      return counts;
+    }
+
+    const replyMessages = await ChatMessage.findAll({
+      where: {
+        messageType: 'moment_reply',
+        [Op.or]: ids.map((id) => ({
+          metadata: { [Op.like]: `%"momentId":"${id}"%` },
+        })),
+      },
+      attributes: ['metadata', 'content'],
+    });
+    for (const msg of replyMessages) {
+      if (!msg.metadata) continue;
+      if (options?.excludeGiftContent && String(msg.content || '').startsWith('🎁')) continue;
+      try {
+        const parsed = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata;
+        if (parsed.type === 'gift') continue;
+        if (parsed.momentId && counts.has(parsed.momentId)) {
+          counts.set(parsed.momentId, (counts.get(parsed.momentId) || 0) + 1);
+        }
+      } catch {
+        // Ignore a reply whose metadata is not JSON.
+      }
+    }
+    return counts;
   }
 
   /**

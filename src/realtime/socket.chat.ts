@@ -29,6 +29,47 @@ const locationPin = (payload: any): string => {
   return `${lat.toFixed(5)},${lng.toFixed(5)}`;
 };
 
+/** Same photo or voice note even when one event uses imageUrl and the other uses images. */
+const mediaPin = (payload: any): string => {
+  const bag: string[] = [];
+  const add = (value: unknown) => {
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+    if (value && typeof value === 'object') {
+      const obj = value as { key?: string; imageKey?: string; url?: string; imageUrl?: string; audioUrl?: string; mediaUrl?: string };
+      add(obj.key || obj.imageKey || obj.audioUrl || obj.imageUrl || obj.url || obj.mediaUrl);
+      return;
+    }
+    const raw = String(value || '').trim();
+    if (!raw || /\/thumbnails\/|^thumbnails\//i.test(raw)) return;
+    const marker = raw.split('?')[0].match(/(?:uploads|chat|photos)\/.+/i);
+    bag.push((marker ? marker[0] : raw).toLowerCase());
+  };
+  add(payload?.imageUrl);
+  add(payload?.image);
+  add(payload?.imageKey);
+  add(payload?.audioUrl);
+  add(payload?.audio);
+  add(payload?.voiceUrl);
+  add(payload?.images);
+  add(payload?.imageUrls);
+  add(payload?.mediaUrls);
+  add(payload?.medias);
+  const meta = payload?.metadata;
+  if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+    add(meta.images);
+    add(meta.imageUrls);
+    add(meta.mediaUrls);
+    add(meta.audioUrl);
+    add(meta.voiceUrl);
+    add(meta.url);
+    add(meta.key);
+  }
+  return [...new Set(bag)].sort().join('|');
+};
+
 /**
  * Same tap fired on chat:send_message and message:send must share one key.
  * clientMessageId is enough. payload.userId is left out because one event
@@ -53,17 +94,22 @@ const chatSendFingerprint = (userId: string, payload: any): string => {
   if (type === 'location' && pin) {
     return `loc:${owner}|${conversationId || recipient}|${pin}`;
   }
+  const media = mediaPin(payload);
+  const mediaType = type === 'voice' ? 'audio' : type;
+  if ((mediaType === 'image' || mediaType === 'audio') && media) {
+    return `media:${owner}|${conversationId || recipient}|${mediaType}|${media}`;
+  }
   const clientId = String(payload?.clientMessageId || payload?.clientMsgId || '').trim();
   if (clientId) return `${owner}|${clientId}|${conversationId}`;
   const content = String(
     payload?.content || payload?.body || payload?.text || payload?.message || ''
   ).trim();
-  const media = JSON.stringify([
+  const mediaFields = JSON.stringify([
     payload?.imageUrl || payload?.image || '',
     payload?.audioUrl || payload?.audio || payload?.voiceUrl || '',
     payload?.images || payload?.imageUrls || payload?.mediaUrls || '',
   ]);
-  return `${owner}|${conversationId}|${recipient}|${type}|${content}|${media}`;
+  return `${owner}|${conversationId}|${recipient}|${type}|${content}|${mediaFields}`;
 };
 
 export const registerChatSocketHandlers = (
@@ -97,7 +143,7 @@ export const registerChatSocketHandlers = (
       const reuse = (response: any) => {
         if (typeof caller === 'function') caller(response);
       };
-      const sameLocationBurst = fingerprint.startsWith('loc:');
+      const sameLocationBurst = fingerprint.startsWith('loc:') || fingerprint.startsWith('media:');
       if (
         recent &&
         Date.now() - recent.at < 2500 &&

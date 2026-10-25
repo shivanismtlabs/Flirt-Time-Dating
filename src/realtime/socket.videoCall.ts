@@ -340,16 +340,107 @@ export const emitVideoCallMissed = (
   }
 };
 
-export const emitCallChatMessage = (
+/** `${userId}:${messageId}` already received this call log on a live socket. */
+const deliveredCallChatUsers = new Set<string>();
+
+function rememberCallChatDelivery(userId: string, messageId: string): void {
+  if (!userId || !messageId) return;
+  const key = `${String(userId).trim().toLowerCase()}:${messageId}`;
+  if (deliveredCallChatUsers.has(key)) return;
+  deliveredCallChatUsers.add(key);
+  const timer = setTimeout(() => deliveredCallChatUsers.delete(key), 90_000);
+  if (typeof timer.unref === 'function') timer.unref();
+}
+
+function callChatAlreadyDelivered(userId: string, messageId: string): boolean {
+  if (!userId || !messageId) return false;
+  return deliveredCallChatUsers.has(`${String(userId).trim().toLowerCase()}:${messageId}`);
+}
+
+function emitChatOnce(
   io: AppSocketServer,
+  event: string,
+  payload: unknown,
+  rooms: string[],
+  exceptRooms: string[],
+  exceptSocketIds: string[],
+  deliverSocketIds: string[]
+): void {
+  const uniqueRooms = [...new Set(rooms.filter(Boolean))];
+  if (uniqueRooms.length > 0) {
+    let op = io.to(uniqueRooms[0]);
+    for (let i = 1; i < uniqueRooms.length; i++) op = op.to(uniqueRooms[i]);
+    for (const room of exceptRooms) {
+      if (room) op = op.except(room);
+    }
+    for (const socketId of exceptSocketIds) {
+      if (socketId) op = op.except(socketId);
+    }
+    op.emit(event as any, payload);
+  }
+  for (const socketId of deliverSocketIds) {
+    if (socketId) io.to(socketId).emit(event as any, payload);
+  }
+}
+
+/**
+ * Call log for the open chat. Same events as a normal message, with `type: "call"`.
+ * A missing type is treated as a live voice call, so the bubble never appears until
+ * the thread is fetched again. Socket-id delivery covers the call-screen blip, and
+ * the conversation room covers the chat that is already open.
+ */
+export const emitCallChatMessage = (
+  io: AppSocketServer | null,
   callerId: string,
   calleeId: string,
-  payload: Record<string, unknown>
+  conversationId: string,
+  sent: Record<string, unknown>,
+  received: Record<string, unknown>,
+  options?: { direct?: DirectCallEmitter | null; onlyUserId?: string | null }
 ): void => {
-  const sent = { ...payload, isMine: true, isSender: true };
-  const received = { ...payload, isMine: false, isSender: false };
-  emitToUser(io, callerId, 'chat:message_sent', sent);
-  emitToUser(io, calleeId, 'chat:message_received', received);
+  const messageId = String(sent.id || received.id || '');
+  const onlyUserId = options?.onlyUserId ? String(options.onlyUserId).trim().toLowerCase() : '';
+  const sameUser = (userId: string) => String(userId || '').trim().toLowerCase() === onlyUserId;
+  const targets: Array<{ userId: string; payload: Record<string, unknown>; incoming: boolean }> = [];
+  if (!onlyUserId || sameUser(callerId)) {
+    targets.push({ userId: callerId, payload: sent, incoming: false });
+  }
+  if (!onlyUserId || sameUser(calleeId)) {
+    targets.push({ userId: calleeId, payload: received, incoming: true });
+  }
+
+  for (const target of targets) {
+    const outgoingEvents = ['chat:message_sent', 'message:sent', 'chat:message:new', 'new_message'];
+    const incomingEvents = ['chat:message_received', 'chat:message:new', 'message:received', 'new_message'];
+    const events = target.incoming ? incomingEvents : outgoingEvents;
+
+    if (options?.direct) {
+      if (callChatAlreadyDelivered(target.userId, messageId)) continue;
+      for (const event of events) options.direct.emit(event, target.payload);
+      rememberCallChatDelivery(target.userId, messageId);
+      continue;
+    }
+
+    if (!io || !target.userId) continue;
+    const socketIds = getUserSocketIds(target.userId);
+    const rooms = [getUserRoomName(target.userId)];
+    if (target.userId.toLowerCase() !== target.userId) {
+      rooms.push(getUserRoomName(target.userId.toLowerCase()));
+    }
+    const exceptRooms: string[] = [];
+    const exceptSocketIds = [...socketIds];
+    if (target.incoming && conversationId) {
+      rooms.push(`conversation:${conversationId}`, `chat:${conversationId}`);
+      exceptRooms.push(getUserRoomName(callerId));
+      if (callerId.toLowerCase() !== callerId) exceptRooms.push(getUserRoomName(callerId.toLowerCase()));
+      exceptSocketIds.push(...getUserSocketIds(callerId));
+    }
+
+    for (const event of events) {
+      emitChatOnce(io, event, target.payload, rooms, exceptRooms, exceptSocketIds, socketIds);
+    }
+    if (socketIds.length > 0) rememberCallChatDelivery(target.userId, messageId);
+  }
 };
 
 function errorMessage(err: unknown, fallback: string): string {

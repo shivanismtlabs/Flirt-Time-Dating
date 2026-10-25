@@ -14,7 +14,7 @@ import {
 } from '../models';
 import { agoraService, AgoraServiceError } from './agora.service';
 import { formatMediaUrl } from './s3.service';
-import { resolveChatDisplayName } from './chat.service';
+import { buildViewerChatMessage, resolveChatDisplayName } from './chat.service';
 import { getSocketServer } from '../realtime/socket.server';
 import {
   emitVideoCallIncoming,
@@ -498,34 +498,124 @@ export class VideoCallService {
         call.conversationId,
         [saved.id]
       );
-      const at = (saved.createdAt ? new Date(saved.createdAt) : new Date()).toISOString();
-      const delivered = liveStatus !== 'sent';
-      const seen = liveStatus === 'read';
-
-      const io = this.getIoSafe();
-      if (io) {
-        emitCallChatMessage(io, call.callerId, call.calleeId, {
-          id: saved.id,
-          conversationId: call.conversationId,
-          senderId: call.callerId,
-          recipientId: call.calleeId,
-          content: body,
-          messageType: 'call',
-          metadata: saved.metadata,
-          status: seen ? 'seen' : liveStatus,
-          receiptStatus: liveStatus,
-          isDelivered: delivered,
-          deliveredAt: delivered ? at : null,
-          isRead: seen,
-          readAt: seen ? at : null,
-          seen,
-          sentAt: at,
-          createdAt: at,
-        });
-      }
+      await this.emitStoredCallChat(call, saved, { receiptStatus: liveStatus });
     } catch {
       // Call state is already saved. A chat-log failure must not roll the call back.
     }
+  }
+
+  /**
+   * Push the saved call log into the open chat. The messages API already returns
+   * this row; the socket payload has to match that shape or the thread ignores it
+   * until the next fetch.
+   */
+  private async emitStoredCallChat(
+    call: VideoCall,
+    saved: ChatMessage,
+    options?: {
+      direct?: { emit: (event: string, payload?: unknown) => void } | null;
+      onlyUserId?: string | null;
+      receiptStatus?: 'sent' | 'delivered' | 'read';
+    }
+  ): Promise<void> {
+    if (!call.conversationId || !saved) return;
+    let metadata: any = null;
+    if (saved.metadata) {
+      try {
+        metadata = JSON.parse(saved.metadata);
+      } catch {
+        metadata = null;
+      }
+    }
+    const callMeta = metadata?.call && typeof metadata.call === 'object' ? metadata.call : null;
+    const caller = await User.findByPk(call.callerId, {
+      attributes: ['id', 'fullName', 'firstName', 'lastName', 'nickName', 'username', 'profilePicture'],
+    });
+    const displayName = caller ? resolveChatDisplayName(caller) : 'You';
+    const at = (saved.createdAt ? new Date(saved.createdAt) : new Date()).toISOString();
+    const receipt = options?.receiptStatus || (saved.isRead ? 'read' : saved.isDelivered ? 'delivered' : 'sent');
+    const seen = receipt === 'read';
+    const delivered = receipt !== 'sent';
+    const sender = {
+      id: call.callerId,
+      displayName,
+      name: displayName,
+      profileImageUrl: caller?.profilePicture ? formatMediaUrl(caller.profilePicture) : null,
+    };
+    const base = {
+      id: saved.id,
+      conversationId: call.conversationId,
+      senderId: call.callerId,
+      recipientId: call.calleeId,
+      content: saved.content,
+      messageType: 'call',
+      type: 'call',
+      metadata,
+      call: callMeta,
+      callType: callMeta?.callType === 'video' ? 'video' : 'audio',
+      callStatus: callMeta?.status || null,
+      durationSec: Number(callMeta?.durationSec) || 0,
+      status: receipt,
+      receiptStatus: receipt,
+      messageStatus: seen ? 'seen' : receipt,
+      seen,
+      isDelivered: delivered,
+      deliveredAt: delivered ? (saved.deliveredAt ? new Date(saved.deliveredAt).toISOString() : at) : null,
+      isRead: seen,
+      readAt: seen ? (saved.readAt ? new Date(saved.readAt).toISOString() : at) : null,
+      sentAt: at,
+      createdAt: at,
+      isPinned: false,
+      pinned: false,
+      pinnedAt: null,
+      pinnedBy: null,
+      sender,
+    };
+    const sent = buildViewerChatMessage({ ...base, isMine: true, isSender: true } as any, true);
+    const received = buildViewerChatMessage({ ...base, isMine: false, isSender: false } as any, false);
+    const io = this.getIoSafe();
+    emitCallChatMessage(
+      io,
+      call.callerId,
+      call.calleeId,
+      call.conversationId,
+      sent as unknown as Record<string, unknown>,
+      received as unknown as Record<string, unknown>,
+      options
+    );
+
+    if (options?.direct) return;
+    const { chatService } = await import('./chat.service');
+    await chatService.emitConversationUpdate(
+      call.conversationId,
+      {
+        id: saved.id,
+        content: saved.content,
+        messageType: 'call',
+        senderId: call.callerId,
+        createdAt: saved.createdAt || new Date(),
+      },
+      saved.content,
+      call.callerId,
+      call.calleeId
+    );
+  }
+
+  private async replayCallChatMessage(
+    call: VideoCall,
+    userId: string,
+    direct: { emit: (event: string, payload?: unknown) => void }
+  ): Promise<void> {
+    if (!call.conversationId) return;
+    const saved = await ChatMessage.findOne({
+      where: {
+        conversationId: call.conversationId,
+        messageType: 'call',
+        metadata: { [Op.like]: `%${call.id}%` },
+      },
+    });
+    if (!saved) return;
+    await this.emitStoredCallChat(call, saved, { direct, onlyUserId: userId });
   }
 
   private async expireRingingCall(callId: string): Promise<void> {
@@ -1247,6 +1337,11 @@ export class VideoCallService {
       direct,
       onlyUserId: userId,
     });
+    try {
+      await this.replayCallChatMessage(call, userId, direct);
+    } catch {
+      // Call screen can reopen without the chat log. A replay miss must not drop the socket.
+    }
   }
 
   /**

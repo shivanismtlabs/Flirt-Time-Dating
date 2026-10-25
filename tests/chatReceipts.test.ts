@@ -15,6 +15,7 @@ import {
 import { generateToken } from '../src/utils/jwt';
 import { chatService } from '../src/services/chat.service';
 import { initSocketServer, closeSocketServer } from '../src/realtime/socket.server';
+import { setConversationViewing } from '../src/realtime/socket.lifecycle';
 
 describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () => {
   let httpServer: http.Server;
@@ -915,6 +916,47 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
       expect(receivedPayload.conversationId).toBe(convAB.id);
       expect(receivedPayload.recipientId).toBe(userB.id);
       expect(receivedPayload.messageIds).toEqual([msg1.id]);
+    });
+
+    it('returns read for every in-flight message when the other person has the chat open', async () => {
+      setConversationViewing(userA.id, convAB.id, true);
+      setConversationViewing(userB.id, convAB.id, true);
+      try {
+        const fromA = await chatService.sendMessage(userA.id, convAB.id, {
+          content: 'while-b-is-here',
+          messageType: 'text',
+          clientMessageId: 'while-b-is-here',
+        });
+        expect(fromA.status).toBe('read');
+        expect(fromA.isRead).toBe(true);
+
+        const fromB = await chatService.sendMessage(userB.id, convAB.id, {
+          content: 'while-a-is-here',
+          messageType: 'text',
+          clientMessageId: 'while-a-is-here',
+        });
+        expect(fromB.status).toBe('read');
+        expect(fromB.isRead).toBe(true);
+
+        const statuses = await Promise.all([
+          chatService.syncOutgoingReceipts(userA.id, userB.id, convAB.id, [msg1.id]),
+          chatService.syncOutgoingReceipts(userA.id, userB.id, convAB.id, [msg2.id]),
+          chatService.syncOutgoingReceipts(userA.id, userB.id, convAB.id, [msg3.id]),
+        ]);
+        expect(statuses).toEqual(['read', 'read', 'read']);
+
+        const rows = await ChatMessage.findAll({
+          where: { id: [msg1.id, msg2.id, msg3.id, fromA.id, fromB.id] },
+        });
+        expect(rows).toHaveLength(5);
+        for (const row of rows) {
+          expect(row.isRead).toBe(true);
+          expect(row.isDelivered).toBe(true);
+        }
+      } finally {
+        setConversationViewing(userA.id, convAB.id, false);
+        setConversationViewing(userB.id, convAB.id, false);
+      }
     });
   });
 });

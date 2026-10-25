@@ -6,6 +6,7 @@ import { sequelize, User, VideoCall, ChatMessage, Conversation, initDb } from '.
 import { generateToken } from '../src/utils/jwt';
 import { env } from '../src/config/env';
 import { initSocketServer, closeSocketServer } from '../src/realtime';
+import { getUserActiveSocketCount } from '../src/realtime/socket.lifecycle';
 import { videoCallService } from '../src/services/videoCall.service';
 
 describe('Call socket updates', () => {
@@ -170,6 +171,103 @@ describe('Call socket updates', () => {
     expect(calleeEnd.callId).toBe(started.callId);
     expect(callerVideoEnd.callId).toBe(started.callId);
     expect(calleeVideoEnd.callEnded).toBe(true);
+  });
+
+  it('puts a cancelled voice or video call in the open chat immediately', async () => {
+    const { caller, callee, callerSocket, calleeSocket } = await pair('cancelchat');
+    const conversation = await Conversation.create({
+      user1Id: caller.id,
+      user2Id: callee.id,
+    });
+
+    const callerVoice = once<{
+      type: string;
+      messageType: string;
+      content: string;
+      isMine: boolean;
+      metadata: { call: { status: string; callType: string } };
+    }>(callerSocket, 'chat:message_sent');
+    const calleeVoice = once<{ type: string; content: string; isMine: boolean }>(
+      calleeSocket,
+      'chat:message_received'
+    );
+    const startedVoice = await videoCallService.initiateCall(
+      caller.id,
+      { calleeId: callee.id, conversationId: conversation.id, callType: 'audio' } as any,
+      'audio'
+    );
+    await videoCallService.endCall(caller.id, startedVoice.callId);
+    const [sentVoice, receivedVoice] = await Promise.all([callerVoice, calleeVoice]);
+    expect(sentVoice.type).toBe('call');
+    expect(sentVoice.messageType).toBe('call');
+    expect(sentVoice.content).toBe('Cancelled voice call');
+    expect(sentVoice.isMine).toBe(true);
+    expect(sentVoice.metadata.call.status).toBe('cancelled');
+    expect(sentVoice.metadata.call.callType).toBe('audio');
+    expect(receivedVoice.type).toBe('call');
+    expect(receivedVoice.content).toBe('Cancelled voice call');
+    expect(receivedVoice.isMine).toBe(false);
+
+    const callerVideo = once<{ type: string; content: string; metadata: { call: { callType: string; status: string } } }>(
+      callerSocket,
+      'chat:message:new'
+    );
+    const startedVideo = await videoCallService.initiateCall(
+      caller.id,
+      { calleeId: callee.id, conversationId: conversation.id, callType: 'video' } as any,
+      'video'
+    );
+    await videoCallService.endCall(caller.id, startedVideo.callId);
+    const sentVideo = await callerVideo;
+    expect(sentVideo.type).toBe('call');
+    expect(sentVideo.content).toBe('Cancelled video call');
+    expect(sentVideo.metadata.call.status).toBe('cancelled');
+    expect(sentVideo.metadata.call.callType).toBe('video');
+  });
+
+  it('replays a cancelled call into chat when the caller socket reconnects', async () => {
+    const { caller, callee, callerSocket } = await pair('cancelblip');
+    const conversation = await Conversation.create({
+      user1Id: caller.id,
+      user2Id: callee.id,
+    });
+    const started = await videoCallService.initiateCall(
+      caller.id,
+      { calleeId: callee.id, conversationId: conversation.id, callType: 'audio' } as any,
+      'audio'
+    );
+    await new Promise<void>((resolve) => {
+      callerSocket.once('disconnect', () => resolve());
+      callerSocket.disconnect();
+    });
+    for (let i = 0; i < 20 && getUserActiveSocketCount(caller.id) > 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    await videoCallService.endCall(caller.id, started.callId);
+
+    const token = generateToken({ id: caller.id, role: caller.role });
+    const socket = ioClient(serverUrl, {
+      transports: ['websocket'],
+      forceNew: true,
+      reconnection: false,
+      timeout: 5000,
+      auth: { token },
+    });
+    clients.push(socket);
+    const replay = once<{ type: string; content: string; metadata: { call: { status: string } } }>(
+      socket,
+      'chat:message_sent'
+    );
+    await new Promise<void>((resolve, reject) => {
+      if (socket.connected) resolve();
+      socket.on('connect', () => resolve());
+      socket.on('connect_error', (err) => reject(err));
+    });
+    const message = await replay;
+    expect(message.type).toBe('call');
+    expect(message.content).toBe('Cancelled voice call');
+    expect(message.metadata.call.status).toBe('cancelled');
   });
 
   it('tells the caller when a voice call is declined', async () => {

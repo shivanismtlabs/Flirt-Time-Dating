@@ -5120,14 +5120,115 @@ export class ChatService {
         recipientId,
         isRead: false,
       },
-      attributes: ['id'],
-      order: [['createdAt', 'ASC']],
+      attributes: ['id', 'createdAt'],
+      order: [
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
     });
-    const ids = rows.map((row) => row.id);
-    for (const id of messageIds) {
-      if (id && !ids.includes(id)) ids.push(id);
+    const byId = new Map<string, Date>();
+    for (const row of rows) byId.set(row.id, new Date(row.createdAt));
+
+    const missing = messageIds.filter((id) => id && !byId.has(id));
+    if (missing.length > 0) {
+      const extra = await ChatMessage.findAll({
+        where: { id: { [Op.in]: missing }, conversationId },
+        attributes: ['id', 'createdAt'],
+      });
+      for (const row of extra) byId.set(row.id, new Date(row.createdAt));
     }
-    return ids;
+
+    return [...byId.entries()]
+      .sort((left, right) => {
+        const delta = left[1].getTime() - right[1].getTime();
+        if (delta !== 0) return delta;
+        return left[0].localeCompare(right[0]);
+      })
+      .map(([id]) => id);
+  }
+
+  /** Status already stored for the messages this send just created. */
+  private async liveStatusForIds(
+    messageIds: string[]
+  ): Promise<'sent' | 'delivered' | 'read'> {
+    const ids = messageIds.filter(Boolean);
+    if (ids.length === 0) return 'sent';
+    const rows = await ChatMessage.findAll({
+      where: { id: { [Op.in]: ids } },
+      attributes: ['id', 'isRead', 'isDelivered'],
+    });
+    if (rows.length === 0 || rows.length < ids.length) return 'sent';
+    if (rows.every((row) => row.isRead)) return 'read';
+    if (rows.every((row) => row.isDelivered || row.isRead)) return 'delivered';
+    return 'sent';
+  }
+
+  /**
+   * Open-chat fallback when a createdAt cursor misses a row, or a parallel
+   * read already flipped it and this call would otherwise report "sent".
+   */
+  private async markIdsRead(
+    recipientId: string,
+    conversationId: string,
+    messageIds: string[],
+    receiptSink?: ChatReceiptEmit[]
+  ): Promise<number> {
+    const ids = messageIds.filter(Boolean);
+    if (ids.length === 0) return 0;
+    const rows = await ChatMessage.findAll({
+      where: {
+        id: { [Op.in]: ids },
+        conversationId,
+        recipientId,
+        isRead: false,
+      },
+      attributes: ['id', 'metadata'],
+    });
+    if (rows.length === 0) return 0;
+
+    const now = new Date();
+    const targetIds = rows.map((row) => row.id);
+    const clientMessageIds: Record<string, string> = {};
+    for (const row of rows) {
+      const clientId = clientMessageIdFromMetadata(row.metadata);
+      if (clientId) clientMessageIds[row.id] = clientId;
+    }
+
+    const [updated] = await ChatMessage.update(
+      {
+        isRead: true,
+        readAt: now,
+        isDelivered: true,
+        deliveredAt: sequelize.fn('COALESCE', sequelize.col('deliveredAt'), now),
+      },
+      {
+        where: {
+          id: { [Op.in]: targetIds },
+          recipientId,
+          isRead: false,
+        },
+      }
+    );
+    if (!updated) return 0;
+
+    const conversation = await Conversation.findByPk(conversationId, {
+      attributes: ['user1Id', 'user2Id'],
+    });
+    this.queueReceipt(
+      {
+        kind: 'read',
+        conversationId,
+        actorId: recipientId,
+        notifyUserId: conversation ? getOtherParticipantId(conversation, recipientId) : '',
+        messageIds: targetIds,
+        cursorId: targetIds[targetIds.length - 1] || null,
+        at: now,
+        markedCount: updated,
+        clientMessageIds,
+      },
+      receiptSink
+    );
+    return updated;
   }
 
   /**
@@ -5149,17 +5250,26 @@ export class ChatService {
       const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
       const latestId = ids[ids.length - 1];
       if (isUserViewingConversation(recipientId, conversationId)) {
-        const read = await this.markMessagesAsRead(recipientId, conversationId, latestId, {
-          receiptSink,
-          skipListFanout: !!receiptSink,
-        });
-        return read.markedCount > 0 ? 'read' : 'sent';
+        try {
+          await this.markMessagesAsRead(recipientId, conversationId, latestId, {
+            receiptSink,
+            skipListFanout: !!receiptSink,
+          });
+        } catch {
+          // A stale cursor must not leave the open chat on one tick.
+        }
+        let state = await this.liveStatusForIds(messageIds);
+        if (state !== 'read') {
+          await this.markIdsRead(recipientId, conversationId, messageIds, receiptSink);
+          state = await this.liveStatusForIds(messageIds);
+        }
+        return state;
       }
       if (isUserConnected(recipientId)) {
-        const delivery = await this.acknowledgeDelivery(recipientId, conversationId, ids, {
+        await this.acknowledgeDelivery(recipientId, conversationId, ids, {
           receiptSink,
         });
-        return delivery.deliveredCount > 0 ? 'delivered' : 'sent';
+        return this.liveStatusForIds(messageIds);
       }
     } catch {
       // receipt side effects must not fail the send
@@ -5339,6 +5449,17 @@ export class ChatService {
     if (markedCount > 0 || lastReadMessageId) {
       const readIds =
         pendingIds.length > 0 ? pendingIds : resolvedLastReadId ? [resolvedLastReadId] : [];
+      const missingClientIds = readIds.filter((id) => !readClientMessageIds[id]);
+      if (missingClientIds.length > 0) {
+        const metaRows = await ChatMessage.findAll({
+          where: { id: { [Op.in]: missingClientIds } },
+          attributes: ['id', 'metadata'],
+        });
+        for (const row of metaRows) {
+          const clientId = clientMessageIdFromMetadata(row.metadata);
+          if (clientId) readClientMessageIds[row.id] = clientId;
+        }
+      }
       this.queueReceipt(
         {
           kind: 'read',

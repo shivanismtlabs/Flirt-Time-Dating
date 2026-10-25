@@ -15,18 +15,32 @@ import { socketLogger } from './socket.errors';
 const inflightChatSends = new Map<string, Promise<any>>();
 const recentChatSends = new Map<string, { at: number; event: string; response: any }>();
 
+/** Same map pin, ignoring GPS noise past ~1 meter. */
+const locationPin = (payload: any): string => {
+  const meta =
+    payload?.metadata && typeof payload.metadata === 'object' && !Array.isArray(payload.metadata)
+      ? payload.metadata
+      : {};
+  const lat = Number(meta.latitude ?? meta.lat ?? payload?.latitude ?? payload?.lat);
+  const lng = Number(
+    meta.longitude ?? meta.lng ?? meta.long ?? payload?.longitude ?? payload?.lng ?? payload?.long
+  );
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+  return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+};
+
 /**
  * Same tap fired on chat:send_message and message:send must share one key.
  * clientMessageId is enough. payload.userId is left out because one event
  * sends the sender id there and the other does not.
+ * Location ignores the address string: one event sends the place name and the
+ * other sends only coordinates.
  */
 const chatSendFingerprint = (userId: string, payload: any): string => {
-  const clientId = String(payload?.clientMessageId || payload?.clientMsgId || '').trim();
   const conversationId = String(
     payload?.conversationId || payload?.conversation_id || payload?.chatId || ''
   ).trim();
   const owner = String(userId).toLowerCase();
-  if (clientId) return `${owner}|${clientId}|${conversationId}`;
   const recipient = String(
     payload?.recipientId ||
       payload?.receiverId ||
@@ -34,10 +48,16 @@ const chatSendFingerprint = (userId: string, payload: any): string => {
       payload?.participantId ||
       ''
   ).trim();
+  const type = String(payload?.messageType || payload?.type || '').trim().toLowerCase();
+  const pin = locationPin(payload);
+  if (type === 'location' && pin) {
+    return `loc:${owner}|${conversationId || recipient}|${pin}`;
+  }
+  const clientId = String(payload?.clientMessageId || payload?.clientMsgId || '').trim();
+  if (clientId) return `${owner}|${clientId}|${conversationId}`;
   const content = String(
     payload?.content || payload?.body || payload?.text || payload?.message || ''
   ).trim();
-  const type = String(payload?.messageType || payload?.type || '').trim();
   const media = JSON.stringify([
     payload?.imageUrl || payload?.image || '',
     payload?.audioUrl || payload?.audio || payload?.voiceUrl || '',
@@ -77,7 +97,12 @@ export const registerChatSocketHandlers = (
       const reuse = (response: any) => {
         if (typeof caller === 'function') caller(response);
       };
-      if (recent && recent.event !== eventName && Date.now() - recent.at < 2500) {
+      const sameLocationBurst = fingerprint.startsWith('loc:');
+      if (
+        recent &&
+        Date.now() - recent.at < 2500 &&
+        (recent.event !== eventName || sameLocationBurst)
+      ) {
         reuse(recent.response);
         return;
       }

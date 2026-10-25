@@ -648,6 +648,26 @@ const acquireChatSendLock = async (key: string): Promise<() => void> => {
 };
 
 const CONTACT_REPEAT_WINDOW_MS = 8000;
+const LOCATION_REPEAT_WINDOW_MS = 8000;
+
+/** Same map pin, ignoring GPS noise past ~1 meter. */
+const locationCoordKey = (lat: unknown, lng: unknown): string => {
+  const latitude = Number(lat);
+  const longitude = Number(lng);
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return '';
+  return `${latitude.toFixed(5)},${longitude.toFixed(5)}`;
+};
+
+const locationSendLockKey = (
+  senderId: string,
+  recipientId: string,
+  lat: unknown,
+  lng: unknown
+): string => {
+  const coords = locationCoordKey(lat, lng);
+  if (!coords) return '';
+  return `location:${String(senderId).toLowerCase()}:${String(recipientId).toLowerCase()}:${coords}`;
+};
 
 const findRecentDuplicateContact = async (
   conversationId: string,
@@ -677,6 +697,40 @@ const findRecentDuplicateContact = async (
       meta = {};
     }
     if (normalizeContactPhone(String(meta.phoneNumber || '')) === digits) return row;
+  }
+  return null;
+};
+
+/** A second tap of the same pin, or a socket event plus the REST send, reuses the first row. */
+const findRecentDuplicateLocation = async (
+  conversationId: string,
+  senderId: string,
+  lat: unknown,
+  lng: unknown,
+  transaction?: any
+): Promise<ChatMessage | null> => {
+  const wanted = locationCoordKey(lat, lng);
+  if (!wanted) return null;
+  const since = new Date(Date.now() - LOCATION_REPEAT_WINDOW_MS);
+  const rows = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      messageType: 'location',
+      createdAt: { [Op.gte]: since },
+    },
+    order: [['createdAt', 'DESC']],
+    limit: 8,
+    transaction,
+  });
+  for (const row of rows) {
+    let meta: any = {};
+    try {
+      meta = JSON.parse(row.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    if (locationCoordKey(meta.latitude, meta.longitude) === wanted) return row;
   }
   return null;
 };
@@ -3422,13 +3476,18 @@ export class ChatService {
     }
 
     // 7. Execute database write inside an atomic transaction.
-    // Same contact tapped twice waits here, then reuses the row the first tap saved.
+    // Same contact or map pin tapped twice waits here, then reuses the row the first tap saved.
     const releaseContactLock = await acquireChatSendLock(
       msgType === 'contact'
         ? contactSendLockKey(senderId, recipientId, String(metadataObj.phoneNumber || ''))
         : ''
     );
-    let reusedContact = false;
+    const releaseLocationLock = await acquireChatSendLock(
+      msgType === 'location'
+        ? locationSendLockKey(senderId, recipientId, metadataObj.latitude, metadataObj.longitude)
+        : ''
+    );
+    let reusedExisting = false;
     const t = await sequelize.transaction();
     const savedMessages: ChatMessage[] = [];
     let lastMessagePreview: string = '';
@@ -3442,13 +3501,28 @@ export class ChatService {
           t
         );
         if (duplicateContact) {
-          reusedContact = true;
+          reusedExisting = true;
           savedMessages.push(duplicateContact);
           lastMessagePreview = metadataObj.name ? `👤 ${metadataObj.name}` : '👤 Contact';
         }
       }
 
-      if (!reusedContact) {
+      if (!reusedExisting && msgType === 'location') {
+        const duplicateLocation = await findRecentDuplicateLocation(
+          conversationId,
+          senderId,
+          metadataObj.latitude,
+          metadataObj.longitude,
+          t
+        );
+        if (duplicateLocation) {
+          reusedExisting = true;
+          savedMessages.push(duplicateLocation);
+          lastMessagePreview = metadataObj.name ? `📍 ${metadataObj.name}` : '📍 Location';
+        }
+      }
+
+      if (!reusedExisting) {
       for (let i = 0; i < itemsToCreate.length; i++) {
         const item = itemsToCreate[i];
         const clientMsgId =
@@ -3494,6 +3568,7 @@ export class ChatService {
       throw err;
     } finally {
       releaseContactLock();
+      releaseLocationLock();
     }
 
     // 8. Build DTOs for all created messages
@@ -3592,7 +3667,7 @@ export class ChatService {
     // The bubble goes out as soon as the row is saved. Read/delivered ticks and
     // the chat-list refresh follow, so an open chat does not wait on those queries.
     // A repeated contact tap reuses the saved row and must not be broadcast again.
-    if (!reusedContact) {
+    if (!reusedExisting) {
     try {
       const io = getSocketServer();
       const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
@@ -3652,6 +3727,17 @@ export class ChatService {
     }
     }
 
+    // Chat-list row goes out with the bubble. Receipt work must not hold the other phone.
+    if (!reusedExisting && savedMessages.length > 0) {
+      void this.emitConversationUpdate(
+        conversationId,
+        savedMessages[savedMessages.length - 1],
+        lastMessagePreview,
+        senderId,
+        recipientId
+      ).catch(() => undefined);
+    }
+
     const settleAfterBubble = async (applyStatusToDto: boolean) => {
       try {
         await Promise.all([
@@ -3703,7 +3789,7 @@ export class ChatService {
         for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
       }
 
-      if (!reusedContact) {
+      if (!reusedExisting) {
         try {
           this.flushReceipts(receiptSink);
           void this.emitConversationUpdate(
@@ -3718,7 +3804,7 @@ export class ChatService {
         }
       }
       this.flushReceipts(receiptSink);
-      if (!reusedContact) {
+      if (!reusedExisting) {
         this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
       }
     };
@@ -4448,6 +4534,11 @@ export class ChatService {
           ? contactSendLockKey(senderId, recipientId, String(metadataObj.phoneNumber || ''))
           : ''
       );
+      const releaseLocationLock = await acquireChatSendLock(
+        msgType === 'location'
+          ? locationSendLockKey(senderId, recipientId, metadataObj.latitude, metadataObj.longitude)
+          : ''
+      );
       const t = await sequelize.transaction();
       let savedMessage: ChatMessage | null = null;
       let lastMessagePreview: string = '';
@@ -4702,6 +4793,21 @@ export class ChatService {
           }
         }
 
+        if (!reusedMultiContact && msgType === 'location') {
+          const duplicateLocation = await findRecentDuplicateLocation(
+            conversationId,
+            senderId,
+            metadataObj.latitude,
+            metadataObj.longitude,
+            t
+          );
+          if (duplicateLocation) {
+            reusedMultiContact = true;
+            savedMessages.push(duplicateLocation);
+            lastMessagePreview = metadataObj.name ? `📍 ${metadataObj.name}` : '📍 Location';
+          }
+        }
+
         let lastSaved: ChatMessage | undefined;
         if (!reusedMultiContact) {
         for (let i = 0; i < itemsToCreate.length; i++) {
@@ -4931,6 +5037,16 @@ export class ChatService {
         }
         }
 
+        if (!reusedMultiContact && savedMessages.length > 0) {
+          void this.emitConversationUpdate(
+            conversationId,
+            savedMessages[savedMessages.length - 1],
+            lastMessagePreview,
+            senderId,
+            recipientId
+          ).catch(() => undefined);
+        }
+
         const preview =
           lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
             ? lastMessagePreview
@@ -5016,6 +5132,7 @@ export class ChatService {
         });
       } finally {
         releaseContactLock();
+        releaseLocationLock();
         releaseIdempotencyLock();
       }
     }
@@ -6205,33 +6322,26 @@ export class ChatService {
       const io = getSocketServer();
       if (!io) return;
 
-      const [senderUser, recipientUser] = await Promise.all([
-        User.findByPk(senderId, {
-          attributes: ['id', 'fullName', 'firstName', 'nickName', 'username', 'profilePicture', 'isFaceVerified', 'isSubscribed'],
-        }),
-        User.findByPk(recipientId, {
-          attributes: ['id', 'fullName', 'firstName', 'nickName', 'username', 'profilePicture', 'isFaceVerified', 'isSubscribed'],
-        }),
-      ]);
-
-      if (!senderUser || !recipientUser) return;
-
-      // Check pin status for both participants
-      const [senderPin, recipientPin] = await Promise.all([
+      const userAttrs = ['id', 'fullName', 'firstName', 'nickName', 'username', 'profilePicture', 'isFaceVerified', 'isSubscribed'] as const;
+      const [senderUser, recipientUser, senderPin, recipientPin, senderState, recipientState] = await Promise.all([
+        User.findByPk(senderId, { attributes: [...userAttrs] }),
+        User.findByPk(recipientId, { attributes: [...userAttrs] }),
         ConversationPin.findOne({ where: { conversationId, userId: senderId } }),
         ConversationPin.findOne({ where: { conversationId, userId: recipientId } }),
-      ]);
-
-      // Check archive & delete status for both participants
-      const [senderState, recipientState] = await Promise.all([
         ConversationUserState.findOne({ where: { conversationId, userId: senderId } }),
         ConversationUserState.findOne({ where: { conversationId, userId: recipientId } }),
       ]);
 
-      // Compute unread counts for both users
+      if (!senderUser || !recipientUser) return;
+
+      const unreadWhere = (userId: string, clearedAt?: Date | null) => {
+        const where: any = { conversationId, recipientId: userId, isRead: false };
+        if (clearedAt) where.createdAt = { [Op.gt]: clearedAt };
+        return where;
+      };
       const [recipientUnreadCount, senderUnreadCount] = await Promise.all([
-        this.getConversationUnreadCount(recipientId, conversationId),
-        this.getConversationUnreadCount(senderId, conversationId),
+        ChatMessage.count({ where: unreadWhere(recipientId, recipientState?.clearedAt) }),
+        ChatMessage.count({ where: unreadWhere(senderId, senderState?.clearedAt) }),
       ]);
 
       const messageTimestamp =
@@ -6329,29 +6439,26 @@ export class ChatService {
         updatedAt: messageTimestamp,
       };
 
-      const senderRoom = getUserRoomName(senderId);
-      const recipientRoom = getUserRoomName(recipientId);
       const inboxRefresh = { conversationId, reason: 'message' };
+      const emitUser = (userId: string, event: string, payload: unknown) => {
+        emitChatEventOnce(io, event, payload, userSocketRooms(userId));
+      };
 
-      io.to(senderRoom).emit('chat:inbox:refresh' as any, inboxRefresh);
-      io.to(recipientRoom).emit('chat:inbox:refresh' as any, inboxRefresh);
+      emitUser(senderId, 'chat:inbox:refresh', inboxRefresh);
+      emitUser(recipientId, 'chat:inbox:refresh', inboxRefresh);
 
-      // Emit to Sender's devices across all standard event names
-      io.to(senderRoom).emit('conversation:updated', senderPayload);
-      io.to(senderRoom).emit('chat:conversation_updated' as any, senderPayload);
-      io.to(senderRoom).emit('conversation_updated' as any, senderPayload);
-      io.to(senderRoom).emit('conversation:update' as any, senderPayload);
-      io.to(senderRoom).emit('conversations:update' as any, senderPayload);
+      for (const event of [
+        'conversation:updated',
+        'chat:conversation_updated',
+        'conversation_updated',
+        'conversation:update',
+        'conversations:update',
+      ]) {
+        emitUser(senderId, event, senderPayload);
+        emitUser(recipientId, event, recipientPayload);
+      }
 
-      // Emit to Recipient's devices across all standard event names
-      io.to(recipientRoom).emit('conversation:updated', recipientPayload);
-      io.to(recipientRoom).emit('chat:conversation_updated' as any, recipientPayload);
-      io.to(recipientRoom).emit('conversation_updated' as any, recipientPayload);
-      io.to(recipientRoom).emit('conversation:update' as any, recipientPayload);
-      io.to(recipientRoom).emit('conversations:update' as any, recipientPayload);
-
-      // Also emit conversation:unread_updated to recipient
-      io.to(recipientRoom).emit('conversation:unread_updated', {
+      emitUser(recipientId, 'conversation:unread_updated', {
         conversationId,
         unreadCount: recipientUnreadCount,
       });
@@ -9839,6 +9946,16 @@ return {
           // Socket server may not be bound in isolated test contexts; continue gracefully
         }
 
+        if (lastSaved) {
+          void this.emitConversationUpdate(
+            conversationId,
+            lastSaved,
+            lastMessagePreview,
+            senderId,
+            recipientId
+          ).catch(() => undefined);
+        }
+
         const liveStatus = await this.applyLiveReceipts(
           senderId,
           recipientId,
@@ -9854,13 +9971,13 @@ return {
         try {
           this.flushReceipts(receiptSink);
           if (lastSaved) {
-            await this.emitConversationUpdate(
+            void this.emitConversationUpdate(
               conversationId,
               lastSaved,
               lastMessagePreview,
               senderId,
               recipientId
-            );
+            ).catch(() => undefined);
           }
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully

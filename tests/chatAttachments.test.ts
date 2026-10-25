@@ -285,6 +285,63 @@ describe('FlirtTime Chat Attachments — Photo, Camera, Location & Contact', () 
       const updatedConv = await Conversation.findByPk(convAB.id);
       expect(updatedConv?.lastMessage).toBe('📍 Location');
     });
+
+    it('should keep a single bubble when the same location is sent twice at once', async () => {
+      const body = {
+        messageType: 'location',
+        content: 'Mumbai',
+        metadata: {
+          latitude: 19.076,
+          longitude: 72.8777,
+          name: 'Mumbai',
+          address: 'Mumbai, Maharashtra',
+        },
+      };
+      const otherPlace = {
+        messageType: 'location',
+        metadata: {
+          latitude: 28.6139,
+          longitude: 77.209,
+          name: 'Delhi',
+        },
+      };
+
+      const [first, second] = await Promise.all([
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send(body),
+        request(app)
+          .post(`/api/v1/chats/${convAB.id}/messages`)
+          .set('Authorization', `Bearer ${tokenA}`)
+          .send({
+            messageType: 'location',
+            metadata: {
+              latitude: 19.076,
+              longitude: 72.8777,
+              name: 'Mumbai',
+            },
+          }),
+      ]);
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(201);
+      expect(second.body.data.id).toBe(first.body.data.id);
+      expect(first.body.data.messageType).toBe('location');
+
+      const again = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send(otherPlace);
+
+      expect(again.status).toBe(201);
+      expect(again.body.data.id).not.toBe(first.body.data.id);
+
+      const count = await ChatMessage.count({
+        where: { conversationId: convAB.id, messageType: 'location' },
+      });
+      expect(count).toBe(2);
+    });
   });
 
   // =========================================================================

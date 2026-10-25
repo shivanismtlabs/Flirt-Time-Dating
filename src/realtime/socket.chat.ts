@@ -1023,8 +1023,27 @@ export const registerChatSocketHandlers = (
       }
       socket.join(`conversation:${convId}`);
       socket.join(`chat:${convId}`);
+      let partner: {
+        conversationId: string;
+        userId: string;
+        isOnline: boolean;
+        lastSeenAt: string | null;
+      } | null = null;
+      try {
+        partner = await chatService.syncOpenChatPresence(currentUserId, conv.id, true);
+      } catch {
+        partner = null;
+      }
+      if (partner) {
+        socket.emit('chat:presence', partner);
+        socket.emit('chat:user:status', partner);
+      }
       if (typeof callback === 'function') {
-        callback({ success: true, conversationId: convId });
+        callback({
+          success: true,
+          conversationId: conv.id,
+          ...(partner ? { partner } : {}),
+        });
       }
     } catch {
       if (typeof callback === 'function') {
@@ -1056,6 +1075,22 @@ export const registerChatSocketHandlers = (
       const active = !(payload && typeof payload === 'object' && (payload.active === false || payload.active === 0));
       setConversationViewing(currentUserId, conversationId, active);
 
+      let partner: {
+        conversationId: string;
+        userId: string;
+        isOnline: boolean;
+        lastSeenAt: string | null;
+      } | null = null;
+      try {
+        partner = await chatService.syncOpenChatPresence(currentUserId, conversationId, active);
+      } catch {
+        partner = null;
+      }
+      if (partner) {
+        socket.emit('chat:presence', partner);
+        socket.emit('chat:user:status', partner);
+      }
+
       if (!active) {
         if (typeof callback === 'function') {
           callback({ success: true, data: { conversationId, active: false } });
@@ -1072,9 +1107,10 @@ export const registerChatSocketHandlers = (
         conversationId,
         lastReadMessageId
       );
-      socket.emit('chat:message:seen:ack' as any, { success: true, data: result });
+      const data = partner ? { ...result, partner } : result;
+      socket.emit('chat:message:seen:ack' as any, { success: true, data });
       if (typeof callback === 'function') {
-        callback({ success: true, data: result });
+        callback({ success: true, data });
       }
     } catch (err: any) {
       if (typeof callback === 'function') {

@@ -24,7 +24,13 @@ import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { audioReferenceFromPayload, isAudioChatFile, isImageMediaReference } from '../utils/chatMediaKind';
 import { calculateAge, calculateDistanceKm } from './discovery.service';
-import { isUserConnected, isUserViewingConversation, getUserRoomName } from '../realtime/socket.lifecycle';
+import {
+  isUserConnected,
+  isUserViewingConversation,
+  getUserRoomName,
+  setPresenceWatch,
+  getOpenChatsInvolving,
+} from '../realtime/socket.lifecycle';
 import { getSocketServer } from '../realtime/socket.server';
 import { socketLogger } from '../realtime/socket.errors';
 import {
@@ -1806,6 +1812,10 @@ export class ChatService {
     messages: ChatMessageDTO[];
     /** Newest pin first. Kept when that message is outside the current page. */
     pinnedMessages: ChatMessageDTO[];
+    participant: {
+      userId: string;
+      isOnline: boolean;
+    };
     pagination: {
       page: number;
       limit: number;
@@ -2358,6 +2368,10 @@ export class ChatService {
 
     return {
       conversationId: actualConversationId,
+      participant: {
+        userId: otherUserId,
+        isOnline: isUserConnected(otherUserId),
+      },
       messages,
       pinnedMessages,
       pagination: {
@@ -6261,6 +6275,182 @@ export class ChatService {
     };
   }
 
+  /**
+   * Push online/offline to the other person as soon as this user's last
+   * socket connects or drops. Chat list rows refresh only for threads
+   * somebody still has open.
+   */
+  public async notifyChatPresence(userId: string, isOnline: boolean): Promise<void> {
+    if (!userId) return;
+    try {
+      getSocketServer();
+    } catch {
+      return;
+    }
+
+    const now = new Date();
+    const lastSeenAt = isOnline ? null : now.toISOString();
+    if (!isOnline) {
+      await User.update({ lastActiveAt: now }, { where: { id: userId } }).catch(() => undefined);
+    }
+
+    const conversations = await Conversation.findAll({
+      where: {
+        [Op.or]: [{ user1Id: userId }, { user2Id: userId }],
+        isDeletedForEveryone: false,
+      },
+      attributes: ['id', 'user1Id', 'user2Id'],
+    });
+    if (conversations.length === 0) return;
+
+    const otherIds = conversations.map((conversation) =>
+      getOtherParticipantId(conversation, userId)
+    );
+    const blocks = await UserBlock.findAll({
+      where: {
+        [Op.or]: [
+          { userId, blockedUserId: { [Op.in]: otherIds } },
+          { blockedUserId: userId, userId: { [Op.in]: otherIds } },
+        ],
+      },
+      attributes: ['userId', 'blockedUserId'],
+    });
+    const blockedIds = new Set<string>();
+    for (const block of blocks) {
+      const other = String(block.userId).trim().toLowerCase() === String(userId).trim().toLowerCase()
+        ? block.blockedUserId
+        : block.userId;
+      blockedIds.add(String(other).trim().toLowerCase());
+    }
+
+    const openIds = new Set(
+      getOpenChatsInvolving(userId).map((chat) => chat.conversationId.trim().toLowerCase())
+    );
+
+    for (const conversation of conversations) {
+      const otherUserId = getOtherParticipantId(conversation, userId);
+      if (!otherUserId || blockedIds.has(otherUserId.trim().toLowerCase())) continue;
+
+      this.emitChatPresence(otherUserId, {
+        conversationId: conversation.id,
+        userId,
+        isOnline,
+        lastSeenAt,
+      });
+
+      if (openIds.has(conversation.id.trim().toLowerCase())) {
+        await this.pushViewerConversation(otherUserId, conversation.id);
+      }
+    }
+  }
+
+  /**
+   * Someone opened or left a thread. The opener gets the partner's live
+   * status immediately. The partner is told this user is on the chat.
+   */
+  public async syncOpenChatPresence(
+    currentUserId: string,
+    conversationId: string,
+    active: boolean
+  ): Promise<{
+    conversationId: string;
+    userId: string;
+    isOnline: boolean;
+    lastSeenAt: string | null;
+  } | null> {
+    let conversation = await Conversation.findByPk(conversationId, {
+      attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
+    });
+
+    if (!conversation) {
+      const [user1Id, user2Id] = [currentUserId, conversationId].sort();
+      conversation = await Conversation.findOne({
+        where: { user1Id, user2Id },
+        attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
+      });
+    }
+
+    if (!conversation || conversation.isDeletedForEveryone) {
+      setPresenceWatch(currentUserId, conversationId, false);
+      return null;
+    }
+
+    const normCurrent = String(currentUserId || '').trim().toLowerCase();
+    const isParticipant =
+      String(conversation.user1Id || '').trim().toLowerCase() === normCurrent ||
+      String(conversation.user2Id || '').trim().toLowerCase() === normCurrent;
+    if (!isParticipant) {
+      setPresenceWatch(currentUserId, conversation.id, false);
+      return null;
+    }
+
+    const otherUserId = getOtherParticipantId(conversation, currentUserId);
+    if (!active) {
+      setPresenceWatch(currentUserId, conversation.id, false);
+      return null;
+    }
+
+    const blocked = await UserBlock.findOne({
+      where: {
+        [Op.or]: [
+          { userId: currentUserId, blockedUserId: otherUserId },
+          { userId: otherUserId, blockedUserId: currentUserId },
+        ],
+      },
+    });
+    if (blocked) {
+      setPresenceWatch(currentUserId, conversation.id, false);
+      return null;
+    }
+
+    setPresenceWatch(currentUserId, conversation.id, true, {
+      user1Id: conversation.user1Id,
+      user2Id: conversation.user2Id,
+    });
+
+    const partnerOnline = isUserConnected(otherUserId);
+    let lastSeenAt: string | null = null;
+    if (!partnerOnline) {
+      const partner = await User.findByPk(otherUserId, { attributes: ['id', 'lastActiveAt'] });
+      lastSeenAt = partner?.lastActiveAt ? new Date(partner.lastActiveAt).toISOString() : null;
+    }
+
+    const partnerStatus = {
+      conversationId: conversation.id,
+      userId: otherUserId,
+      isOnline: partnerOnline,
+      lastSeenAt,
+    };
+
+    this.emitChatPresence(currentUserId, partnerStatus);
+    this.emitChatPresence(otherUserId, {
+      conversationId: conversation.id,
+      userId: currentUserId,
+      isOnline: true,
+      lastSeenAt: null,
+    });
+    await this.pushViewerConversation(otherUserId, conversation.id);
+
+    return partnerStatus;
+  }
+
+  private emitChatPresence(
+    targetUserId: string,
+    payload: {
+      conversationId: string;
+      userId: string;
+      isOnline: boolean;
+      lastSeenAt: string | null;
+    }
+  ): void {
+    try {
+      this.emitToViewer(targetUserId, 'chat:presence', payload);
+      this.emitToViewer(targetUserId, 'chat:user:status', payload);
+    } catch {
+      // Socket server is not up in some test runs.
+    }
+  }
+
   private emitToViewer(viewerId: string, eventName: string, payload: any): void {
     const io = getSocketServer();
     if (!io || !viewerId) return;
@@ -7751,6 +7941,10 @@ export class ChatService {
     messages: ChatMessageDTO[];
     pinnedMessages: ChatMessageDTO[];
     conversationId: string | null;
+    participant: {
+      userId: string;
+      isOnline: boolean;
+    };
     pagination: {
       limit: number;
       hasMore: boolean;
@@ -7772,6 +7966,10 @@ export class ChatService {
         messages: [],
         pinnedMessages: [],
         conversationId: null,
+        participant: {
+          userId: targetUserId,
+          isOnline: isUserConnected(targetUserId),
+        },
         pagination: { limit, hasMore: false, nextCursor: null, page: 1, total: 0, totalPages: 0 },
       };
     }
@@ -7785,6 +7983,7 @@ export class ChatService {
       conversationId: conversation.id,
       messages: result.messages,
       pinnedMessages: result.pinnedMessages,
+      participant: result.participant,
       pagination: {
         limit,
         hasMore: result.pagination.hasMore,

@@ -25,6 +25,19 @@ const userSocketsMap = new Map<string, Set<string>>();
 const viewingConversations = new Map<string, Set<string>>();
 
 /**
+ * Chats somebody currently has open. Kept even after one person drops,
+ * so the friend still on that screen can be told they went offline.
+ * Map<lowercase conversationId, peers + watcher user ids>
+ */
+const presenceChats = new Map<
+  string,
+  { conversationId: string; user1Id: string; user2Id: string; watchers: Set<string> }
+>();
+
+const sameUserId = (left?: string | null, right?: string | null): boolean =>
+  String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+
+/**
  * Tracks connection count per client IP.
  * Map<clientIp, count>
  */
@@ -121,7 +134,82 @@ export const isUserViewingConversation = (
 };
 
 export const clearUserViewing = (userId: string): void => {
-  viewingConversations.delete(userId);
+  const target = String(userId || '').trim().toLowerCase();
+  if (!target) return;
+  for (const key of [...viewingConversations.keys()]) {
+    if (sameUserId(key, target)) viewingConversations.delete(key);
+  }
+};
+
+/**
+ * Remember that this user has a chat thread open, and who the two people are.
+ * Read receipts stay on `setConversationViewing`. This map is only for presence.
+ */
+export const setPresenceWatch = (
+  userId: string,
+  conversationId: string,
+  active: boolean,
+  peers?: { user1Id: string; user2Id: string }
+): void => {
+  const convKey = String(conversationId || '').trim().toLowerCase();
+  if (!userId || !convKey) return;
+
+  let entry = presenceChats.get(convKey);
+  if (!active) {
+    if (!entry) return;
+    for (const watcher of [...entry.watchers]) {
+      if (sameUserId(watcher, userId)) entry.watchers.delete(watcher);
+    }
+    if (entry.watchers.size === 0) presenceChats.delete(convKey);
+    return;
+  }
+
+  if (!entry) {
+    entry = {
+      conversationId,
+      user1Id: peers?.user1Id || '',
+      user2Id: peers?.user2Id || '',
+      watchers: new Set<string>(),
+    };
+    presenceChats.set(convKey, entry);
+  }
+
+  entry.conversationId = conversationId;
+  if (peers?.user1Id && peers?.user2Id) {
+    entry.user1Id = peers.user1Id;
+    entry.user2Id = peers.user2Id;
+  }
+  for (const watcher of [...entry.watchers]) {
+    if (sameUserId(watcher, userId)) entry.watchers.delete(watcher);
+  }
+  entry.watchers.add(userId);
+};
+
+export const clearUserPresenceWatch = (userId: string): void => {
+  for (const [key, entry] of [...presenceChats.entries()]) {
+    for (const watcher of [...entry.watchers]) {
+      if (sameUserId(watcher, userId)) entry.watchers.delete(watcher);
+    }
+    if (entry.watchers.size === 0) presenceChats.delete(key);
+  }
+};
+
+/**
+ * Open threads that include this user while somebody is still on that screen.
+ */
+export const getOpenChatsInvolving = (
+  userId: string
+): Array<{ conversationId: string; otherUserId: string }> => {
+  const open: Array<{ conversationId: string; otherUserId: string }> = [];
+  for (const entry of presenceChats.values()) {
+    if (!entry.user1Id || !entry.user2Id || entry.watchers.size === 0) continue;
+    if (sameUserId(entry.user1Id, userId)) {
+      open.push({ conversationId: entry.conversationId, otherUserId: entry.user2Id });
+    } else if (sameUserId(entry.user2Id, userId)) {
+      open.push({ conversationId: entry.conversationId, otherUserId: entry.user1Id });
+    }
+  }
+  return open;
 };
 
 /**
@@ -142,6 +230,7 @@ export const clearLifecycleTracking = (): void => {
   userSocketsMap.clear();
   ipSocketsMap.clear();
   viewingConversations.clear();
+  presenceChats.clear();
   activeLifecycleConfig = null;
 };
 
@@ -204,6 +293,7 @@ export const handleSocketConnection = (
   // 3. Register socket into tracking registries
   userSockets.add(socket.id);
   ipSocketsMap.set(clientIp, currentIpCount + 1);
+  const cameOnline = userSockets.size === 1;
 
   // 4. Automatically join user's private multi-device room (e.g. 'user:<uuid>')
   const userRoom = getUserRoomName(user.userId);
@@ -230,6 +320,12 @@ export const handleSocketConnection = (
     await notificationService.publishUnreadCount(user.userId);
   })().catch(() => undefined);
 
+  if (cameOnline) {
+    void import('../services/chat.service')
+      .then(({ chatService }) => chatService.notifyChatPresence(user.userId, true))
+      .catch(() => undefined);
+  }
+
   // 5. Track transport upgrades (e.g., polling -> websocket) without logging sensitive data
   socket.conn.on('upgrade', (transport: any) => {
     socketLogger.info('Socket transport upgraded', {
@@ -243,11 +339,14 @@ export const handleSocketConnection = (
   socket.on(SOCKET_LIFECYCLE_EVENTS.DISCONNECT, (reason: string) => {
     // Remove from user sockets map
     const sockets = userSocketsMap.get(user.userId);
+    let wentOffline = false;
     if (sockets) {
       sockets.delete(socket.id);
       if (sockets.size === 0) {
         userSocketsMap.delete(user.userId);
-        viewingConversations.delete(user.userId);
+        clearUserViewing(user.userId);
+        clearUserPresenceWatch(user.userId);
+        wentOffline = true;
       }
     }
 
@@ -270,6 +369,12 @@ export const handleSocketConnection = (
       reason,
       remainingUserSockets: userSocketsMap.get(user.userId)?.size ?? 0,
     });
+
+    if (wentOffline) {
+      void import('../services/chat.service')
+        .then(({ chatService }) => chatService.notifyChatPresence(user.userId, false))
+        .catch(() => undefined);
+    }
   });
 
   // 7. Handle generic socket errors

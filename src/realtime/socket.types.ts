@@ -124,6 +124,24 @@ export interface ServerToClientEvents {
   'chat:typing': (data: { conversationId: string; userId: string; isTyping: boolean }) => void;
 
   /**
+   * Live online/offline for the other person in a chat.
+   * Sent when they connect, disconnect, or when this user opens the thread.
+   * `chat:user:status` carries the same payload.
+   */
+  'chat:presence': (data: {
+    conversationId: string;
+    userId: string;
+    isOnline: boolean;
+    lastSeenAt: string | null;
+  }) => void;
+  'chat:user:status': (data: {
+    conversationId: string;
+    userId: string;
+    isOnline: boolean;
+    lastSeenAt: string | null;
+  }) => void;
+
+  /**
    * Video Calling Real-Time Events
    */
   'video_call:incoming': (data: {

@@ -477,6 +477,16 @@ export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMess
         galleryCount: images.length,
       };
     }
+    if (msg.isPinned || msg.pinned) {
+      const msgTime = new Date(msg.pinnedAt || 0).getTime();
+      const prevTime = new Date(prev.pinnedAt || 0).getTime();
+      if (!(prev.isPinned || prev.pinned) || msgTime >= prevTime) {
+        prev.pinnedAt = msg.pinnedAt ?? prev.pinnedAt ?? null;
+        prev.pinnedBy = msg.pinnedBy ?? prev.pinnedBy ?? null;
+      }
+      prev.isPinned = true;
+      prev.pinned = true;
+    }
   };
 
   const out: ChatMessageDTO[] = [];
@@ -933,6 +943,13 @@ export interface ChatListItemDTO {
   unreadCount: number;
   isPinned: boolean;
   isArchived?: boolean;
+  /**
+   * Temporary. The list does not hide a thread because of subscription or a
+   * mutual match. The app reads this flag before showing the row.
+   */
+  isMatched: boolean;
+  /** Temporary. Anyone can open this chat. */
+  canChat: boolean;
 }
 
 export interface ChatMessageSenderDTO {
@@ -1097,6 +1114,7 @@ export interface ConversationSummaryDTO {
   pinnedAt?: Date | string | null;
   pinnedBy?: string | null;
   sender?: ChatMessageSenderDTO;
+  canChat?: boolean;
 }
 
 export interface SendMessageResultItemDTO {
@@ -1206,6 +1224,8 @@ export class ChatService {
       {
         senderId: string;
         messageType: string;
+        content: string | null;
+        createdAt: Date;
         metadata: any;
         isRead: boolean;
         isDelivered: boolean;
@@ -1219,6 +1239,8 @@ export class ChatService {
       {
         senderId: string;
         messageType: string;
+        content: string | null;
+        createdAt: Date;
         metadata: any;
         isRead: boolean;
         isDelivered: boolean;
@@ -1229,7 +1251,7 @@ export class ChatService {
     if (conversationIds.length === 0) return latest;
 
     const rows = await ChatMessage.findAll({
-      attributes: ['conversationId', 'senderId', 'messageType', 'metadata', 'createdAt', 'id', 'isRead', 'isDelivered', 'deliveredAt', 'readAt'],
+      attributes: ['conversationId', 'senderId', 'messageType', 'content', 'metadata', 'createdAt', 'id', 'isRead', 'isDelivered', 'deliveredAt', 'readAt'],
       where: { conversationId: { [Op.in]: conversationIds } },
       order: [
         ['createdAt', 'DESC'],
@@ -1252,6 +1274,8 @@ export class ChatService {
         latest.set(row.conversationId, {
           senderId: row.senderId,
           messageType: row.messageType || 'text',
+          content: row.content || null,
+          createdAt: row.createdAt,
           metadata,
           isRead: !!row.isRead,
           isDelivered: !!row.isDelivered,
@@ -1267,6 +1291,8 @@ export class ChatService {
   /**
    * 1. GET CHAT LIST (Chat List Screen)
    * Fetches conversation threads for the current user, separated into pinned and standard lists.
+   * Temporary: subscription and mutual-match checks are not applied.
+   * Anyone can chat with anyone, so every existing thread stays on the list.
    */
   public async getChatList(
     currentUserId: string,
@@ -1397,6 +1423,7 @@ export class ChatService {
       raw: true,
     });
     const userStateMap = new Map<string, any>(userStates.map((s) => [s.conversationId, s]));
+    const latestSenders = await this.loadLatestMessageSenders(allMatching.map((c) => c.id));
 
     // Filter out conversations based on:
     // a) Self-conversations (user1Id === user2Id)
@@ -1422,9 +1449,12 @@ export class ChatService {
       const normOtherUserId = String(otherUser.id || '').trim().toLowerCase();
       if (normOtherUserId === normCurrentUserId) return false;
 
-      // Exclude empty conversations (no chat / no messages)
+      // A real message keeps the row even when the preview column was cleared.
+      const latest = latestSenders.get(conv.id);
       const hasChat = Boolean(
-        (conv.lastMessage && conv.lastMessage.trim().length > 0) || conv.lastMessageAt
+        (conv.lastMessage && conv.lastMessage.trim().length > 0) ||
+          conv.lastMessageAt ||
+          (latest?.content && String(latest.content).trim())
       );
       if (!hasChat) {
         return false;
@@ -1442,9 +1472,11 @@ export class ChatService {
 
       const state = userStateMap.get(conv.id);
 
-      // Check Delete for Me
+      // Check Delete for Me. A message newer than the clear still belongs on the list.
       if (state?.isDeleted) {
-        if (!conv.lastMessageAt || new Date(conv.lastMessageAt) <= new Date(state.clearedAt || state.deletedAt)) {
+        const threshold = state.clearedAt || state.deletedAt;
+        const activityAt = latest?.createdAt || conv.lastMessageAt;
+        if (!activityAt || (threshold && new Date(activityAt) <= new Date(threshold))) {
           return false;
         }
       }
@@ -1474,7 +1506,6 @@ export class ChatService {
     }
 
     const conversationIds = validConversations.map((c) => c.id);
-    const latestSenders = await this.loadLatestMessageSenders(conversationIds);
 
     // 6. Compute unread message counts considering per-user cleared timestamps and deleted messages
     const unreadRecords = await ChatMessage.findAll({
@@ -1522,7 +1553,9 @@ export class ChatService {
         String(latest.senderId || '').trim().toLowerCase() === normCurrentUserId;
       const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
       const recalledCopy = deletedForEveryoneCopy(latest?.metadata, currentUserId, latest?.senderId);
-      const previewContent = recalledCopy || conv.lastMessage;
+      const storedPreview = conv.lastMessage && conv.lastMessage.trim();
+      const messagePreview = latest?.content && String(latest.content).trim();
+      const previewContent = recalledCopy || storedPreview || messagePreview || null;
       const previewType = recalledCopy ? 'text' : latest?.messageType || 'text';
 
       const item: ChatListItemDTO = {
@@ -1563,6 +1596,9 @@ export class ChatService {
         unreadCount,
         isPinned,
         isArchived: !!state?.isArchived,
+        // Temporary: do not gate the conversation list on match or subscription.
+        isMatched: true,
+        canChat: true,
       };
 
       if (isPinned) {
@@ -1602,6 +1638,8 @@ export class ChatService {
     participant: ChatParticipantDTO;
     isPinned: boolean;
     isArchived?: boolean;
+    isMatched?: boolean;
+    canChat?: boolean;
   }> {
     const includeModels = [
       {
@@ -1744,6 +1782,8 @@ export class ChatService {
       },
       isPinned: !!pin,
       isArchived: !!userState?.isArchived,
+      isMatched: true,
+      canChat: true,
     };
   }
 
@@ -1764,6 +1804,8 @@ export class ChatService {
   ): Promise<{
     conversationId: string;
     messages: ChatMessageDTO[];
+    /** Newest pin first. Kept when that message is outside the current page. */
+    pinnedMessages: ChatMessageDTO[];
     pagination: {
       page: number;
       limit: number;
@@ -1980,12 +2022,14 @@ export class ChatService {
         }),
       ]);
       pinsMap = new Map();
+      const pinKey = (id: string) => String(id || '').trim().toLowerCase();
       for (const pin of pinRows) {
-        const existing = pinsMap.get(pin.messageId);
+        const key = pinKey(pin.messageId);
+        const existing = pinsMap.get(key);
         const isViewer =
           String(pin.userId || '').trim().toLowerCase() === normCurrentUserId;
         if (!existing || isViewer) {
-          pinsMap.set(pin.messageId, pin);
+          pinsMap.set(key, pin);
         }
       }
       for (const r of reactionRows) {
@@ -2119,7 +2163,7 @@ export class ChatService {
           ? 'delivered'
           : 'sent';
 
-      const pinInfo = pinsMap.get(msg.id);
+      const pinInfo = pinsMap.get(String(msg.id || '').trim().toLowerCase());
 
       const isMine = String(msg.senderId || '').trim().toLowerCase() === normCurrentUserId;
 
@@ -2296,9 +2340,26 @@ export class ChatService {
       }
     }
 
+    const messages = collapseChatImageGalleries(chronologicalMessages);
+    let pinnedMessages: ChatMessageDTO[] = [];
+    if (!query.pinned) {
+      try {
+        const pinned = await this.getPinnedMessages(currentUserId, actualConversationId, {
+          page: 1,
+          limit: 50,
+        });
+        pinnedMessages = pinned.messages;
+      } catch {
+        pinnedMessages = messages.filter((message) => message.isPinned || message.pinned);
+      }
+    } else {
+      pinnedMessages = messages;
+    }
+
     return {
       conversationId: actualConversationId,
-      messages: collapseChatImageGalleries(chronologicalMessages),
+      messages,
+      pinnedMessages,
       pagination: {
         page,
         limit,
@@ -5349,6 +5410,8 @@ export class ChatService {
               },
               isPinned: !!isPinned,
               isArchived: !!userState?.isArchived,
+              isMatched: true,
+              canChat: true,
               updatedAt: now.toISOString(),
             };
             io.to(readerRoom).emit('conversation:updated', updatePayload);
@@ -5884,6 +5947,8 @@ export class ChatService {
         },
         isPinned: !!senderPin,
         isArchived: !!senderState?.isArchived,
+        isMatched: true,
+        canChat: true,
         updatedAt: messageTimestamp,
       };
 
@@ -5922,6 +5987,8 @@ export class ChatService {
         },
         isPinned: !!recipientPin,
         isArchived: !!recipientState?.isArchived,
+        isMatched: true,
+        canChat: true,
         updatedAt: messageTimestamp,
       };
 
@@ -6014,7 +6081,9 @@ export class ChatService {
     }
     const recalledCopy = deletedForEveryoneCopy(latestMeta, viewerId, latestMessage?.senderId);
     const latestType = recalledCopy ? 'text' : latestMessage?.messageType || 'text';
-    const previewText = recalledCopy || conversation.lastMessage;
+    const storedPreview = conversation.lastMessage && String(conversation.lastMessage).trim();
+    const messagePreview = latestMessage?.content && String(latestMessage.content).trim();
+    const previewText = recalledCopy || storedPreview || messagePreview || null;
     const viewerSentIt =
       latestMessage &&
       String(latestMessage.senderId || '').trim().toLowerCase() ===
@@ -6065,6 +6134,8 @@ export class ChatService {
       pinned: !!pin,
       pinnedAt,
       isArchived: !!state?.isArchived,
+      isMatched: true,
+      canChat: true,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -6406,16 +6477,20 @@ export class ChatService {
       const aliasEvent = isPinned ? 'message:pinned' : 'message:unpinned';
       const eventNames = ['chat:message:pin:updated', legacyEvent, aliasEvent];
 
-      const buildPayload = (viewerId: string) => ({
-        conversationId,
-        messageId: message.id,
-        isPinned,
-        pinned: isPinned,
-        pinnedBy: isPinned ? pinnedBy || actorId : null,
-        pinnedAt: isPinned ? pinnedAtIso : null,
-        scope: 'conversation' as const,
-        message: buildMessage(viewerId),
-      });
+      const buildPayload = (viewerId: string) => {
+        const isActor =
+          String(viewerId || '').trim().toLowerCase() === String(actorId || '').trim().toLowerCase();
+        return {
+          conversationId,
+          messageId: message.id,
+          isPinned,
+          pinned: isPinned,
+          pinnedBy: isPinned ? pinnedBy || actorId : null,
+          pinnedAt: isPinned ? pinnedAtIso : null,
+          scope: 'conversation' as const,
+          message: !isPinned && !isActor ? null : buildMessage(viewerId),
+        };
+      };
 
       const emitPayload = (room: string, payload: ReturnType<typeof buildPayload>) => {
         for (const eventName of eventNames) {
@@ -6729,17 +6804,25 @@ export class ChatService {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
     }
 
-    const pinWhere: any = {
-      conversationId,
-      [Op.or]: [{ userId: currentUserId }, { userId: null }],
-    };
-
-    const { count, rows: pinRows } = await ChatMessagePin.findAndCountAll({
-      where: pinWhere,
-      order: [['createdAt', 'DESC']],
-      limit,
-      offset,
+    const allPins = await ChatMessagePin.findAll({
+      where: { conversationId },
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
     });
+    const viewerKey = String(currentUserId || '').trim().toLowerCase();
+    const seenMessageIds = new Set<string>();
+    const viewerPins = allPins.filter((pin) => {
+      const owner = String(pin.userId || '').trim().toLowerCase();
+      if (owner !== viewerKey) return false;
+      const messageKey = String(pin.messageId || '').trim().toLowerCase();
+      if (!messageKey || seenMessageIds.has(messageKey)) return false;
+      seenMessageIds.add(messageKey);
+      return true;
+    });
+    const count = viewerPins.length;
+    const pinRows = viewerPins.slice(offset, offset + limit);
 
     if (pinRows.length === 0) {
       return {
@@ -6843,7 +6926,8 @@ export class ChatService {
           ? 'delivered'
           : 'sent';
 
-      pinnedMessageDtos.push({
+      const isMine = String(msg.senderId || '').trim().toLowerCase() === viewerKey;
+      pinnedMessageDtos.push(presentChatMessage({
         id: msg.id,
         conversationId: msg.conversationId,
         senderId: msg.senderId,
@@ -6853,25 +6937,33 @@ export class ChatService {
         metadata: parsedMetadata,
         status,
         receiptStatus: status,
+        messageStatus: status === 'read' ? 'seen' : status,
+        seen: !!msg.isRead,
+        direction: isMine ? 'sent' : 'received',
+        isIncoming: !isMine,
         isDelivered: !!msg.isDelivered,
         deliveredAt: msg.deliveredAt || null,
         isRead: !!msg.isRead,
         readAt: msg.readAt || null,
         sentAt: msg.createdAt,
-        isMine: msg.senderId === currentUserId,
+        createdAt: msg.createdAt,
+        isMine,
+        isSender: isMine,
         isPinned: true,
+        pinned: true,
         pinnedAt: pin.createdAt,
         pinnedBy: pin.pinnedBy,
         isEdited: !!parsedMetadata?.isEdited,
         editedAt: parsedMetadata?.editedAt || null,
         replyToMessageId: parsedMetadata?.replyToMessageId || null,
         replyTo: parsedMetadata?.replyTo || null,
-        sender: userSenderMap.get(msg.senderId) || {
+        sender: userSenderMap.get(String(msg.senderId || '').trim().toLowerCase()) ||
+          userSenderMap.get(msg.senderId) || {
           id: msg.senderId,
-          displayName: msg.senderId === currentUserId ? 'You' : 'Participant',
+          displayName: isMine ? 'You' : 'Participant',
           profileImageUrl: null,
         },
-      });
+      }));
     }
 
     const totalPages = Math.ceil(count / limit) || 1;
@@ -7073,6 +7165,76 @@ export class ChatService {
   }
 
   /**
+   * Opening or marking a quick moment viewed must leave that person on the
+   * viewer's chat list. Restores a preview if the column was blank, undoes the
+   * empty-thread hide when it covered real messages, and pushes the row live.
+   */
+  public async keepChatVisibleAfterQuickMomentView(
+    viewerId: string,
+    authorId: string
+  ): Promise<void> {
+    if (!viewerId || !authorId || viewerId === authorId) return;
+
+    const [u1, u2] = [String(viewerId).trim(), String(authorId).trim()].sort();
+    const conversation = await Conversation.findOne({
+      where: { user1Id: u1, user2Id: u2 },
+    });
+    if (!conversation || conversation.isDeletedForEveryone) return;
+
+    const latest = await ChatMessage.findOne({
+      where: { conversationId: conversation.id },
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+      attributes: ['content', 'createdAt'],
+    });
+    if (!latest && !(conversation.lastMessage && String(conversation.lastMessage).trim()) && !conversation.lastMessageAt) {
+      return;
+    }
+
+    const previousPreview = conversation.lastMessage && String(conversation.lastMessage).trim();
+    const previousLastMessageAt = conversation.lastMessageAt;
+
+    if (latest && !previousPreview) {
+      conversation.lastMessage = latest.content || '';
+      if (
+        !conversation.lastMessageAt ||
+        new Date(conversation.lastMessageAt) < new Date(latest.createdAt)
+      ) {
+        conversation.lastMessageAt = latest.createdAt;
+      }
+      await conversation.save();
+    }
+
+    const state = await ConversationUserState.findOne({
+      where: { conversationId: conversation.id, userId: viewerId },
+    });
+    if (state?.isDeleted && latest) {
+      const threshold = state.clearedAt || state.deletedAt;
+      const gap =
+        threshold && previousLastMessageAt
+          ? Math.abs(new Date(threshold).getTime() - new Date(previousLastMessageAt).getTime())
+          : Number.POSITIVE_INFINITY;
+      // Empty profile/story open stamps clearedAt one second after lastMessageAt
+      // and leaves the preview blank. That must not swallow an existing chat.
+      const emptyOpenHide = !previousPreview && gap <= 2000;
+      if (emptyOpenHide) {
+        state.isDeleted = false;
+        state.deletedAt = null;
+        state.clearedAt = null;
+        await state.save();
+      }
+    }
+
+    // A deleted thread stays deleted. A blank update must not clear the open list row.
+    if (state?.isDeleted) return;
+    if (!(conversation.lastMessage && String(conversation.lastMessage).trim())) return;
+
+    await this.pushViewerConversation(viewerId, conversation.id);
+  }
+
+  /**
    * 7. START OR GET CONVERSATION BY PARTICIPANT ID
    */
   public async startConversation(
@@ -7093,6 +7255,8 @@ export class ChatService {
     isPinned?: boolean;
     pinned?: boolean;
     isArchived?: boolean;
+    isMatched?: boolean;
+    canChat?: boolean;
   }> {
     const recipient = await this.resolveRecipientUser(recipientId);
     recipientId = recipient.id;
@@ -7126,9 +7290,30 @@ export class ChatService {
         conversation.lastMessageAt
     );
 
+    const latestMessage = await ChatMessage.findOne({
+      where: { conversationId: conversation.id },
+      order: [
+        ['createdAt', 'DESC'],
+        ['id', 'DESC'],
+      ],
+      attributes: ['content', 'createdAt'],
+    });
+
+    // A blank preview column must not look like an empty thread. The chat list
+    // drops a row when the live update has no message text.
+    if (latestMessage && !(conversation.lastMessage && String(conversation.lastMessage).trim())) {
+      conversation.lastMessage = latestMessage.content || '';
+      if (!conversation.lastMessageAt) {
+        conversation.lastMessageAt = latestMessage.createdAt;
+      }
+      await conversation.save();
+    }
+
     // Opening chat from a profile must keep the thread on the starter's list.
     // Until a real message exists, the other person does not see an empty row.
-    if (!hadHistory) {
+    // Viewing a quick moment also opens this path, so an existing message must
+    // never hide either person.
+    if (!hadHistory && !latestMessage) {
       const openedAt = new Date();
       const hiddenAt = new Date(openedAt.getTime() + 1000);
       conversation.lastMessageAt = openedAt;
@@ -7181,13 +7366,15 @@ export class ChatService {
       isPinned: snapshot?.isPinned ?? false,
       pinned: snapshot?.pinned ?? false,
       isArchived: snapshot?.isArchived ?? false,
+      isMatched: true,
+      canChat: true,
     };
   }
 
   /**
    * Sends a chat message directly to a recipient.
-   * Enforces Free Tier Rule 4: Free users can ONLY send messages if they have an active mutual match or active conversation.
-   * Premium users (isSubscribed === true) are permitted to chat without a prior match.
+   * Temporary: anyone can message anyone. Subscription and mutual-match
+   * checks are not applied.
    */
   public async sendMessageToRecipient(
     senderId: string,
@@ -7226,30 +7413,6 @@ export class ChatService {
 
     if (blockRecord) {
       throw new ChatServiceError('You cannot chat with this user', 403, 'USER_BLOCKED');
-    }
-
-    // Free Tier Rule 4: Non-subscribed users can only chat with mutual matches
-    if (!sender.isSubscribed) {
-      const [u1, u2] = [senderId, recipientId].sort();
-      const match = await Match.findOne({
-        where: {
-          user1Id: u1,
-          user2Id: u2,
-          isActive: true,
-        },
-      });
-
-      const existingConv = await Conversation.findOne({
-        where: { user1Id: u1, user2Id: u2 },
-      });
-
-      if (!match && !existingConv) {
-        throw new ChatServiceError(
-          'You can only chat after a mutual match. Upgrade to Premium to chat directly.',
-          403,
-          'MATCH_REQUIRED_TO_CHAT'
-        );
-      }
     }
 
     const [u1, u2] = [senderId, recipientId].sort();
@@ -7370,17 +7533,21 @@ export class ChatService {
       const partner = normU1 === normViewerId ? (conv as any).user2 : (conv as any).user1;
       if (!partner || !partner.isActive) continue;
 
-      // Check Delete for Me
+      // Check Delete for Me. A message newer than the clear still belongs on the list.
       const state = userStateMap.get(conv.id);
+      const latestForVisibility = latestSenders.get(conv.id);
       if (state?.isDeleted) {
-        if (!conv.lastMessageAt || new Date(conv.lastMessageAt) <= new Date(state.clearedAt || state.deletedAt)) {
+        const threshold = state.clearedAt || state.deletedAt;
+        const activityAt = latestForVisibility?.createdAt || conv.lastMessageAt;
+        if (!activityAt || (threshold && new Date(activityAt) <= new Date(threshold))) {
           continue;
         }
       }
 
-      // Exclude empty conversations (no chat / no messages)
       const hasChat = Boolean(
-        (conv.lastMessage && conv.lastMessage.trim().length > 0) || conv.lastMessageAt
+        (conv.lastMessage && conv.lastMessage.trim().length > 0) ||
+          conv.lastMessageAt ||
+          (latestForVisibility?.content && String(latestForVisibility.content).trim())
       );
       if (!hasChat) continue;
 
@@ -7392,12 +7559,6 @@ export class ChatService {
         },
       });
 
-      const [u1, u2] = [userId, partner.id].sort();
-      const match = await Match.findOne({
-        where: { user1Id: u1, user2Id: u2, isActive: true },
-        attributes: ['id'],
-      });
-
       const displayName = resolveChatDisplayName(partner);
       const photo = this.resolvePrimaryPhoto(partner.profilePicture, partner.photos);
       const latest = latestSenders.get(conv.id);
@@ -7405,7 +7566,9 @@ export class ChatService {
         latest && String(latest.senderId || '').trim().toLowerCase() === normViewerId;
       const senderName = !latest ? null : senderIsViewer ? 'You' : displayName;
       const recalledCopy = deletedForEveryoneCopy(latest?.metadata, userId, latest?.senderId);
-      const previewText = recalledCopy || conv.lastMessage || null;
+      const storedPreview = conv.lastMessage && String(conv.lastMessage).trim();
+      const messagePreview = latest?.content && String(latest.content).trim();
+      const previewText = recalledCopy || storedPreview || messagePreview || null;
       const previewType = (recalledCopy ? 'text' : latest?.messageType || 'text') as ChatMessageType;
 
       results.push({
@@ -7439,7 +7602,9 @@ export class ChatService {
           isMine: !!senderIsViewer,
         }),
         unreadCount,
-        isMatched: Boolean(match),
+        // Temporary: do not gate the conversation list on match or subscription.
+        isMatched: true,
+        canChat: true,
         isPinned: pinnedConversationIdSet.has(conv.id),
       });
     }
@@ -7463,6 +7628,7 @@ export class ChatService {
     options: { limit?: number; cursor?: string; page?: number } = {}
   ): Promise<{
     messages: ChatMessageDTO[];
+    pinnedMessages: ChatMessageDTO[];
     conversationId: string | null;
     pagination: {
       limit: number;
@@ -7483,6 +7649,7 @@ export class ChatService {
     if (!conversation) {
       return {
         messages: [],
+        pinnedMessages: [],
         conversationId: null,
         pagination: { limit, hasMore: false, nextCursor: null, page: 1, total: 0, totalPages: 0 },
       };
@@ -7496,6 +7663,7 @@ export class ChatService {
     return {
       conversationId: conversation.id,
       messages: result.messages,
+      pinnedMessages: result.pinnedMessages,
       pagination: {
         limit,
         hasMore: result.pagination.hasMore,

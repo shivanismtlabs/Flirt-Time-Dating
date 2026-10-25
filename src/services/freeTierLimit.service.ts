@@ -139,7 +139,8 @@ export class FreeTierLimitService {
         matchesTabLocked: false,
       },
       chat: {
-        canChatWithoutMatch: isSubscribed,
+        // Temporary: anyone can chat with anyone, including free users.
+        canChatWithoutMatch: true,
       },
     };
   }

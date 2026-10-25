@@ -105,8 +105,8 @@ export const getMessagesHandler = async (req: AuthenticatedRequest, res: Respons
  * Supports both:
  * - POST /api/v1/chats/:conversationId/messages
  * - POST /api/v1/chat/messages and /api/v1/chat/send (with recipientId in body)
- * Enforces Free Tier Rule: 403 MATCH_REQUIRED_TO_CHAT if sender is free and not matched.
- * Premium users (isSubscribed === true) are permitted to chat without a match.
+ * Temporary: subscription and mutual-match checks are not applied.
+ * Anyone can send a message to anyone.
  */
 export const sendMessageHandler = async (req: AuthenticatedRequest, res: Response) => {
   try {

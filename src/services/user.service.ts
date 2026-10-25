@@ -697,6 +697,7 @@ export interface OtherUserProfileResponse {
   myAction: 'like' | 'nope' | 'super_like' | null;
   isMatched: boolean;
   canConnect: boolean;
+  canChat: boolean;
   conversationId?: string | null;
 }
 
@@ -1076,6 +1077,7 @@ export const getOtherUserProfile = async (
     myAction,
     isMatched,
     canConnect,
+    canChat: true,
     conversationId: existingConv?.id || null,
   };
 };
@@ -1185,14 +1187,14 @@ export const getOtherUserPhotos = async (
 
 /**
  * Calculates profile completion percentage dynamically from real saved user data:
- * - Basic details (Full Name, Date of Birth, Gender): 20%
- * - Primary profile photo: 20%
+ * - Basic details (Full Name, Date of Birth, Gender): 25%
+ * - Primary profile photo: 25%
  * - Bio / About me: 15%
  * - Selected interests (at least 1): 15%
  * - Location (City): 10%
- * - Preferences (lookingFor or genderPreference): 10%
  * - Voice intro prompt: 10%
  * Total = 100%
+ * Gender preference and dating preference are not part of this score.
  */
 export const calculateProfileCompletion = (
   user: {
@@ -1202,8 +1204,6 @@ export const calculateProfileCompletion = (
     profilePicture?: string | null;
     about?: string | null;
     city?: string | null;
-    lookingFor?: string | null;
-    genderPreference?: string | null;
     voicePromptUrl?: string | null;
   },
   interestCount = 0,
@@ -1211,14 +1211,14 @@ export const calculateProfileCompletion = (
 ): number => {
   let score = 0;
 
-  // 1. Required basic details (20%)
+  // 1. Required basic details (25%)
   if (user.fullName && user.dateOfBirth && user.gender) {
-    score += 20;
+    score += 25;
   }
 
-  // 2. Primary Profile Photo (20%)
+  // 2. Primary Profile Photo (25%)
   if (user.profilePicture || photoCount > 0) {
-    score += 20;
+    score += 25;
   }
 
   // 3. Bio / About me (15%)
@@ -1236,12 +1236,7 @@ export const calculateProfileCompletion = (
     score += 10;
   }
 
-  // 6. Preferences (10%)
-  if (user.lookingFor || user.genderPreference) {
-    score += 10;
-  }
-
-  // 7. Voice Intro (10%)
+  // 6. Voice Intro (10%)
   if (user.voicePromptUrl) {
     score += 10;
   }

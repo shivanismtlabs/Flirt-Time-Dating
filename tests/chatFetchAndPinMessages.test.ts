@@ -423,6 +423,47 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(msg2InHistory.isPinned).toBe(true);
       const msg1InHistory = historyRes.body.data.messages.find((m: any) => m.id === msg1.id);
       expect(msg1InHistory.isPinned).toBe(false);
+      expect(historyRes.body.data.pinnedMessages.map((m: any) => m.id)).toEqual([msg2.id]);
+      expect(historyRes.body.data.pinnedMessages[0].pinned).toBe(true);
+    });
+
+    it('should keep every pin, with the latest pin first, after the chat is reloaded', async () => {
+      await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg1.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+
+      await new Promise((r) => setTimeout(r, 20));
+
+      await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg3.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+
+      const historyRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(historyRes.status).toBe(200);
+      const byId = new Map<string, any>(historyRes.body.data.messages.map((m: any) => [m.id, m]));
+      expect(byId.get(msg1.id).isPinned).toBe(true);
+      expect(byId.get(msg1.id).pinned).toBe(true);
+      expect(byId.get(msg3.id).isPinned).toBe(true);
+      expect(byId.get(msg3.id).pinned).toBe(true);
+      expect(byId.get(msg2.id).isPinned).toBe(false);
+
+      const pinnedIds = historyRes.body.data.pinnedMessages.map((m: any) => m.id);
+      expect(pinnedIds[0]).toBe(msg3.id);
+      expect(pinnedIds).toContain(msg1.id);
+      expect(historyRes.body.data.pinnedMessages[0].content).toBe(msg3.content);
+      expect(historyRes.body.data.pinnedMessages[0].pinned).toBe(true);
+
+      const pinnedRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages/pinned`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(pinnedRes.body.data.messages[0].id).toBe(msg3.id);
+      expect(pinnedRes.body.data.messages[0].pinned).toBe(true);
+      expect(pinnedRes.body.data.messages.map((m: any) => m.id)).toContain(msg1.id);
     });
 
     it('should unpin a pinned message successfully and idempotently', async () => {

@@ -671,6 +671,10 @@ export class QuickMomentService {
       };
     });
 
+    if (viewerUserId !== targetUserId) {
+      await this.keepAuthorInViewerChat(viewerUserId, targetUserId);
+    }
+
     return {
       author: {
         id: targetUser.id,
@@ -684,6 +688,19 @@ export class QuickMomentService {
       totalStories: slides.length,
       stories: slides,
     };
+  }
+
+  /**
+   * The chat screen opens a quick moment from a conversation row. Watching it
+   * must not drop that person from the viewer's chat list.
+   */
+  private async keepAuthorInViewerChat(viewerUserId: string, authorUserId: string): Promise<void> {
+    try {
+      const { chatService } = await import('./chat.service');
+      await chatService.keepChatVisibleAfterQuickMomentView(viewerUserId, authorUserId);
+    } catch {
+      // Chat list sync must not fail the story response.
+    }
   }
 
   /**
@@ -1168,6 +1185,10 @@ export class QuickMomentService {
 
     if (created) {
       await moment.increment('viewsCount', { by: 1 });
+    }
+
+    if (moment.userId !== viewerUserId) {
+      await this.keepAuthorInViewerChat(viewerUserId, moment.userId);
     }
 
     return {

@@ -958,6 +958,61 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
         setConversationViewing(userB.id, convAB.id, false);
       }
     });
+
+    it('keeps one row when the same send arrives twice together', async () => {
+      const clientMessageId = 'parallel-dup-1';
+      const [first, second] = await Promise.all([
+        chatService.sendMessage(userA.id, convAB.id, {
+          content: 'once',
+          messageType: 'text',
+          clientMessageId,
+        }),
+        chatService.sendMessage(userA.id, convAB.id, {
+          content: 'once',
+          messageType: 'text',
+          clientMessageId,
+        }),
+      ]);
+
+      expect(first.id).toBe(second.id);
+      const count = await ChatMessage.count({
+        where: { conversationId: convAB.id, content: 'once' },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('marks a fast burst read while the other person has the chat open', async () => {
+      setConversationViewing(userB.id, convAB.id, true);
+      try {
+        const sent = await Promise.all([
+          chatService.sendMessage(userA.id, convAB.id, {
+            content: 'fast-1',
+            messageType: 'text',
+            clientMessageId: 'fast-1',
+          }),
+          chatService.sendMessage(userA.id, convAB.id, {
+            content: 'fast-2',
+            messageType: 'text',
+            clientMessageId: 'fast-2',
+          }),
+          chatService.sendMessage(userA.id, convAB.id, {
+            content: 'fast-3',
+            messageType: 'text',
+            clientMessageId: 'fast-3',
+          }),
+        ]);
+
+        expect(sent.map((row) => row.status)).toEqual(['read', 'read', 'read']);
+        const saved = await ChatMessage.findAll({ where: { id: sent.map((row) => row.id) } });
+        expect(saved).toHaveLength(3);
+        for (const row of saved) {
+          expect(row.isRead).toBe(true);
+          expect(row.isDelivered).toBe(true);
+        }
+      } finally {
+        setConversationViewing(userB.id, convAB.id, false);
+      }
+    });
   });
 });
 

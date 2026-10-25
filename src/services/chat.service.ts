@@ -4,6 +4,7 @@
  */
 
 import crypto from 'crypto';
+import { AsyncLocalStorage } from 'async_hooks';
 import { Op } from 'sequelize';
 import {
   sequelize,
@@ -591,6 +592,40 @@ const contactSendLockKey = (senderId: string, recipientId: string, phone: string
 };
 
 const contactSendTails = new Map<string, Promise<void>>();
+
+/**
+ * One receipt writer per conversation. A fast burst must not emit "delivered"
+ * after "seen", and must not tick a bubble that has not been broadcast yet.
+ */
+const receiptLockStore = new AsyncLocalStorage<Set<string>>();
+const receiptTails = new Map<string, Promise<void>>();
+
+const withConversationReceiptLock = async <T>(
+  conversationId: string,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const key = String(conversationId || '').trim().toLowerCase();
+  if (!key) return fn();
+  const held = receiptLockStore.getStore();
+  if (held?.has(key)) return fn();
+
+  const previous = receiptTails.get(key) ?? Promise.resolve();
+  let release: () => void = () => undefined;
+  const current = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const tail = previous.then(() => current);
+  receiptTails.set(key, tail);
+  await previous;
+  const store = new Set(held);
+  store.add(key);
+  try {
+    return await receiptLockStore.run(store, fn);
+  } finally {
+    release();
+    if (receiptTails.get(key) === tail) receiptTails.delete(key);
+  }
+};
 
 /** Serializes two taps of the same contact so only the first insert wins. */
 const acquireChatSendLock = async (key: string): Promise<() => void> => {
@@ -3087,6 +3122,13 @@ export class ChatService {
 
     // Idempotency: a retry of the same photos returns the saved message.
     // A later photo in the same burst, sent with the same clientMessageId, is inserted.
+    // The lock closes the gap where two socket events both miss the row and both insert.
+    const releaseIdempotencyLock = await acquireChatSendLock(
+      data.clientMessageId
+        ? `idem:${String(senderId).toLowerCase()}:${conversationId}:${data.clientMessageId}`
+        : ''
+    );
+    try {
     if (data.clientMessageId) {
       const existingRows = await ChatMessage.findAll({
         where: {
@@ -3264,28 +3306,11 @@ export class ChatService {
           const receiverView = buildViewerChatMessage(senderView, false, gallery, mergedUrls);
           try {
             const io = getSocketServer();
-            const recipientRoom = getUserRoomName(recipientId);
-            const senderRoom = getUserRoomName(senderId);
-            io.to(recipientRoom).emit('chat:message_edited' as any, receiverView);
-            io.to(recipientRoom).emit('chat:message_received' as any, receiverView);
-            io.to(recipientRoom).emit('chat:message:new' as any, receiverView);
-            io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, receiverView);
-            io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, receiverView);
-            io.to(senderRoom).emit('chat:message_edited' as any, senderView);
-            const batch = {
-              conversationId,
-              senderId,
-              recipientId,
-              messages: [receiverView],
-              images: gallery,
-              imageUrls: mergedUrls,
-              mediaUrls: mergedUrls,
-              medias: toChatMedias(gallery),
-              totalCount: 1,
-            };
-            io.to(recipientRoom).emit('chat:messages_received' as any, batch);
-            io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batch);
-            io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batch);
+            const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
+            const outgoingRooms = userSocketRooms(senderId);
+            // Edit the bubble already on screen. A second "received" event appends it again.
+            emitChatEventOnce(io, 'chat:message_edited', receiverView, incomingRooms, outgoingRooms);
+            emitChatEventOnce(io, 'chat:message_edited', senderView, outgoingRooms);
           } catch {
             // socket optional
           }
@@ -3662,14 +3687,14 @@ export class ChatService {
       // Ticks go out after the bubble exists, before the slower chat-list refresh.
       this.flushReceipts(receiptSink);
 
-      // Real-time conversation list updates for both sender and recipient
-      await this.emitConversationUpdate(
+      // Chat-list refresh is heavier than the tick. Do not hold the send ack for it.
+      void this.emitConversationUpdate(
         conversationId,
         savedMessages[savedMessages.length - 1],
         lastMessagePreview,
         senderId,
         recipientId
-      );
+      ).catch(() => undefined);
     } catch {
       // Socket server may not be bound in isolated test contexts; continue gracefully
     }
@@ -3697,6 +3722,9 @@ export class ChatService {
       this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
     }
     return primaryDto;
+    } finally {
+      releaseIdempotencyLock();
+    }
   }
 
   /**
@@ -4382,6 +4410,11 @@ export class ChatService {
 
       // Execute database write inside an atomic transaction.
       // A second tap of the same contact waits until the first row is saved.
+      const releaseIdempotencyLock = await acquireChatSendLock(
+        clientMessageId
+          ? `idem:${String(senderId).toLowerCase()}:${String(recipientId).toLowerCase()}:${clientMessageId}`
+          : ''
+      );
       const releaseContactLock = await acquireChatSendLock(
         msgType === 'contact'
           ? contactSendLockKey(senderId, recipientId, String(metadataObj.phoneNumber || ''))
@@ -4520,26 +4553,11 @@ export class ChatService {
               const receiverView = buildViewerChatMessage(msgDto, false, gallery, galleryUrls);
               try {
                 const io = getSocketServer();
-                const recipientRoom = getUserRoomName(recipientId);
-                const senderRoom = getUserRoomName(senderId);
-                io.to(recipientRoom).emit('chat:message_edited' as any, receiverView);
-                io.to(recipientRoom).emit('chat:message_received' as any, receiverView);
-                io.to(`conversation:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, receiverView);
-                io.to(`chat:${conversationId}`).except(senderRoom).emit('chat:message_received' as any, receiverView);
-                const batch = {
-                  conversationId,
-                  senderId,
-                  recipientId,
-                  messages: [receiverView],
-                  images: gallery,
-                  imageUrls: galleryUrls,
-                  mediaUrls: galleryUrls,
-                  medias: toChatMedias(gallery),
-                  totalCount: 1,
-                };
-                io.to(recipientRoom).emit('chat:messages_received' as any, batch);
-                io.to(`conversation:${conversationId}`).emit('chat:messages_received' as any, batch);
-                io.to(`chat:${conversationId}`).emit('chat:messages_received' as any, batch);
+                const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];
+                const outgoingRooms = userSocketRooms(senderId);
+                const senderView = buildViewerChatMessage(msgDto, true, gallery, galleryUrls);
+                emitChatEventOnce(io, 'chat:message_edited', receiverView, incomingRooms, outgoingRooms);
+                emitChatEventOnce(io, 'chat:message_edited', senderView, outgoingRooms);
               } catch {
                 // socket optional
               }
@@ -4899,13 +4917,13 @@ export class ChatService {
 
           const latestSaved = savedMessages[savedMessages.length - 1];
           if (latestSaved) {
-            await this.emitConversationUpdate(
+            void this.emitConversationUpdate(
               conversationId,
               latestSaved,
               lastMessagePreview,
               senderId,
               recipientId
-            );
+            ).catch(() => undefined);
           }
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully
@@ -4960,6 +4978,7 @@ export class ChatService {
         });
       } finally {
         releaseContactLock();
+        releaseIdempotencyLock();
       }
     }
 
@@ -5099,10 +5118,22 @@ export class ChatService {
           'message:status',
         ];
 
-    for (const room of rooms) {
-      for (const event of events) {
-        io.to(room).emit(event as any, payload);
-      }
+    const batchEvents = events.filter(
+      (event) => event !== 'chat:message:status' && event !== 'message:status'
+    );
+    for (const event of batchEvents) {
+      emitChatEventOnce(io, event, payload, rooms);
+    }
+    // One status event per bubble. A batch cursor only moves the latest tick.
+    for (const id of ids) {
+      const one = {
+        ...payload,
+        id,
+        messageId: id,
+        ...(clientMessageIds[id] ? { clientMessageId: clientMessageIds[id] } : {}),
+      };
+      emitChatEventOnce(io, 'chat:message:status', one, rooms);
+      emitChatEventOnce(io, 'message:status', one, rooms);
     }
 
     const inbox = {
@@ -5110,7 +5141,7 @@ export class ChatService {
       reason: isRead ? 'read' : 'delivered',
       ...(isRead ? { readerId: input.actorId } : { delivererId: input.actorId }),
     };
-    io.to(getUserRoomName(input.notifyUserId)).emit('chat:inbox:refresh' as any, inbox);
+    emitChatEventOnce(io, 'chat:inbox:refresh', inbox, [getUserRoomName(input.notifyUserId)]);
   }
 
   private applyReceiptStatus(
@@ -5169,7 +5200,20 @@ export class ChatService {
       for (const row of extra) byId.set(row.id, new Date(row.createdAt));
     }
 
+    const own = new Set(messageIds.filter(Boolean));
+    let ceiling = 0;
+    for (const id of own) {
+      const at = byId.get(id);
+      if (at) ceiling = Math.max(ceiling, at.getTime());
+    }
+
     return [...byId.entries()]
+      .filter(([id, at]) => {
+        if (own.has(id)) return true;
+        if (!ceiling) return true;
+        // A parallel send's newer row must wait for its own bubble.
+        return at.getTime() < ceiling;
+      })
       .sort((left, right) => {
         const delta = left[1].getTime() - right[1].getTime();
         if (delta !== 0) return delta;
@@ -5215,33 +5259,47 @@ export class ChatService {
       },
       attributes: ['id', 'metadata'],
     });
-    if (rows.length === 0) return 0;
-
     const now = new Date();
-    const targetIds = rows.map((row) => row.id);
+    if (rows.length > 0) {
+      const targetIds = rows.map((row) => row.id);
+      await ChatMessage.update(
+        {
+          isRead: true,
+          readAt: now,
+          isDelivered: true,
+          deliveredAt: sequelize.fn('COALESCE', sequelize.col('deliveredAt'), now),
+        },
+        {
+          where: {
+            id: { [Op.in]: targetIds },
+            recipientId,
+            isRead: false,
+          },
+        }
+      );
+    }
+
+    const readNow = await ChatMessage.findAll({
+      where: {
+        id: { [Op.in]: ids },
+        conversationId,
+        recipientId,
+        isRead: true,
+      },
+      attributes: ['id', 'metadata', 'readAt'],
+    });
+    if (readNow.length === 0) return 0;
+
     const clientMessageIds: Record<string, string> = {};
-    for (const row of rows) {
+    for (const row of readNow) {
       const clientId = clientMessageIdFromMetadata(row.metadata);
       if (clientId) clientMessageIds[row.id] = clientId;
     }
-
-    const [updated] = await ChatMessage.update(
-      {
-        isRead: true,
-        readAt: now,
-        isDelivered: true,
-        deliveredAt: sequelize.fn('COALESCE', sequelize.col('deliveredAt'), now),
-      },
-      {
-        where: {
-          id: { [Op.in]: targetIds },
-          recipientId,
-          isRead: false,
-        },
-      }
-    );
-    if (!updated) return 0;
-
+    const readIds = readNow.map((row) => row.id);
+    const readAt = readNow.reduce<Date>((latest, row) => {
+      const at = row.readAt ? new Date(row.readAt) : now;
+      return at > latest ? at : latest;
+    }, now);
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['user1Id', 'user2Id'],
     });
@@ -5251,15 +5309,98 @@ export class ChatService {
         conversationId,
         actorId: recipientId,
         notifyUserId: conversation ? getOtherParticipantId(conversation, recipientId) : '',
-        messageIds: targetIds,
-        cursorId: targetIds[targetIds.length - 1] || null,
-        at: now,
-        markedCount: updated,
+        messageIds: readIds,
+        cursorId: readIds[readIds.length - 1] || null,
+        at: readAt,
+        markedCount: readIds.length,
         clientMessageIds,
       },
       receiptSink
     );
-    return updated;
+    return readIds.length;
+  }
+
+  /** Online, chat not open: grey double tick. Already-seen rows stay blue. */
+  private async markIdsDelivered(
+    recipientId: string,
+    conversationId: string,
+    messageIds: string[],
+    receiptSink?: ChatReceiptEmit[]
+  ): Promise<void> {
+    const ids = messageIds.filter(Boolean);
+    if (ids.length === 0) return;
+    const now = new Date();
+    await ChatMessage.update(
+      { isDelivered: true, deliveredAt: now },
+      {
+        where: {
+          id: { [Op.in]: ids },
+          conversationId,
+          recipientId,
+          isDelivered: false,
+          isRead: false,
+        },
+      }
+    );
+    const fresh = await ChatMessage.findAll({
+      where: { id: { [Op.in]: ids }, conversationId, recipientId },
+      attributes: ['id', 'metadata', 'isRead', 'isDelivered', 'readAt'],
+    });
+    const readRows = fresh.filter((row) => row.isRead);
+    const deliveredRows = fresh.filter((row) => row.isDelivered && !row.isRead);
+    if (readRows.length === 0 && deliveredRows.length === 0) return;
+
+    const conversation = await Conversation.findByPk(conversationId, {
+      attributes: ['user1Id', 'user2Id'],
+    });
+    const notifyUserId = conversation ? getOtherParticipantId(conversation, recipientId) : '';
+    const clientsFor = (list: typeof fresh): Record<string, string> => {
+      const map: Record<string, string> = {};
+      for (const row of list) {
+        const clientId = clientMessageIdFromMetadata(row.metadata);
+        if (clientId) map[row.id] = clientId;
+      }
+      return map;
+    };
+
+    if (deliveredRows.length > 0) {
+      const deliveredIds = deliveredRows.map((row) => row.id);
+      this.queueReceipt(
+        {
+          kind: 'delivered',
+          conversationId,
+          actorId: recipientId,
+          notifyUserId,
+          messageIds: deliveredIds,
+          cursorId: deliveredIds[deliveredIds.length - 1] || null,
+          at: now,
+          markedCount: deliveredIds.length,
+          clientMessageIds: clientsFor(deliveredRows),
+        },
+        receiptSink
+      );
+    }
+    if (readRows.length > 0) {
+      const readIds = readRows.map((row) => row.id);
+      const readAt = readRows.reduce<Date>((latest, row) => {
+        const at = row.readAt ? new Date(row.readAt) : now;
+        return at > latest ? at : latest;
+      }, now);
+      this.queueReceipt(
+        {
+          kind: 'read',
+          conversationId,
+          actorId: recipientId,
+          notifyUserId,
+          messageIds: readIds,
+          cursorId: readIds[readIds.length - 1] || null,
+          at: readAt,
+          markedCount: readIds.length,
+          clientMessageIds: clientsFor(readRows),
+        },
+        receiptSink
+      );
+    }
   }
 
   /**
@@ -5278,30 +5419,19 @@ export class ChatService {
       return 'sent';
     }
     try {
-      const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
-      const latestId = ids[ids.length - 1];
-      if (isUserViewingConversation(recipientId, conversationId)) {
-        try {
-          await this.markMessagesAsRead(recipientId, conversationId, latestId, {
-            receiptSink,
-            skipListFanout: !!receiptSink,
-          });
-        } catch {
-          // A stale cursor must not leave the open chat on one tick.
+      return await withConversationReceiptLock(conversationId, async () => {
+        const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
+        if (ids.length === 0) return 'sent';
+        if (isUserViewingConversation(recipientId, conversationId)) {
+          await this.markIdsRead(recipientId, conversationId, ids, receiptSink);
+          return this.liveStatusForIds(messageIds);
         }
-        let state = await this.liveStatusForIds(messageIds);
-        if (state !== 'read') {
-          await this.markIdsRead(recipientId, conversationId, messageIds, receiptSink);
-          state = await this.liveStatusForIds(messageIds);
+        if (isUserConnected(recipientId)) {
+          await this.markIdsDelivered(recipientId, conversationId, ids, receiptSink);
+          return this.liveStatusForIds(messageIds);
         }
-        return state;
-      }
-      if (isUserConnected(recipientId)) {
-        await this.acknowledgeDelivery(recipientId, conversationId, ids, {
-          receiptSink,
-        });
-        return this.liveStatusForIds(messageIds);
-      }
+        return 'sent';
+      });
     } catch {
       // receipt side effects must not fail the send
     }
@@ -5338,6 +5468,13 @@ export class ChatService {
     receiptStatus: 'read';
     readAt: string;
   }> {
+    const lockKey = String(conversationId || '').trim().toLowerCase();
+    if (lockKey && !receiptLockStore.getStore()?.has(lockKey)) {
+      return withConversationReceiptLock(conversationId, () =>
+        this.markMessagesAsRead(currentUserId, conversationId, lastReadMessageId, options)
+      );
+    }
+
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
     });
@@ -5617,6 +5754,13 @@ export class ChatService {
       };
     }
 
+    const lockKey = String(conversationId || '').trim().toLowerCase();
+    if (lockKey && !receiptLockStore.getStore()?.has(lockKey)) {
+      return withConversationReceiptLock(conversationId, () =>
+        this.acknowledgeDelivery(currentUserId, conversationId, messageIds, options)
+      );
+    }
+
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone'],
     });
@@ -5697,42 +5841,47 @@ export class ChatService {
       return picked;
     };
 
-    // A later delivery ack must not turn blue ticks back into grey ones.
-    const alreadyRead = eligibleMessages.filter((msg) => msg.isRead);
-    const notYetDelivered = eligibleMessages.filter((msg) => !msg.isDelivered && !msg.isRead);
-    const deliveredUnread = eligibleMessages.filter((msg) => msg.isDelivered && !msg.isRead);
-    const undeliveredIds = notYetDelivered.map((msg) => msg.id);
-
     const now = new Date();
+    const candidateIds = eligibleMessages.map((msg) => msg.id);
     let deliveredCount = 0;
 
-    if (undeliveredIds.length > 0) {
-      const t = await sequelize.transaction();
-      try {
-        const [updatedRows] = await ChatMessage.update(
-          {
-            isDelivered: true,
-            deliveredAt: now,
+    const t = await sequelize.transaction();
+    try {
+      const [updatedRows] = await ChatMessage.update(
+        {
+          isDelivered: true,
+          deliveredAt: now,
+        },
+        {
+          where: {
+            id: { [Op.in]: candidateIds },
+            isRead: false,
+            isDelivered: false,
           },
-          {
-            where: {
-              id: { [Op.in]: undeliveredIds },
-              isRead: false,
-            },
-            transaction: t,
-          }
-        );
-        deliveredCount = updatedRows;
-        await t.commit();
-      } catch (err) {
-        await t.rollback();
-        throw err;
-      }
+          transaction: t,
+        }
+      );
+      deliveredCount = updatedRows;
+      await t.commit();
+    } catch (err) {
+      await t.rollback();
+      throw err;
     }
 
-    const refreshUnread = deliveredCount > 0 ? notYetDelivered : deliveredUnread;
-    if (refreshUnread.length > 0) {
-      const ids = refreshUnread.map((msg) => msg.id);
+    // Read the rows again so a seen tick is not overwritten by a late delivery ack.
+    const fresh = await ChatMessage.findAll({
+      where: { id: { [Op.in]: candidateIds } },
+      attributes: ['id', 'isDelivered', 'isRead', 'readAt', 'metadata'],
+    });
+    for (const msg of fresh) {
+      const clientId = clientMessageIdFromMetadata(msg.metadata);
+      if (clientId) clientIdsByMessage[msg.id] = clientId;
+    }
+    const readNow = fresh.filter((msg) => msg.isRead);
+    const deliveredNow = fresh.filter((msg) => msg.isDelivered && !msg.isRead);
+
+    if (deliveredNow.length > 0) {
+      const ids = deliveredNow.map((msg) => msg.id);
       this.queueReceipt(
         {
           kind: 'delivered',
@@ -5743,15 +5892,15 @@ export class ChatService {
           cursorId: ids[ids.length - 1] || null,
           at: now,
           markedCount: deliveredCount > 0 ? deliveredCount : ids.length,
-          clientMessageIds: idsFor(refreshUnread),
+          clientMessageIds: idsFor(deliveredNow),
         },
         options?.receiptSink
       );
     }
 
-    if (alreadyRead.length > 0) {
-      const ids = alreadyRead.map((msg) => msg.id);
-      const readAt = alreadyRead.reduce<Date>((latest, msg) => {
+    if (readNow.length > 0) {
+      const ids = readNow.map((msg) => msg.id);
+      const readAt = readNow.reduce<Date>((latest, msg) => {
         const at = msg.readAt ? new Date(msg.readAt) : now;
         return at > latest ? at : latest;
       }, now);
@@ -5765,16 +5914,14 @@ export class ChatService {
           cursorId: ids[ids.length - 1] || null,
           at: readAt,
           markedCount: ids.length,
-          clientMessageIds: idsFor(alreadyRead),
+          clientMessageIds: idsFor(readNow),
         },
         options?.receiptSink
       );
     }
 
     const deliveredMessageIds =
-      undeliveredIds.length > 0
-        ? undeliveredIds
-        : (alreadyRead.length > 0 ? alreadyRead : deliveredUnread).map((msg) => msg.id);
+      deliveredNow.length > 0 ? deliveredNow.map((msg) => msg.id) : readNow.map((msg) => msg.id);
 
     return {
       conversationId,

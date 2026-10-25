@@ -12,6 +12,35 @@ import { Op } from 'sequelize';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
 
+const inflightChatSends = new Map<string, Promise<any>>();
+const recentChatSends = new Map<string, { at: number; event: string; response: any }>();
+
+/** Same payload fired on chat:send_message and message:send must not insert twice. */
+const chatSendFingerprint = (userId: string, payload: any): string => {
+  const clientId = String(payload?.clientMessageId || payload?.clientMsgId || '').trim();
+  const conversationId = String(
+    payload?.conversationId || payload?.conversation_id || payload?.chatId || ''
+  ).trim();
+  const recipient = String(
+    payload?.recipientId ||
+      payload?.receiverId ||
+      payload?.targetUserId ||
+      payload?.participantId ||
+      payload?.userId ||
+      ''
+  ).trim();
+  const content = String(
+    payload?.content || payload?.body || payload?.text || payload?.message || ''
+  ).trim();
+  const type = String(payload?.messageType || payload?.type || '').trim();
+  const media = JSON.stringify([
+    payload?.imageUrl || payload?.image || '',
+    payload?.audioUrl || payload?.audio || payload?.voiceUrl || '',
+    payload?.images || payload?.imageUrls || payload?.mediaUrls || '',
+  ]);
+  return `${String(userId).toLowerCase()}|${clientId}|${conversationId}|${recipient}|${type}|${content}|${media}`;
+};
+
 export const registerChatSocketHandlers = (
   socket: AppSocket,
   io: AppSocketServer
@@ -19,12 +48,67 @@ export const registerChatSocketHandlers = (
   const currentUserId = socket.data.user.userId;
 
   // 1. Event: chat:send_message & message:send
-  const handleSendMessage = async (payload: any, callback?: Function) => {
+  const handleSendMessage = async (
+    payload: any,
+    callback?: Function,
+    eventName = 'chat:send_message'
+  ) => {
     const caller = callback;
-    callback = (response: any) => {
+    let settled = false;
+    const finish = (response: any) => {
       socket.emit('chat:message:send:ack' as any, response);
       if (typeof caller === 'function') caller(response);
     };
+    const complete = (response: any) => {
+      if (settled) return;
+      settled = true;
+      finish(response);
+    };
+
+    const fingerprint =
+      payload && typeof payload === 'object' ? chatSendFingerprint(currentUserId, payload) : '';
+    if (fingerprint) {
+      const recent = recentChatSends.get(fingerprint);
+      if (recent && recent.event !== eventName && Date.now() - recent.at < 2500) {
+        if (typeof caller === 'function') caller(recent.response);
+        return;
+      }
+      const pending = inflightChatSends.get(fingerprint);
+      if (pending) {
+        try {
+          const response = await pending;
+          if (typeof caller === 'function') caller(response);
+        } catch {
+          complete({ success: false, error: 'Failed to send message over socket' });
+        }
+        return;
+      }
+    }
+
+    let resolveInflight: (value: any) => void = () => undefined;
+    const gate = fingerprint
+      ? new Promise<any>((resolve) => {
+          resolveInflight = resolve;
+        })
+      : null;
+    if (fingerprint && gate) inflightChatSends.set(fingerprint, gate);
+
+    callback = (response: any) => {
+      if (fingerprint && response?.success) {
+        recentChatSends.set(fingerprint, { at: Date.now(), event: eventName, response });
+        const timer = setTimeout(() => {
+          const current = recentChatSends.get(fingerprint);
+          if (current && current.response === response) recentChatSends.delete(fingerprint);
+        }, 2500);
+        if (typeof timer.unref === 'function') timer.unref();
+      }
+      resolveInflight(response);
+      if (fingerprint && gate && inflightChatSends.get(fingerprint) === gate) {
+        inflightChatSends.delete(fingerprint);
+      }
+      complete(response);
+    };
+
     try {
       if (!payload || typeof payload !== 'object') {
         if (typeof callback === 'function') {
@@ -296,12 +380,27 @@ export const registerChatSocketHandlers = (
       if (typeof callback === 'function') {
         callback({ success: false, error: errorMessage });
       }
+    } finally {
+      if (!settled) {
+        const response = { success: false, error: 'Failed to send message over socket' };
+        resolveInflight(response);
+        if (fingerprint && gate && inflightChatSends.get(fingerprint) === gate) {
+          inflightChatSends.delete(fingerprint);
+        }
+        complete(response);
+      }
     }
   };
 
-  socket.on('chat:send_message', handleSendMessage);
-  socket.on('message:send' as any, handleSendMessage);
-  socket.on('chat:message:send' as any, handleSendMessage);
+  socket.on('chat:send_message', (payload: any, cb?: Function) => {
+    void handleSendMessage(payload, cb, 'chat:send_message');
+  });
+  socket.on('message:send' as any, (payload: any, cb?: Function) => {
+    void handleSendMessage(payload, cb, 'message:send');
+  });
+  socket.on('chat:message:send' as any, (payload: any, cb?: Function) => {
+    void handleSendMessage(payload, cb, 'chat:message:send');
+  });
 
   // 1b. Event: chat:forward_message & message:forward
   const handleForwardMessage = async (payload: any, callback?: Function) => {

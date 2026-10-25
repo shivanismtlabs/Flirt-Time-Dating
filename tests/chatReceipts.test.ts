@@ -959,6 +959,63 @@ describe('Chat Receipts & Unread Tracking (REST APIs + Socket.IO Delivery)', () 
       }
     });
 
+    it('keeps both directions when two people send, including a client id that extends an earlier one', async () => {
+      const fromA = await chatService.sendMessage(userA.id, convAB.id, {
+        content: 'from-a-1',
+        messageType: 'text',
+        clientMessageId: 'cid-1',
+      });
+      const fromALater = await chatService.sendMessage(userA.id, convAB.id, {
+        content: 'from-a-10',
+        messageType: 'text',
+        clientMessageId: 'cid-10',
+      });
+      const fromB = await chatService.sendMessage(userB.id, convAB.id, {
+        content: 'from-b',
+        messageType: 'text',
+        clientMessageId: 'cid-b',
+      });
+
+      expect(fromALater.id).not.toBe(fromA.id);
+      expect(fromALater.content).toBe('from-a-10');
+      expect(fromB.content).toBe('from-b');
+
+      const [forA, forB] = await Promise.all([
+        chatService.getMessages(userA.id, convAB.id),
+        chatService.getMessages(userB.id, convAB.id),
+      ]);
+
+      const mineOnA = forA.messages.filter((message) => message.content === 'from-a-1' || message.content === 'from-a-10' || message.content === 'from-b');
+      expect(mineOnA.map((message) => message.content)).toEqual(['from-a-1', 'from-a-10', 'from-b']);
+      expect(mineOnA.map((message) => message.isMine)).toEqual([true, true, false]);
+      expect(mineOnA.every((message) => message.createdAt)).toBe(true);
+
+      const mineOnB = forB.messages.filter((message) => message.content === 'from-a-1' || message.content === 'from-a-10' || message.content === 'from-b');
+      expect(mineOnB.map((message) => message.isMine)).toEqual([false, false, true]);
+    });
+
+    it('stores a new line when the same client id is reused with different text', async () => {
+      const first = await chatService.sendMessage(userA.id, convAB.id, {
+        content: 'hello',
+        messageType: 'text',
+        clientMessageId: 'shared-client-id',
+      });
+      const second = await chatService.sendMessage(userA.id, convAB.id, {
+        content: 'hello again',
+        messageType: 'text',
+        clientMessageId: 'shared-client-id',
+      });
+      expect(second.id).not.toBe(first.id);
+      const rows = await ChatMessage.findAll({
+        where: { conversationId: convAB.id, senderId: userA.id },
+      });
+      const texts = rows
+        .map((row) => row.content)
+        .filter((content) => content === 'hello' || content === 'hello again')
+        .sort();
+      expect(texts).toEqual(['hello', 'hello again']);
+    });
+
     it('keeps one row when the same send arrives twice together', async () => {
       const clientMessageId = 'parallel-dup-1';
       const [first, second] = await Promise.all([

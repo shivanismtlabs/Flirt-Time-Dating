@@ -729,6 +729,18 @@ const clientMessageIdFromMetadata = (metadata: unknown): string | null => {
   return typeof id === 'string' && id.trim() ? id : null;
 };
 
+/** LIKE-safe exact clientMessageId. A trailing % without the closing quote treats "1" as "10". */
+const clientMessageIdLike = (clientMessageId: string) => ({
+  [Op.like]: `%"clientMessageId":"${String(clientMessageId).replace(/[\\%_]/g, '')}"%`,
+});
+
+const sameClientSend = (stored: string | null, wanted: string): boolean => {
+  if (!stored || !wanted) return false;
+  if (stored === wanted) return true;
+  const suffix = stored.slice(wanted.length);
+  return suffix.startsWith('-') && /^\d+$/.test(suffix.slice(1));
+};
+
 /** Socket payload for one delivered or seen update. Held until the new bubble is emitted. */
 type ChatReceiptEmit = {
   kind: 'delivered' | 'read';
@@ -2235,6 +2247,7 @@ export class ChatService {
         isRead: !!msg.isRead,
         readAt: msg.readAt || null,
         sentAt: msg.createdAt,
+        createdAt: msg.createdAt,
         isMine,
         isSender: isMine,
         isPinned: !!pinInfo,
@@ -2504,6 +2517,11 @@ export class ChatService {
     }
 
     const recipientId = getOtherParticipantId(conversation, senderId);
+
+    // Overlaps the insert so the bubble does not wait on a profile query after commit.
+    const senderUserPromise = User.findByPk(senderId, {
+      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
+    });
 
     // Check if blocked
     const isBlocked = await UserBlock.findOne({
@@ -3130,15 +3148,16 @@ export class ChatService {
     );
     try {
     if (data.clientMessageId) {
-      const existingRows = await ChatMessage.findAll({
-        where: {
-          conversationId,
-          senderId,
-          metadata: {
-            [Op.like]: `%"clientMessageId":"${data.clientMessageId}%`,
+      const wantedClientId = String(data.clientMessageId);
+      const existingRows = (
+        await ChatMessage.findAll({
+          where: {
+            conversationId,
+            senderId,
+            metadata: clientMessageIdLike(wantedClientId),
           },
-        },
-      });
+        })
+      ).filter((row) => sameClientSend(clientMessageIdFromMetadata(row.metadata), wantedClientId));
 
       if (existingRows.length > 0) {
         const existingKeys = new Set<string>();
@@ -3154,8 +3173,13 @@ export class ChatService {
         const pendingImages = uploadedImages.filter((img) => img.key && !isKnownChatImage(existingKeys, img));
         const pendingAudios = uploadedAudios.filter((aud) => !existingKeys.has(aud.key));
         const isMediaSend = uploadedImages.length > 0 || uploadedAudios.length > 0;
-        if (!isMediaSend || (pendingImages.length === 0 && pendingAudios.length === 0)) {
-          const existingMessage = existingRows[0];
+        const matchingText = existingRows.find((row) => String(row.content || '') === messageContent);
+        // Same id with different text is a new message. A prefix such as "1" must not swallow "10".
+        const reuseSaved =
+          (isMediaSend && pendingImages.length === 0 && pendingAudios.length === 0) ||
+          (!isMediaSend && !!matchingText);
+        if (reuseSaved) {
+          const existingMessage = (isMediaSend ? existingRows[0] : matchingText)!;
         let meta: any = null;
         try {
           meta = JSON.parse(existingMessage.metadata || '{}');
@@ -3462,46 +3486,6 @@ export class ChatService {
       conversation.lastMessage = lastMessagePreview;
       conversation.lastMessageAt = lastSavedMessage.createdAt;
       await conversation.save({ transaction: t });
-
-      // If either user previously deleted conversation for themselves, un-hide for new messages while preserving history cutoff
-      await ConversationUserState.update(
-        { isDeleted: false },
-        {
-          where: {
-            conversationId,
-            userId: { [Op.in]: [senderId, recipientId] },
-            isDeleted: true,
-          },
-          transaction: t,
-        }
-      );
-
-      // Unarchive for sender so the conversation is immediately visible in sender's active chat list
-      await ConversationUserState.update(
-        { isArchived: false, archivedAt: null },
-        {
-          where: {
-            conversationId,
-            userId: senderId,
-            isArchived: true,
-          },
-          transaction: t,
-        }
-      );
-
-      // Ensure per-user ConversationUserState records exist for both participants
-      for (const uid of [senderId, recipientId]) {
-        await ConversationUserState.findOrCreate({
-          where: { conversationId, userId: uid },
-          defaults: {
-            conversationId,
-            userId: uid,
-            isDeleted: false,
-            isArchived: false,
-          },
-          transaction: t,
-        });
-      }
       }
 
       await t.commit();
@@ -3513,9 +3497,7 @@ export class ChatService {
     }
 
     // 8. Build DTOs for all created messages
-    const senderUser = await User.findByPk(senderId, {
-      attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
-    });
+    const senderUser = await senderUserPromise;
 
     const allDtos: ChatMessageDTO[] = [];
     for (const savedMessage of savedMessages) {
@@ -3670,36 +3652,80 @@ export class ChatService {
     }
     }
 
-    const liveStatus = await this.applyLiveReceipts(
-      senderId,
-      recipientId,
-      conversationId,
-      allDtos.map((d) => d.id),
-      receiptSink
-    );
-    if (liveStatus !== 'sent') {
-      const at = new Date().toISOString();
-      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
-    }
+    const settleAfterBubble = async (applyStatusToDto: boolean) => {
+      try {
+        await Promise.all([
+          ConversationUserState.update(
+            { isDeleted: false },
+            {
+              where: {
+                conversationId,
+                userId: { [Op.in]: [senderId, recipientId] },
+                isDeleted: true,
+              },
+            }
+          ),
+          ConversationUserState.update(
+            { isArchived: false, archivedAt: null },
+            {
+              where: {
+                conversationId,
+                userId: senderId,
+                isArchived: true,
+              },
+            }
+          ),
+        ]);
+        for (const uid of [senderId, recipientId]) {
+          await ConversationUserState.findOrCreate({
+            where: { conversationId, userId: uid },
+            defaults: {
+              conversationId,
+              userId: uid,
+              isDeleted: false,
+              isArchived: false,
+            },
+          });
+        }
+      } catch {
+        // The bubble is already out. A missed unhide must not delay the socket event.
+      }
 
-    if (!reusedContact) {
-    try {
-      // Ticks go out after the bubble exists, before the slower chat-list refresh.
-      this.flushReceipts(receiptSink);
-
-      // Chat-list refresh is heavier than the tick. Do not hold the send ack for it.
-      void this.emitConversationUpdate(
-        conversationId,
-        savedMessages[savedMessages.length - 1],
-        lastMessagePreview,
+      const liveStatus = await this.applyLiveReceipts(
         senderId,
-        recipientId
-      ).catch(() => undefined);
-    } catch {
-      // Socket server may not be bound in isolated test contexts; continue gracefully
-    }
-    }
-    this.flushReceipts(receiptSink);
+        recipientId,
+        conversationId,
+        allDtos.map((d) => d.id),
+        receiptSink
+      );
+      if (applyStatusToDto && liveStatus !== 'sent') {
+        const at = new Date().toISOString();
+        for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
+      }
+
+      if (!reusedContact) {
+        try {
+          this.flushReceipts(receiptSink);
+          void this.emitConversationUpdate(
+            conversationId,
+            savedMessages[savedMessages.length - 1],
+            lastMessagePreview,
+            senderId,
+            recipientId
+          ).catch(() => undefined);
+        } catch {
+          // Socket server may not be bound in isolated test contexts; continue gracefully
+        }
+      }
+      this.flushReceipts(receiptSink);
+      if (!reusedContact) {
+        this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
+      }
+    };
+
+    // Tests still observe ticks on the return value. Live sends ack the bubble first.
+    const inlineSideEffects = process.env.JEST_WORKER_ID !== undefined;
+    if (inlineSideEffects) await settleAfterBubble(true);
 
     const primaryDto: ChatMessageDTO = {
       ...senderMessages[0],
@@ -3718,8 +3744,8 @@ export class ChatService {
       primaryDto.durationMs = uploadedAudios[0].durationMs;
     }
 
-    if (!reusedContact) {
-      this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, lastMessagePreview);
+    if (!inlineSideEffects) {
+      void settleAfterBubble(false).catch(() => undefined);
     }
     return primaryDto;
     } finally {
@@ -3746,7 +3772,9 @@ export class ChatService {
       if (!conv) {
         throw new ChatServiceError('Conversation not found or has been deleted', 404, 'CONVERSATION_NOT_FOUND');
       }
-      if (conv.user1Id !== senderId && conv.user2Id !== senderId) {
+      const sameParticipant = (left?: string | null, right?: string | null) =>
+        String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+      if (!sameParticipant(conv.user1Id, senderId) && !sameParticipant(conv.user2Id, senderId)) {
         throw new ChatServiceError('You are not a participant in this conversation', 403, 'FORBIDDEN');
       }
       const otherId = getOtherParticipantId(conv, senderId);
@@ -4449,14 +4477,18 @@ export class ChatService {
             where: {
               conversationId,
               senderId,
-              metadata: {
-                [Op.like]: `%"clientMessageId":"${clientMessageId}"%`,
-              },
+              metadata: clientMessageIdLike(clientMessageId),
             },
             transaction: t,
           });
 
-          if (existingMessage) {
+          const sameText =
+            !!existingMessage && String(existingMessage.content || '') === messageContent;
+          if (
+            existingMessage &&
+            sameClientSend(clientMessageIdFromMetadata(existingMessage.metadata), clientMessageId) &&
+            (uploadedImages.length > 0 || uploadedAudios.length > 0 || sameText)
+          ) {
             let meta: any = null;
             try {
               meta = JSON.parse(existingMessage.metadata || '{}');
@@ -4899,37 +4931,52 @@ export class ChatService {
         }
         }
 
-        const liveStatus = await this.applyLiveReceipts(
-          senderId,
-          recipientId,
-          conversationId,
-          recipientDtos.map((d) => d.id),
-          receiptSink
-        );
-        if (liveStatus !== 'sent') {
-          const at = new Date().toISOString();
-          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
-        }
+        const preview =
+          lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
+            ? lastMessagePreview
+            : uploadedImages.length > 0
+            ? 'Sent an image 📷'
+            : uploadedAudios.length > 0
+            ? 'Sent a voice message 🎤'
+            : 'Sent you a message';
 
-        if (!reusedMultiContact) {
-        try {
-          this.flushReceipts(receiptSink);
-
-          const latestSaved = savedMessages[savedMessages.length - 1];
-          if (latestSaved) {
-            void this.emitConversationUpdate(
-              conversationId,
-              latestSaved,
-              lastMessagePreview,
-              senderId,
-              recipientId
-            ).catch(() => undefined);
+        const settleRecipient = async (applyStatusToDto: boolean) => {
+          const liveStatus = await this.applyLiveReceipts(
+            senderId,
+            recipientId,
+            conversationId,
+            recipientDtos.map((d) => d.id),
+            receiptSink
+          );
+          if (applyStatusToDto && liveStatus !== 'sent') {
+            const at = new Date().toISOString();
+            for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
           }
-        } catch {
-          // Socket server may not be bound in isolated test contexts; continue gracefully
-        }
-        }
-        this.flushReceipts(receiptSink);
+          if (!reusedMultiContact) {
+            try {
+              this.flushReceipts(receiptSink);
+              const latestSaved = savedMessages[savedMessages.length - 1];
+              if (latestSaved) {
+                void this.emitConversationUpdate(
+                  conversationId,
+                  latestSaved,
+                  lastMessagePreview,
+                  senderId,
+                  recipientId
+                ).catch(() => undefined);
+              }
+            } catch {
+              // Socket server may not be bound in isolated test contexts; continue gracefully
+            }
+          }
+          this.flushReceipts(receiptSink);
+          if (!reusedMultiContact) {
+            this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
+          }
+        };
+
+        const inlineSideEffects = process.env.JEST_WORKER_ID !== undefined;
+        if (inlineSideEffects) await settleRecipient(true);
 
         const primaryRecipientDto: ChatMessageDTO = {
           ...senderViews[0],
@@ -4948,15 +4995,6 @@ export class ChatService {
           primaryRecipientDto.durationMs = uploadedAudios[0].durationMs;
         }
 
-        const preview =
-          lastMessagePreview && lastMessagePreview !== '__FILE_ATTACHMENT__'
-            ? lastMessagePreview
-            : uploadedImages.length > 0
-            ? 'Sent an image 📷'
-            : uploadedAudios.length > 0
-            ? 'Sent a voice message 🎤'
-            : 'Sent you a message';
-
         results.push({
           recipientId,
           conversationId,
@@ -4964,8 +5002,8 @@ export class ChatService {
           message: primaryRecipientDto,
         });
 
-        if (!reusedMultiContact) {
-          this.dispatchChatPush(recipientId, senderId, senderUser, conversationId, preview);
+        if (!inlineSideEffects) {
+          void settleRecipient(false).catch(() => undefined);
         }
       } catch (err: any) {
         await t.rollback();

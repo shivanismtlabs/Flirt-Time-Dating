@@ -15,18 +15,23 @@ import { socketLogger } from './socket.errors';
 const inflightChatSends = new Map<string, Promise<any>>();
 const recentChatSends = new Map<string, { at: number; event: string; response: any }>();
 
-/** Same payload fired on chat:send_message and message:send must not insert twice. */
+/**
+ * Same tap fired on chat:send_message and message:send must share one key.
+ * clientMessageId is enough. payload.userId is left out because one event
+ * sends the sender id there and the other does not.
+ */
 const chatSendFingerprint = (userId: string, payload: any): string => {
   const clientId = String(payload?.clientMessageId || payload?.clientMsgId || '').trim();
   const conversationId = String(
     payload?.conversationId || payload?.conversation_id || payload?.chatId || ''
   ).trim();
+  const owner = String(userId).toLowerCase();
+  if (clientId) return `${owner}|${clientId}|${conversationId}`;
   const recipient = String(
     payload?.recipientId ||
       payload?.receiverId ||
       payload?.targetUserId ||
       payload?.participantId ||
-      payload?.userId ||
       ''
   ).trim();
   const content = String(
@@ -38,7 +43,7 @@ const chatSendFingerprint = (userId: string, payload: any): string => {
     payload?.audioUrl || payload?.audio || payload?.voiceUrl || '',
     payload?.images || payload?.imageUrls || payload?.mediaUrls || '',
   ]);
-  return `${String(userId).toLowerCase()}|${clientId}|${conversationId}|${recipient}|${type}|${content}|${media}`;
+  return `${owner}|${conversationId}|${recipient}|${type}|${content}|${media}`;
 };
 
 export const registerChatSocketHandlers = (
@@ -69,15 +74,17 @@ export const registerChatSocketHandlers = (
       payload && typeof payload === 'object' ? chatSendFingerprint(currentUserId, payload) : '';
     if (fingerprint) {
       const recent = recentChatSends.get(fingerprint);
+      const reuse = (response: any) => {
+        if (typeof caller === 'function') caller(response);
+      };
       if (recent && recent.event !== eventName && Date.now() - recent.at < 2500) {
-        if (typeof caller === 'function') caller(recent.response);
+        reuse(recent.response);
         return;
       }
       const pending = inflightChatSends.get(fingerprint);
       if (pending) {
         try {
-          const response = await pending;
-          if (typeof caller === 'function') caller(response);
+          reuse(await pending);
         } catch {
           complete({ success: false, error: 'Failed to send message over socket' });
         }
@@ -611,14 +618,15 @@ export const registerChatSocketHandlers = (
       });
 
       if (!conversation) return;
-      if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+      const sameUser = (left?: string | null, right?: string | null) =>
+        String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+      if (!sameUser(conversation.user1Id, currentUserId) && !sameUser(conversation.user2Id, currentUserId)) {
         return;
       }
 
-      const otherUserId =
-        conversation.user1Id === currentUserId
-          ? conversation.user2Id
-          : conversation.user1Id;
+      const otherUserId = sameUser(conversation.user1Id, currentUserId)
+        ? conversation.user2Id
+        : conversation.user1Id;
 
       // Ensure blocked users do not receive typing events
       const isBlocked = await UserBlock.findOne({
@@ -1114,7 +1122,9 @@ export const registerChatSocketHandlers = (
         return;
       }
       const conv = await Conversation.findByPk(convId);
-      if (!conv || (conv.user1Id !== currentUserId && conv.user2Id !== currentUserId)) {
+      const sameUser = (left?: string | null, right?: string | null) =>
+        String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
+      if (!conv || (!sameUser(conv.user1Id, currentUserId) && !sameUser(conv.user2Id, currentUserId))) {
         if (typeof callback === 'function') {
           callback({ success: false, error: 'Unauthorized to join this conversation room' });
         }

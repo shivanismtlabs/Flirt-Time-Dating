@@ -3580,19 +3580,10 @@ export class ChatService {
     const senderMessages = allDtos.map((item) => buildViewerChatMessage(item, true));
 
     const receiptSink: ChatReceiptEmit[] = [];
-    const liveStatus = await this.applyLiveReceipts(
-      senderId,
-      recipientId,
-      conversationId,
-      allDtos.map((d) => d.id),
-      receiptSink
-    );
-    if (liveStatus !== 'sent') {
-      const at = new Date().toISOString();
-      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
-    }
 
     // 9. Real-Time Delivery via Socket.IO for every created message.
+    // The bubble goes out as soon as the row is saved. Read/delivered ticks and
+    // the chat-list refresh follow, so an open chat does not wait on those queries.
     // A repeated contact tap reuses the saved row and must not be broadcast again.
     if (!reusedContact) {
     try {
@@ -3649,7 +3640,25 @@ export class ChatService {
         emitChatEventOnce(io, 'chat:messages_sent', batchSenderPayload, outgoingRooms);
         emitChatEventOnce(io, 'messages:sent', batchSenderPayload, outgoingRooms);
       }
+    } catch {
+      // Socket server may not be bound in isolated test contexts; continue gracefully
+    }
+    }
 
+    const liveStatus = await this.applyLiveReceipts(
+      senderId,
+      recipientId,
+      conversationId,
+      allDtos.map((d) => d.id),
+      receiptSink
+    );
+    if (liveStatus !== 'sent') {
+      const at = new Date().toISOString();
+      for (const dto of senderMessages) this.applyReceiptStatus(dto, liveStatus, at);
+    }
+
+    if (!reusedContact) {
+    try {
       // Ticks go out after the bubble exists, before the slower chat-list refresh.
       this.flushReceipts(receiptSink);
 
@@ -4810,19 +4819,9 @@ export class ChatService {
         const senderViews = recipientDtos.map((item) => buildViewerChatMessage(item, true));
 
         const receiptSink: ChatReceiptEmit[] = [];
-        const liveStatus = await this.applyLiveReceipts(
-          senderId,
-          recipientId,
-          conversationId,
-          recipientDtos.map((d) => d.id),
-          receiptSink
-        );
-        if (liveStatus !== 'sent') {
-          const at = new Date().toISOString();
-          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
-        }
 
-        // Real-Time Delivery via Socket.IO. A repeated contact is not broadcast again.
+        // Bubble first. Receipt ticks and the chat-list row follow.
+        // A repeated contact is not broadcast again.
         if (!reusedMultiContact) {
         try {
           const io = getSocketServer();
@@ -4877,7 +4876,25 @@ export class ChatService {
             emitChatEventOnce(io, 'chat:messages_sent', batchSenderPayload, outgoingRooms);
             emitChatEventOnce(io, 'messages:sent', batchSenderPayload, outgoingRooms);
           }
+        } catch {
+          // Socket server may not be bound in isolated test contexts; continue gracefully
+        }
+        }
 
+        const liveStatus = await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id),
+          receiptSink
+        );
+        if (liveStatus !== 'sent') {
+          const at = new Date().toISOString();
+          for (const dto of senderViews) this.applyReceiptStatus(dto, liveStatus, at);
+        }
+
+        if (!reusedMultiContact) {
+        try {
           this.flushReceipts(receiptSink);
 
           const latestSaved = savedMessages[savedMessages.length - 1];
@@ -6327,6 +6344,7 @@ export class ChatService {
       getOpenChatsInvolving(userId).map((chat) => chat.conversationId.trim().toLowerCase())
     );
 
+    const listRefreshes: Array<Promise<unknown>> = [];
     for (const conversation of conversations) {
       const otherUserId = getOtherParticipantId(conversation, userId);
       if (!otherUserId || blockedIds.has(otherUserId.trim().toLowerCase())) continue;
@@ -6339,9 +6357,10 @@ export class ChatService {
       });
 
       if (openIds.has(conversation.id.trim().toLowerCase())) {
-        await this.pushViewerConversation(otherUserId, conversation.id);
+        listRefreshes.push(this.pushViewerConversation(otherUserId, conversation.id));
       }
     }
+    await Promise.all(listRefreshes);
   }
 
   /**
@@ -6429,7 +6448,7 @@ export class ChatService {
       isOnline: true,
       lastSeenAt: null,
     });
-    await this.pushViewerConversation(otherUserId, conversation.id);
+    void this.pushViewerConversation(otherUserId, conversation.id);
 
     return partnerStatus;
   }
@@ -9600,19 +9619,9 @@ return {
         }
 
         const receiptSink: ChatReceiptEmit[] = [];
-        const liveStatus = await this.applyLiveReceipts(
-          senderId,
-          recipientId,
-          conversationId,
-          recipientDtos.map((d) => d.id),
-          receiptSink
-        );
-        if (liveStatus !== 'sent') {
-          const at = new Date().toISOString();
-          for (const dto of recipientDtos) this.applyReceiptStatus(dto, liveStatus, at);
-        }
 
-        // Real-Time Delivery via Socket.IO after database persistence succeeds
+        // Real-Time Delivery via Socket.IO as soon as the row is saved.
+        // Receipt ticks follow so the forwarded bubble is not held for them.
         try {
           const io = getSocketServer();
           if (io) {
@@ -9640,18 +9649,33 @@ return {
                 emitChatEventOnce(io, event, dto, outgoingRooms);
               }
             }
+          }
+        } catch {
+          // Socket server may not be bound in isolated test contexts; continue gracefully
+        }
 
-            this.flushReceipts(receiptSink);
+        const liveStatus = await this.applyLiveReceipts(
+          senderId,
+          recipientId,
+          conversationId,
+          recipientDtos.map((d) => d.id),
+          receiptSink
+        );
+        if (liveStatus !== 'sent') {
+          const at = new Date().toISOString();
+          for (const dto of recipientDtos) this.applyReceiptStatus(dto, liveStatus, at);
+        }
 
-            if (lastSaved) {
-              await this.emitConversationUpdate(
-                conversationId,
-                lastSaved,
-                lastMessagePreview,
-                senderId,
-                recipientId
-              );
-            }
+        try {
+          this.flushReceipts(receiptSink);
+          if (lastSaved) {
+            await this.emitConversationUpdate(
+              conversationId,
+              lastSaved,
+              lastMessagePreview,
+              senderId,
+              recipientId
+            );
           }
         } catch {
           // Socket server may not be bound in isolated test contexts; continue gracefully

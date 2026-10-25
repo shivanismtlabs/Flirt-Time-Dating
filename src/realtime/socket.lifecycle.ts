@@ -195,8 +195,40 @@ export const clearUserPresenceWatch = (userId: string): void => {
 };
 
 /**
- * Open threads that include this user while somebody is still on that screen.
+ * People who already have this user's thread open hear online/offline
+ * before any database work. The chat-list refresh still follows.
  */
+const publishOpenChatPresence = (userId: string, isOnline: boolean): void => {
+  const open = getOpenChatsInvolving(userId);
+  if (open.length === 0) return;
+  const lastSeenAt = isOnline ? null : new Date().toISOString();
+  void import('./socket.server')
+    .then(({ getSocketServer }) => {
+      let io: AppSocketServer;
+      try {
+        io = getSocketServer();
+      } catch {
+        return;
+      }
+      for (const chat of open) {
+        const payload = {
+          conversationId: chat.conversationId,
+          userId,
+          isOnline,
+          lastSeenAt,
+        };
+        const rooms = new Set<string>([getUserRoomName(chat.otherUserId)]);
+        const lower = String(chat.otherUserId).toLowerCase();
+        if (lower !== chat.otherUserId) rooms.add(getUserRoomName(lower));
+        for (const room of rooms) {
+          io.to(room).emit('chat:presence' as any, payload);
+          io.to(room).emit('chat:user:status' as any, payload);
+        }
+      }
+    })
+    .catch(() => undefined);
+};
+
 export const getOpenChatsInvolving = (
   userId: string
 ): Array<{ conversationId: string; otherUserId: string }> => {
@@ -321,6 +353,7 @@ export const handleSocketConnection = (
   })().catch(() => undefined);
 
   if (cameOnline) {
+    publishOpenChatPresence(user.userId, true);
     void import('../services/chat.service')
       .then(({ chatService }) => chatService.notifyChatPresence(user.userId, true))
       .catch(() => undefined);
@@ -371,6 +404,7 @@ export const handleSocketConnection = (
     });
 
     if (wentOffline) {
+      publishOpenChatPresence(user.userId, false);
       void import('../services/chat.service')
         .then(({ chatService }) => chatService.notifyChatPresence(user.userId, false))
         .catch(() => undefined);

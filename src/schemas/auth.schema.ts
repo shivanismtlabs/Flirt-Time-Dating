@@ -151,6 +151,23 @@ export const firebaseAuthSchema = z.object({
   }),
 });
 
+export const googleAuthSchema = z.object({
+  body: z.object({
+    idToken: z
+      .string({ required_error: 'idToken is required' })
+      .trim()
+      .min(1, 'idToken cannot be empty'),
+    serverAuthCode: z.string().trim().optional(),
+    user: z
+      .object({
+        name: z.string().trim().optional(),
+        email: z.string().trim().email().optional(),
+        photo: z.string().trim().optional(),
+      })
+      .optional(),
+  }),
+});
+
 export const deleteAccountSchema = z.object({
   body: z
     .object({

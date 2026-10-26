@@ -50,6 +50,7 @@ export const env = {
   FIREBASE_WEB_API_KEY: process.env.FIREBASE_WEB_API_KEY || process.env.FIREBASE_API_KEY || '',
 
   GOOGLE_PACKAGE_NAME: process.env.GOOGLE_PACKAGE_NAME || process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_SERVICE_ACCOUNT_EMAIL:
     process.env.GOOGLE_PLAY_CLIENT_EMAIL ||
     process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||

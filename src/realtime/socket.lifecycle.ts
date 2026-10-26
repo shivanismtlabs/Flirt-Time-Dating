@@ -70,10 +70,14 @@ export const getUserRoomName = (userId: string): string => {
 export const getUserSocketIds = (userId: string): string[] => {
   const target = String(userId || '').trim().toLowerCase();
   if (!target) return [];
+  const sockets = userSocketsMap.get(target);
+  if (sockets && sockets.size > 0) return [...sockets];
+  // Fallback scan for existing mixed-casing entries
   const ids = new Set<string>();
-  for (const [key, sockets] of userSocketsMap) {
-    if (String(key).trim().toLowerCase() !== target) continue;
-    for (const id of sockets) ids.add(id);
+  for (const [key, s] of userSocketsMap) {
+    if (String(key).trim().toLowerCase() === target) {
+      for (const id of s) ids.add(id);
+    }
   }
   return [...ids];
 };
@@ -91,8 +95,10 @@ export const getUserActiveSocketCount = (userId: string): number => {
 export const isUserConnected = (userId: string): boolean => {
   const target = String(userId || '').trim().toLowerCase();
   if (!target) return false;
-  for (const [key, sockets] of userSocketsMap) {
-    if (String(key).trim().toLowerCase() === target && sockets.size > 0) return true;
+  const sockets = userSocketsMap.get(target);
+  if (sockets && sockets.size > 0) return true;
+  for (const [key, s] of userSocketsMap) {
+    if (String(key).trim().toLowerCase() === target && s.size > 0) return true;
   }
   return false;
 };
@@ -104,16 +110,18 @@ export const setConversationViewing = (
   active: boolean
 ): void => {
   if (!userId || !conversationId) return;
-  let open = viewingConversations.get(userId);
+  const normUser = String(userId).trim().toLowerCase();
+  const normConv = String(conversationId).trim().toLowerCase();
+  let open = viewingConversations.get(normUser);
   if (!open) {
     open = new Set<string>();
-    viewingConversations.set(userId, open);
+    viewingConversations.set(normUser, open);
   }
   if (active) {
-    open.add(conversationId);
+    open.add(normConv);
   } else {
-    open.delete(conversationId);
-    if (open.size === 0) viewingConversations.delete(userId);
+    open.delete(normConv);
+    if (open.size === 0) viewingConversations.delete(normUser);
   }
 };
 
@@ -124,10 +132,13 @@ export const isUserViewingConversation = (
   const target = String(userId || '').trim().toLowerCase();
   const conv = String(conversationId || '').trim().toLowerCase();
   if (!target || !conv) return false;
-  for (const [key, open] of viewingConversations) {
-    if (String(key).trim().toLowerCase() !== target) continue;
-    for (const id of open) {
-      if (String(id).trim().toLowerCase() === conv) return true;
+  const open = viewingConversations.get(target);
+  if (open && open.has(conv)) return true;
+  for (const [key, s] of viewingConversations) {
+    if (String(key).trim().toLowerCase() === target) {
+      for (const id of s) {
+        if (String(id).trim().toLowerCase() === conv) return true;
+      }
     }
   }
   return false;
@@ -277,11 +288,13 @@ export const handleSocketConnection = (
   const { user, clientIp } = socket.data;
   const config = getActiveLifecycleConfig();
 
+  const normUserId = String(user.userId || '').trim().toLowerCase();
+
   // 1. Enforce Per-User connection limit
-  let userSockets = userSocketsMap.get(user.userId);
+  let userSockets = userSocketsMap.get(normUserId);
   if (!userSockets) {
     userSockets = new Set<string>();
-    userSocketsMap.set(user.userId, userSockets);
+    userSocketsMap.set(normUserId, userSockets);
   }
 
   if (userSockets.size >= config.maxConnectionsPerUser) {
@@ -355,7 +368,10 @@ export const handleSocketConnection = (
   if (cameOnline) {
     publishOpenChatPresence(user.userId, true);
     void import('../services/chat.service')
-      .then(({ chatService }) => chatService.notifyChatPresence(user.userId, true))
+      .then(({ chatService }) => {
+        void chatService.notifyChatPresence(user.userId, true);
+        void chatService.syncDeliveredMessages(user.userId).catch(() => undefined);
+      })
       .catch(() => undefined);
   }
 
@@ -371,11 +387,12 @@ export const handleSocketConnection = (
   // 6. Handle Disconnection and Clean Teardown
   socket.on(SOCKET_LIFECYCLE_EVENTS.DISCONNECT, (reason: string) => {
     // Remove from user sockets map
-    const sockets = userSocketsMap.get(user.userId);
+    const sockets = userSocketsMap.get(normUserId) || userSocketsMap.get(user.userId);
     let wentOffline = false;
     if (sockets) {
       sockets.delete(socket.id);
       if (sockets.size === 0) {
+        userSocketsMap.delete(normUserId);
         userSocketsMap.delete(user.userId);
         clearUserViewing(user.userId);
         clearUserPresenceWatch(user.userId);
@@ -400,7 +417,7 @@ export const handleSocketConnection = (
       socketId: socket.id,
       userId: user.userId,
       reason,
-      remainingUserSockets: userSocketsMap.get(user.userId)?.size ?? 0,
+      remainingUserSockets: (userSocketsMap.get(normUserId) || userSocketsMap.get(user.userId))?.size ?? 0,
     });
 
     if (wentOffline) {

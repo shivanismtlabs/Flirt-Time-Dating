@@ -506,6 +506,9 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(historyRes.body.data.pinnedMessages[0].content).toBe(msg3.content);
       expect(historyRes.body.data.pinnedMessages[0].pinned).toBe(true);
       expect(historyRes.body.data.pinnedMessages[0].sender.name).toBeTruthy();
+      expect(historyRes.body.data.pinnedMessage).toBeDefined();
+      expect(historyRes.body.data.pinnedMessage.id).toBe(msg3.id);
+      expect(historyRes.body.data.pinnedMessage.content).toBe(msg3.content);
 
       const pinnedRes = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages/pinned`)
@@ -513,6 +516,57 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(pinnedRes.body.data.messages[0].id).toBe(msg3.id);
       expect(pinnedRes.body.data.messages[0].pinned).toBe(true);
       expect(pinnedRes.body.data.messages.map((m: any) => m.id)).toContain(msg1.id);
+      expect(pinnedRes.body.data.pinnedMessage.id).toBe(msg3.id);
+      expect(pinnedRes.body.data.pinnedMessages.length).toBe(2);
+    });
+
+    it('should keep pinned content visible and non-blank when pinning a 2nd message and reopening chat', async () => {
+      // Step 1: User pins first message (msg1)
+      const pin1Res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg1.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+      expect(pin1Res.status).toBe(200);
+
+      // Step 2: User navigates back and returns to chat (reloads messages)
+      const reopen1 = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(reopen1.status).toBe(200);
+      expect(reopen1.body.data.pinnedMessages.length).toBe(1);
+      expect(reopen1.body.data.pinnedMessages[0].content).toBe(msg1.content);
+      expect(reopen1.body.data.pinnedMessage.content).toBe(msg1.content);
+
+      // Step 3: Inside the chat, user pins a second message (photo or text)
+      await new Promise((r) => setTimeout(r, 20));
+      const pin2Res = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${msg2.id}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+      expect(pin2Res.status).toBe(200);
+      expect(pin2Res.body.data.message.content).toBe(msg2.content);
+
+      // Step 4: User navigates back and returns to chat again
+      const reopen2 = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(reopen2.status).toBe(200);
+
+      // Verify pinned content is NOT blank space
+      expect(reopen2.body.data.pinnedMessages.length).toBe(2);
+      const latestPin = reopen2.body.data.pinnedMessages[0];
+      expect(latestPin.id).toBe(msg2.id);
+      expect(latestPin.content).toBeTruthy();
+      expect(latestPin.content.trim().length).toBeGreaterThan(0);
+      expect(latestPin.content).toBe(msg2.content);
+      expect(latestPin.pinned).toBe(true);
+      expect(latestPin.isPinned).toBe(true);
+
+      // Verify singular pinnedMessage is also populated with non-blank content
+      expect(reopen2.body.data.pinnedMessage).toBeDefined();
+      expect(reopen2.body.data.pinnedMessage.id).toBe(msg2.id);
+      expect(reopen2.body.data.pinnedMessage.content).toBe(msg2.content);
+      expect(reopen2.body.data.pinnedMessage.content.trim().length).toBeGreaterThan(0);
     });
 
     it('should unpin a pinned message successfully and idempotently', async () => {

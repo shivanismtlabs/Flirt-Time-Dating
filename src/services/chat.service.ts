@@ -1144,6 +1144,12 @@ const fillChatMediaFields = (
     }
     dto.mediaUrls = dto.imageUrls;
     dto.medias = toChatMedias(dto.images);
+    if (!dto.content && parsedMetadata?.caption) {
+      dto.content = String(parsedMetadata.caption).trim();
+    }
+    if (parsedMetadata?.caption) {
+      (dto as any).caption = String(parsedMetadata.caption).trim();
+    }
   } else if (kind === 'audio') {
     const cleanKey = content ? s3Service.extractKey(content) : '';
     const resolvedAudio =
@@ -1181,7 +1187,20 @@ const visiblePinnedMessage = (
   const full = direct || parent;
   if (!full) return pinnedMessage;
   return {
+    ...pinnedMessage,
     ...full,
+    content: full.content || pinnedMessage.content,
+    imageUrl: full.imageUrl || pinnedMessage.imageUrl,
+    thumbnailUrl: full.thumbnailUrl || pinnedMessage.thumbnailUrl,
+    mediaUrl: full.mediaUrl || pinnedMessage.mediaUrl,
+    url: full.url || pinnedMessage.url,
+    images: (full.images && full.images.length > 0) ? full.images : pinnedMessage.images,
+    imageUrls: (full.imageUrls && full.imageUrls.length > 0) ? full.imageUrls : pinnedMessage.imageUrls,
+    mediaUrls: (full.mediaUrls && full.mediaUrls.length > 0) ? full.mediaUrls : pinnedMessage.mediaUrls,
+    medias: (full.medias && full.medias.length > 0) ? full.medias : pinnedMessage.medias,
+    audioUrl: full.audioUrl || pinnedMessage.audioUrl,
+    voiceUrl: full.voiceUrl || pinnedMessage.voiceUrl,
+    sender: full.sender || pinnedMessage.sender,
     isPinned: true,
     pinned: true,
     pinnedAt: pinnedMessage.pinnedAt ?? full.pinnedAt ?? null,
@@ -2159,6 +2178,8 @@ export class ChatService {
   ): Promise<{
     conversationId: string;
     messages: ChatMessageDTO[];
+    /** Active/newest pinned message for singular consumers. */
+    pinnedMessage: ChatMessageDTO | null;
     /** Newest pin first. Kept when that message is outside the current page. */
     pinnedMessages: ChatMessageDTO[];
     participant: {
@@ -2672,7 +2693,13 @@ export class ChatService {
         }
       }
 
-      return presentChatMessage(msgItem);
+      const enrichedMsg = fillChatMediaFields(
+        msgItem,
+        msg.messageType,
+        msg.content,
+        parsedMetadata
+      );
+      return presentChatMessage(enrichedMsg);
     });
 
     const totalPages = Math.ceil(count / limit) || 1;
@@ -2723,6 +2750,7 @@ export class ChatService {
         isOnline: isUserConnected(otherUserId),
       },
       messages,
+      pinnedMessage: pinnedMessages[0] || null,
       pinnedMessages,
       pagination: {
         page,
@@ -3796,6 +3824,14 @@ export class ChatService {
       }
 
       if (!reusedExisting) {
+      const isRecipientViewing = isUserViewingConversation(recipientId, conversationId);
+      const isRecipientOnline = isRecipientViewing || isUserConnected(recipientId);
+      const sendTime = new Date();
+      const initialDelivered = isRecipientOnline;
+      const initialDeliveredAt = isRecipientOnline ? sendTime : null;
+      const initialRead = isRecipientViewing;
+      const initialReadAt = isRecipientViewing ? sendTime : null;
+
       for (let i = 0; i < itemsToCreate.length; i++) {
         const item = itemsToCreate[i];
         const clientMsgId =
@@ -3820,7 +3856,10 @@ export class ChatService {
             content: item.content,
             messageType: item.type,
             metadata: metadataPayload,
-            isRead: false,
+            isDelivered: initialDelivered,
+            deliveredAt: initialDeliveredAt,
+            isRead: initialRead,
+            readAt: initialReadAt,
           },
           { transaction: t }
         );
@@ -3883,6 +3922,12 @@ export class ChatService {
             ? dur * 1000
             : undefined;
 
+      const currentStatus: 'sent' | 'delivered' | 'read' = savedMessage.isRead
+        ? 'read'
+        : savedMessage.isDelivered
+          ? 'delivered'
+          : 'sent';
+
       const dto: ChatMessageDTO = {
         id: savedMessage.id,
         conversationId: savedMessage.conversationId,
@@ -3891,12 +3936,14 @@ export class ChatService {
         content: savedMessage.content,
         messageType: savedMessage.messageType as any,
         metadata: parsedMeta,
-        status: 'sent',
-        receiptStatus: 'sent',
-        isDelivered: false,
-        deliveredAt: null,
-        isRead: false,
-        readAt: null,
+        status: currentStatus,
+        receiptStatus: currentStatus,
+        messageStatus: currentStatus === 'read' ? 'seen' : currentStatus,
+        seen: !!savedMessage.isRead,
+        isDelivered: !!savedMessage.isDelivered,
+        deliveredAt: savedMessage.deliveredAt || null,
+        isRead: !!savedMessage.isRead,
+        readAt: savedMessage.readAt || null,
         sentAt: savedMessage.createdAt,
         createdAt: savedMessage.createdAt,
         isMine: true,
@@ -7652,6 +7699,8 @@ export class ChatService {
   ): Promise<{
     conversationId: string;
     messages: ChatMessageDTO[];
+    pinnedMessage: ChatMessageDTO | null;
+    pinnedMessages: ChatMessageDTO[];
     pagination: {
       page: number;
       limit: number;
@@ -7903,6 +7952,8 @@ export class ChatService {
     return {
       conversationId,
       messages: pinnedMessageDtos,
+      pinnedMessage: pinnedMessageDtos[0] || null,
+      pinnedMessages: pinnedMessageDtos,
       pagination: {
         page,
         limit,
@@ -8536,6 +8587,7 @@ export class ChatService {
     options: { limit?: number; cursor?: string; page?: number } = {}
   ): Promise<{
     messages: ChatMessageDTO[];
+    pinnedMessage: ChatMessageDTO | null;
     pinnedMessages: ChatMessageDTO[];
     conversationId: string | null;
     participant: {
@@ -8561,6 +8613,7 @@ export class ChatService {
     if (!conversation) {
       return {
         messages: [],
+        pinnedMessage: null,
         pinnedMessages: [],
         conversationId: null,
         participant: {
@@ -8579,6 +8632,7 @@ export class ChatService {
     return {
       conversationId: conversation.id,
       messages: result.messages,
+      pinnedMessage: result.pinnedMessage,
       pinnedMessages: result.pinnedMessages,
       participant: result.participant,
       pagination: {

@@ -6,7 +6,7 @@
 
 import { AppSocket, AppSocketServer } from './socket.types';
 import { chatService, ChatServiceError, coerceMediaList } from '../services/chat.service';
-import { audioReferenceFromPayload } from '../utils/chatMediaKind';
+import { audioReferenceFromPayload, ensureImageMessageContent } from '../utils/chatMediaKind';
 import { ChatMessage, Conversation } from '../models';
 import { areUsersBlocked } from '../utils/pairBlock';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
@@ -216,11 +216,17 @@ export const registerChatSocketHandlers = (
         ...coerceMediaList(payload.metadata?.mediaUrls),
       ];
 
+      ensureImageMessageContent(payload);
+
       let msgType = payload.messageType || payload.type;
       if (!msgType) {
         const hasImage =
           payload.imageUrl ||
           payload.image ||
+          payload.key ||
+          payload.storageKey ||
+          payload.s3Key ||
+          payload.imageKey ||
           normalizedImages.length > 0 ||
           normalizedImageUrls.length > 0;
         const audioRef = payload.audioUrl || payload.audio || payload.voiceUrl;
@@ -235,6 +241,9 @@ export const registerChatSocketHandlers = (
 
       let content =
         payload.content ||
+        payload.key ||
+        payload.storageKey ||
+        payload.s3Key ||
         payload.body ||
         payload.text ||
         payload.message ||
@@ -245,6 +254,9 @@ export const registerChatSocketHandlers = (
         payload.image ||
         payload.mediaUrl ||
         payload.imageKey ||
+        payload.uri ||
+        payload.path ||
+        payload.publicUrl ||
         payload.url ||
         payload.fileUrl;
 

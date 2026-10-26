@@ -3059,6 +3059,9 @@ export class ChatService {
 
     let rawContent = (
       data.content ||
+      (data as any).key ||
+      (data as any).storageKey ||
+      (data as any).s3Key ||
       (data as any).imageUrl ||
       (data as any).image_url ||
       (data as any).image ||
@@ -3066,6 +3069,9 @@ export class ChatService {
       (data as any).media_url ||
       (data as any).imageKey ||
       (data as any).image_key ||
+      (data as any).uri ||
+      (data as any).path ||
+      (data as any).publicUrl ||
       (data as any).audioUrl ||
       (data as any).audio_url ||
       (data as any).audio ||
@@ -4432,6 +4438,9 @@ export class ChatService {
 
     let rawContent = (
       data.content ||
+      (data as any).key ||
+      (data as any).storageKey ||
+      (data as any).s3Key ||
       (data as any).imageUrl ||
       (data as any).image_url ||
       (data as any).image ||
@@ -4439,6 +4448,9 @@ export class ChatService {
       (data as any).media_url ||
       (data as any).imageKey ||
       (data as any).image_key ||
+      (data as any).uri ||
+      (data as any).path ||
+      (data as any).publicUrl ||
       (data as any).audioUrl ||
       (data as any).audio_url ||
       (data as any).audio ||

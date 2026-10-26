@@ -6,6 +6,7 @@
 import crypto from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { Op, QueryTypes } from 'sequelize';
+import { areUsersBlocked } from '../utils/pairBlock';
 import {
   sequelize,
   User,
@@ -2840,17 +2841,7 @@ export class ChatService {
       attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
     });
 
-    // Check if blocked
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: senderId, blockedUserId: recipientId },
-          { userId: recipientId, blockedUserId: senderId },
-        ],
-      },
-    });
-
-    if (isBlocked) {
+    if (await areUsersBlocked(senderId, recipientId)) {
       throw new ChatServiceError(
         'You cannot send messages to this user',
         403,
@@ -7034,15 +7025,7 @@ export class ChatService {
       return null;
     }
 
-    const blocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
-    if (blocked) {
+    if (await areUsersBlocked(currentUserId, otherUserId)) {
       setPresenceWatch(currentUserId, conversation.id, false);
       return null;
     }

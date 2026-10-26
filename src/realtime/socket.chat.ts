@@ -7,8 +7,8 @@
 import { AppSocket, AppSocketServer } from './socket.types';
 import { chatService, ChatServiceError, coerceMediaList } from '../services/chat.service';
 import { audioReferenceFromPayload } from '../utils/chatMediaKind';
-import { ChatMessage, Conversation, UserBlock } from '../models';
-import { Op } from 'sequelize';
+import { ChatMessage, Conversation } from '../models';
+import { areUsersBlocked } from '../utils/pairBlock';
 import { getUserRoomName, setConversationViewing } from './socket.lifecycle';
 import { socketLogger } from './socket.errors';
 
@@ -699,16 +699,7 @@ export const registerChatSocketHandlers = (
         ? conversation.user2Id
         : conversation.user1Id;
 
-      // Ensure blocked users do not receive typing events
-      const isBlocked = await UserBlock.findOne({
-        where: {
-          [Op.or]: [
-            { userId: currentUserId, blockedUserId: otherUserId },
-            { userId: otherUserId, blockedUserId: currentUserId },
-          ],
-        },
-      });
-      if (isBlocked) return;
+      if (await areUsersBlocked(currentUserId, otherUserId)) return;
 
       io.to(getUserRoomName(otherUserId)).emit('chat:typing', {
         conversationId: payload.conversationId,

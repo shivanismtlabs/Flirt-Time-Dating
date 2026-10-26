@@ -698,7 +698,10 @@ export class MomentService {
         reactionsByMoment.set(row.momentId, list);
       }
       for (const moment of moments) {
-        moment.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
+        (moment as unknown as { setDataValue(key: string, value: unknown): void }).setDataValue(
+          'reactions',
+          reactionsByMoment.get(moment.id) || []
+        );
       }
     }
 

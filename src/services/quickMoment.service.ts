@@ -271,8 +271,9 @@ export class QuickMomentService {
         viewsByMoment.set(view.quickMomentId, list);
       }
       for (const moment of activeMoments) {
-        moment.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
-        moment.setDataValue('views', viewsByMoment.get(moment.id) || []);
+        const target = moment as unknown as { setDataValue(key: string, value: unknown): void };
+        target.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
+        target.setDataValue('views', viewsByMoment.get(moment.id) || []);
       }
     }
 

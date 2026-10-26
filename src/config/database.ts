@@ -41,10 +41,10 @@ if (!isTestEnv) {
     Number.isFinite(env.DB_STATEMENT_TIMEOUT_MS) && env.DB_STATEMENT_TIMEOUT_MS > 0
       ? env.DB_STATEMENT_TIMEOUT_MS
       : 20000;
-  sequelize.addHook('afterConnect', (connection: unknown) => {
+  sequelize.addHook('afterConnect', async (connection: unknown) => {
     const client = connection as { query?: (sql: string) => Promise<unknown> };
-    if (!client.query) return undefined;
-    return client.query(`SET statement_timeout = ${statementTimeoutMs}`);
+    if (!client.query) return;
+    await client.query(`SET statement_timeout = ${statementTimeoutMs}`);
   });
 }
 

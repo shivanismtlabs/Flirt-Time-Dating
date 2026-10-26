@@ -899,34 +899,14 @@ const findClientMessages = async (
   transaction?: any
 ): Promise<ChatMessage[]> => {
   const wanted = String(clientMessageId);
-  const safePrefix = wanted.replace(/[\\%_]/g, '');
-  const indexed = await ChatMessage.findAll({
-    where: {
-      conversationId,
-      senderId,
-      [Op.or]: [
-        { clientMessageId: wanted },
-        { clientMessageId: { [Op.like]: `${safePrefix}-%` } },
-      ],
-    },
-    order: [
-      ['createdAt', 'ASC'],
-      ['id', 'ASC'],
-    ],
-    transaction,
-  });
-  const matched = indexed.filter((row) =>
-    sameClientSend(row.clientMessageId || clientMessageIdFromMetadata(row.metadata), wanted)
-  );
-  if (matched.length > 0) return matched;
-
   const since = new Date(Date.now() - CLIENT_ID_LOOKUP_WINDOW_MS);
-  const legacy = await ChatMessage.findAll({
+  // The id lives in metadata. A separate column is not required, so a database
+  // that has not been altered yet can still send and dedupe messages.
+  const rows = await ChatMessage.findAll({
     where: {
       conversationId,
       senderId,
       createdAt: { [Op.gte]: since },
-      clientMessageId: null,
       metadata: clientMessageIdLike(wanted),
     },
     limit: 20,
@@ -936,7 +916,7 @@ const findClientMessages = async (
     ],
     transaction,
   });
-  return legacy.filter((row) =>
+  return rows.filter((row) =>
     sameClientSend(clientMessageIdFromMetadata(row.metadata), wanted)
   );
 };
@@ -3863,7 +3843,6 @@ export class ChatService {
             content: item.content,
             messageType: item.type,
             metadata: metadataPayload,
-            clientMessageId: clientMsgId || null,
             isRead: false,
           },
           { transaction: t }
@@ -5187,7 +5166,6 @@ export class ChatService {
               content: item.content,
               messageType: item.type,
               metadata: metadataPayload,
-              clientMessageId: clientMsgId || null,
               isRead: false,
             },
             { transaction: t }
@@ -10161,7 +10139,6 @@ return {
               content: srcMsg.content,
               messageType: srcMsg.messageType,
               metadata: JSON.stringify(destMeta),
-              clientMessageId: perMessageClientId || null,
               isRead: false,
             },
             { transaction: t }

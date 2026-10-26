@@ -1,5 +1,10 @@
 import { z } from 'zod';
-import { ensureAudioMessageContent, ensureImageMessageContent } from '../utils/chatMediaKind';
+import {
+  ensureAudioMessageContent,
+  ensureImageMessageContent,
+  isInvalidImageReferenceString,
+  isLocalDeviceMediaReference,
+} from '../utils/chatMediaKind';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -396,6 +401,13 @@ export const sendMessageSchema = z.object({
       photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
       urls: z.union([z.array(z.any()), z.string()]).optional(),
       keys: z.union([z.array(z.any()), z.string()]).optional(),
+      key: z.string().trim().max(5000).optional(),
+      storageKey: z.string().trim().max(5000).optional(),
+      s3Key: z.string().trim().max(5000).optional(),
+      uri: z.string().trim().max(5000).optional(),
+      path: z.string().trim().max(5000).optional(),
+      publicUrl: z.string().trim().max(5000).optional(),
+      link: z.string().trim().max(5000).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
       durationMs: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
@@ -411,8 +423,7 @@ export const sendMessageSchema = z.object({
           }),
         })
         .optional()
-        .transform((val) => (val === 'voice' ? 'audio' : val))
-        .default('text'),
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
       clientMessageId: z.string().trim().max(100, { message: 'Invalid clientMessageId format' }).optional(),
       replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
       parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
@@ -569,6 +580,9 @@ export const sendMessageSchema = z.object({
         data.messageType ||
         (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
+      if (!data.type) (data as any).type = type;
+      if (!data.messageType) (data as any).messageType = type;
+
       if (type === 'text') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -578,23 +592,29 @@ export const sendMessageSchema = z.object({
           });
         }
       } else if (type === 'image') {
-        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          if (candidateImageRef) {
-            data.content = candidateImageRef;
-          } else if (multiImageFirst) {
-            data.content = multiImageFirst;
+        const isContentInvalid =
+          !data.content ||
+          typeof data.content !== 'string' ||
+          data.content.trim().length === 0 ||
+          isInvalidImageReferenceString(data.content) ||
+          isLocalDeviceMediaReference(data.content);
+
+        if (isContentInvalid) {
+          const validCandidate =
+            candidateImageRef &&
+            !isInvalidImageReferenceString(candidateImageRef) &&
+            !isLocalDeviceMediaReference(candidateImageRef)
+              ? candidateImageRef
+              : multiImageFirst &&
+                !isInvalidImageReferenceString(multiImageFirst) &&
+                !isLocalDeviceMediaReference(multiImageFirst)
+              ? multiImageFirst
+              : undefined;
+
+          if (validCandidate) {
+            data.content = validCandidate;
           } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
-          } else if (
-            (Array.isArray((data as any).images) && (data as any).images.length > 0) ||
-            (Array.isArray((data as any).photos) && (data as any).photos.length > 0) ||
-            (Array.isArray((data as any).medias) && (data as any).medias.length > 0) ||
-            (Array.isArray((data as any).attachments) && (data as any).attachments.length > 0) ||
-            (data as any).images ||
-            (data as any).photos ||
-            (data as any).medias
-          ) {
-            data.content = '__MULTI_IMAGE__';
           } else {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
@@ -774,6 +794,13 @@ export const sendMultiMessageSchema = z.object({
       photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
       urls: z.union([z.array(z.any()), z.string()]).optional(),
       keys: z.union([z.array(z.any()), z.string()]).optional(),
+      key: z.string().trim().max(5000).optional(),
+      storageKey: z.string().trim().max(5000).optional(),
+      s3Key: z.string().trim().max(5000).optional(),
+      uri: z.string().trim().max(5000).optional(),
+      path: z.string().trim().max(5000).optional(),
+      publicUrl: z.string().trim().max(5000).optional(),
+      link: z.string().trim().max(5000).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
       durationMs: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
@@ -974,6 +1001,9 @@ export const sendMultiMessageSchema = z.object({
         data.messageType ||
         (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
+      if (!data.type) (data as any).type = type;
+      if (!data.messageType) (data as any).messageType = type;
+
       if (type === 'text') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -983,23 +1013,29 @@ export const sendMultiMessageSchema = z.object({
           });
         }
       } else if (type === 'image') {
-        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          if (candidateImageRef) {
-            data.content = candidateImageRef;
-          } else if (multiImageFirst) {
-            data.content = multiImageFirst;
+        const isContentInvalid =
+          !data.content ||
+          typeof data.content !== 'string' ||
+          data.content.trim().length === 0 ||
+          isInvalidImageReferenceString(data.content) ||
+          isLocalDeviceMediaReference(data.content);
+
+        if (isContentInvalid) {
+          const validCandidate =
+            candidateImageRef &&
+            !isInvalidImageReferenceString(candidateImageRef) &&
+            !isLocalDeviceMediaReference(candidateImageRef)
+              ? candidateImageRef
+              : multiImageFirst &&
+                !isInvalidImageReferenceString(multiImageFirst) &&
+                !isLocalDeviceMediaReference(multiImageFirst)
+              ? multiImageFirst
+              : undefined;
+
+          if (validCandidate) {
+            data.content = validCandidate;
           } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
-          } else if (
-            (Array.isArray((data as any).images) && (data as any).images.length > 0) ||
-            (Array.isArray((data as any).photos) && (data as any).photos.length > 0) ||
-            (Array.isArray((data as any).medias) && (data as any).medias.length > 0) ||
-            (Array.isArray((data as any).attachments) && (data as any).attachments.length > 0) ||
-            (data as any).images ||
-            (data as any).photos ||
-            (data as any).medias
-          ) {
-            data.content = '__MULTI_IMAGE__';
           } else {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,

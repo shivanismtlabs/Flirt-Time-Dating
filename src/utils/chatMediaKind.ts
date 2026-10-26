@@ -1,3 +1,6 @@
+export const IMAGE_NAME = /\.(jpe?g|png|webp|gif|avif|heic|heif|bmp)(\?|#|$)/i;
+export const AUDIO_NAME = /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)(\?|#|$)/i;
+
 export const LOCAL_DEVICE_MEDIA =
   /^(file|content|ph|assets-library|blob):|^\/var\/|^\/data\/|^\/private\//i;
 

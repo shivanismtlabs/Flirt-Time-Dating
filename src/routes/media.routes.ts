@@ -7,38 +7,38 @@ import { generatePresignedUrlSchema } from '../schemas/media.schema';
 
 const router = Router();
 
-// 1. Direct S3 Media Upload & Presigned URL Generation
-// Supports POST /api/v1/media/uploads, POST /api/v1/media/upload, POST /api/v1/media
+// Direct S3 Media Upload & Presigned URL Generation
+// Supports POST /api/v1/media/uploads, /upload, /images, /image, /photos, /photo, /files, /file, /
 router.post(
-  '/uploads',
+  [
+    '/uploads',
+    '/upload',
+    '/images',
+    '/image',
+    '/photos',
+    '/photo',
+    '/files',
+    '/file',
+    '/',
+  ],
   authenticate,
   handleUploadUniversalMedia,
   mediaController.uploadMediaHandler
 );
 
-router.post(
-  '/upload',
-  authenticate,
-  handleUploadUniversalMedia,
-  mediaController.uploadMediaHandler
-);
-
-router.post(
-  '/',
-  authenticate,
-  handleUploadUniversalMedia,
-  mediaController.uploadMediaHandler
-);
-
-// GET /api/v1/media/uploads or /api/v1/media/upload for presigned URL / info retrieval
+// GET /api/v1/media/uploads or aliases for presigned URL / info retrieval
 router.get(
-  '/uploads',
-  authenticate,
-  mediaController.uploadMediaHandler
-);
-
-router.get(
-  '/upload',
+  [
+    '/uploads',
+    '/upload',
+    '/images',
+    '/image',
+    '/photos',
+    '/photo',
+    '/files',
+    '/file',
+    '/',
+  ],
   authenticate,
   mediaController.uploadMediaHandler
 );

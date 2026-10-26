@@ -368,11 +368,14 @@ export const uploadChatMediaHandler = async (req: AuthenticatedRequest, res: Res
           thumbnailUrl: primary.thumbnailUrl,
           publicUrl: primary.publicUrl,
           mimeType: primary.mimeType,
-          size: primary.size,
           files: uploadedFiles,
           images: uploadedImages,
+          photos: uploadedImages,
+          media: uploadedFiles,
+          medias: uploadedFiles,
           imageUrls: uploadedImages.map((img) => img.url),
           urls: uploadedFiles.map((f) => f.url),
+          keys: uploadedFiles.map((f) => f.key),
         },
         201
       );

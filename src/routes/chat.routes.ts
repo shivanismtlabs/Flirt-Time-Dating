@@ -97,9 +97,12 @@ router.get(
 );
 
 // 4b. Dedicated S3 Chat Media Upload & Presigned URL Endpoints
-// Supports POST /api/v1/chats/upload, POST /api/v1/chats/media
-router.post('/upload', handleUploadChatMedia, uploadChatMediaHandler);
-router.post('/media', handleUploadChatMedia, uploadChatMediaHandler);
+// Supports POST /api/v1/chats/upload, /uploads, /media, /medias, /images, /image, /photos, /photo
+router.post(
+  ['/upload', '/uploads', '/media', '/medias', '/images', '/image', '/photos', '/photo'],
+  handleUploadChatMedia,
+  uploadChatMediaHandler
+);
 
 // 5. Message History by Target User (backward compatibility):
 // GET /api/v1/chat/messages/:targetUserId
@@ -109,8 +112,20 @@ router.get('/messages/:targetUserId', getMessagesHandler);
 router.get('/:conversationId', validate(getConversationDetailSchema), getConversationDetailHandler);
 
 // 6b. POST /api/v1/chats/:conversationId/upload & media - Conversation-scoped S3 media upload
-router.post('/:conversationId/upload', handleUploadChatMedia, uploadChatMediaHandler);
-router.post('/:conversationId/media', handleUploadChatMedia, uploadChatMediaHandler);
+router.post(
+  [
+    '/:conversationId/upload',
+    '/:conversationId/uploads',
+    '/:conversationId/media',
+    '/:conversationId/medias',
+    '/:conversationId/images',
+    '/:conversationId/image',
+    '/:conversationId/photos',
+    '/:conversationId/photo',
+  ],
+  handleUploadChatMedia,
+  uploadChatMediaHandler
+);
 
 // 7. GET /api/v1/chats/:conversationId/messages - Paginated message history
 router.get('/:conversationId/messages', validate(getMessagesSchema), getMessagesHandler);

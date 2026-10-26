@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ensureAudioMessageContent } from '../utils/chatMediaKind';
+import { ensureAudioMessageContent, ensureImageMessageContent } from '../utils/chatMediaKind';
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -367,12 +367,14 @@ export const sendMessageSchema = z.object({
   body: z
     .object({
       content: z
-        .string()
-        .trim()
-        .max(5000000, { message: 'Message content cannot exceed maximum limit' })
+        .union([
+          z.string().trim().max(5000000),
+          z.array(z.any()),
+          z.record(z.any()),
+        ])
         .optional(),
       imageUrl: z.string().trim().max(5000).optional(),
-      image: z.string().trim().max(5000000).optional(),
+      image: z.union([z.string().trim().max(5000000), z.array(z.any()), z.record(z.any())]).optional(),
       mediaUrl: z.string().trim().max(5000).optional(),
       imageKey: z.string().trim().max(5000).optional(),
       audioUrl: z.string().trim().max(5000).optional(),
@@ -381,9 +383,19 @@ export const sendMessageSchema = z.object({
       url: z.string().trim().max(5000).optional(),
       fileUrl: z.string().trim().max(5000).optional(),
       images: z.union([z.array(z.any()), z.string()]).optional(),
-    medias: z.union([z.array(z.any()), z.string()]).optional(),
+      medias: z.union([z.array(z.any()), z.string()]).optional(),
+      media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
+      photos: z.union([z.array(z.any()), z.string()]).optional(),
+      photo: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      attachments: z.union([z.array(z.any()), z.string()]).optional(),
+      attachment: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      files: z.union([z.array(z.any()), z.string()]).optional(),
+      file: z.any().optional(),
       imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
       mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      urls: z.union([z.array(z.any()), z.string()]).optional(),
+      keys: z.union([z.array(z.any()), z.string()]).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
       durationMs: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
@@ -407,22 +419,37 @@ export const sendMessageSchema = z.object({
       replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
+    .passthrough()
     .superRefine((data, ctx) => {
       ensureAudioMessageContent(data);
-      let multiImageFirst: string | undefined;
-      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
-        const first = (data as any).images[0];
-        multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-        const first = (data as any).imageUrls[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).mediaUrls) && (data as any).mediaUrls.length > 0) {
-        const first = (data as any).mediaUrls[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).medias) && (data as any).medias.length > 0) {
-        const first = (data as any).medias[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
+      ensureImageMessageContent(data);
+
+      if (Array.isArray(data.content)) {
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+      } else if (data.content && typeof data.content === 'object') {
+        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
       }
+
+      let multiImageFirst: string | undefined;
+      const scanFirst = (list: any): string | undefined => {
+        if (!list) return undefined;
+        if (Array.isArray(list) && list.length > 0) {
+          const item = list[0];
+          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        }
+        return undefined;
+      };
+
+      multiImageFirst =
+        scanFirst((data as any).images) ||
+        scanFirst((data as any).imageUrls) ||
+        scanFirst((data as any).photos) ||
+        scanFirst((data as any).photoUrls) ||
+        scanFirst((data as any).attachments) ||
+        scanFirst((data as any).mediaUrls) ||
+        scanFirst((data as any).medias) ||
+        scanFirst((data as any).media) ||
+        scanFirst((data as any).files);
 
       const resolvedContent =
         data.content ||
@@ -442,7 +469,15 @@ export const sendMessageSchema = z.object({
       }
 
       const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
-      const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || multiImageFirst);
+      const isImageSignal = !!(
+        data.imageUrl ||
+        data.image ||
+        data.imageKey ||
+        (data as any).photos ||
+        (data as any).attachments ||
+        (data as any).images ||
+        multiImageFirst
+      );
 
       const type =
         data.type ||
@@ -450,7 +485,7 @@ export const sendMessageSchema = z.object({
         (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
       if (type === 'text') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -458,7 +493,7 @@ export const sendMessageSchema = z.object({
           });
         }
       } else if (type === 'image') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -491,7 +526,7 @@ export const sendMessageSchema = z.object({
           }
         }
       } else if (type === 'audio') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -606,90 +641,117 @@ export const sendMultiMessageSchema = z.object({
       toUserId: optionalRecipientRef,
       otherUserId: optionalRecipientRef,
       conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }).optional(),
-          content: z
-            .string()
-            .trim()
-            .max(5000000, { message: 'Message content cannot exceed maximum limit' })
-            .optional(),
-          imageUrl: z.string().trim().max(5000).optional(),
-          image: z.string().trim().max(5000000).optional(),
-          mediaUrl: z.string().trim().max(5000).optional(),
-          imageKey: z.string().trim().max(5000).optional(),
-          audioUrl: z.string().trim().max(5000).optional(),
-          audio: z.string().trim().max(5000000).optional(),
-          voiceUrl: z.string().trim().max(5000).optional(),
-          url: z.string().trim().max(5000).optional(),
-          fileUrl: z.string().trim().max(5000).optional(),
-          images: z.union([z.array(z.any()), z.string()]).optional(),
-    medias: z.union([z.array(z.any()), z.string()]).optional(),
-          imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
-          mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
-          duration: z.union([z.number(), z.string()]).optional(),
-          durationMs: z.union([z.number(), z.string()]).optional(),
-          caption: z.string().trim().max(1000).optional(),
-          type: z
-            .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
-              errorMap: () => ({
-                message:
-                  'Invalid message type. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
-              }),
-            })
-            .optional()
-            .transform((val) => (val === 'voice' ? 'audio' : val)),
-          messageType: z
-            .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
-              errorMap: () => ({
-                message:
-                  'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
-              }),
-            })
-            .optional()
-            .transform((val) => (val === 'voice' ? 'audio' : val)),
-          clientMessageId: z
-            .string()
-            .trim()
-            .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
-            .optional(),
-          clientMessageIds: z.record(z.string().trim().max(100)).optional(),
-          replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
-          parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
-          replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
-          metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+      content: z
+        .union([
+          z.string().trim().max(5000000),
+          z.array(z.any()),
+          z.record(z.any()),
+        ])
+        .optional(),
+      imageUrl: z.string().trim().max(5000).optional(),
+      image: z.union([z.string().trim().max(5000000), z.array(z.any()), z.record(z.any())]).optional(),
+      mediaUrl: z.string().trim().max(5000).optional(),
+      imageKey: z.string().trim().max(5000).optional(),
+      audioUrl: z.string().trim().max(5000).optional(),
+      audio: z.string().trim().max(5000000).optional(),
+      voiceUrl: z.string().trim().max(5000).optional(),
+      url: z.string().trim().max(5000).optional(),
+      fileUrl: z.string().trim().max(5000).optional(),
+      images: z.union([z.array(z.any()), z.string()]).optional(),
+      medias: z.union([z.array(z.any()), z.string()]).optional(),
+      media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
+      photos: z.union([z.array(z.any()), z.string()]).optional(),
+      photo: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      attachments: z.union([z.array(z.any()), z.string()]).optional(),
+      attachment: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      files: z.union([z.array(z.any()), z.string()]).optional(),
+      file: z.any().optional(),
+      imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      urls: z.union([z.array(z.any()), z.string()]).optional(),
+      keys: z.union([z.array(z.any()), z.string()]).optional(),
+      duration: z.union([z.number(), z.string()]).optional(),
+      durationMs: z.union([z.number(), z.string()]).optional(),
+      caption: z.string().trim().max(1000).optional(),
+      type: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
+          errorMap: () => ({
+            message:
+              'Invalid message type. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+          }),
         })
-        .superRefine((data, ctx) => {
-          ensureAudioMessageContent(data);
-          const hasRecipients =
-            (data.recipientIds && data.recipientIds.length > 0) ||
-            !!data.recipientId ||
-            !!data.userId ||
-            !!data.targetUserId ||
-            !!data.participantId ||
-            !!(data as any).toUserId ||
-            !!(data as any).otherUserId ||
-            !!data.conversationId;
+        .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
+      messageType: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
+          errorMap: () => ({
+            message:
+              'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+          }),
+        })
+        .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
+      clientMessageId: z
+        .string()
+        .trim()
+        .max(100, { message: 'clientMessageId cannot exceed 100 characters' })
+        .optional(),
+      clientMessageIds: z.record(z.string().trim().max(100)).optional(),
+      replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+      parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+      replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
+      metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+    })
+    .passthrough()
+    .superRefine((data, ctx) => {
+      ensureAudioMessageContent(data);
+      ensureImageMessageContent(data);
 
-          if (!hasRecipients) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ['recipientIds'],
-              message: 'At least one recipientId or recipientIds or conversationId must be provided',
-            });
-          }
+      const hasRecipients =
+        (data.recipientIds && data.recipientIds.length > 0) ||
+        !!data.recipientId ||
+        !!data.userId ||
+        !!data.targetUserId ||
+        !!data.participantId ||
+        !!(data as any).toUserId ||
+        !!(data as any).otherUserId ||
+        !!data.conversationId;
+
+      if (!hasRecipients) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['recipientIds'],
+          message: 'At least one recipientId or recipientIds or conversationId must be provided',
+        });
+      }
+
+      if (Array.isArray(data.content)) {
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+      } else if (data.content && typeof data.content === 'object') {
+        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
+      }
 
       let multiImageFirst: string | undefined;
-      if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
-        const first = (data as any).images[0];
-        multiImageFirst = typeof first === 'string' ? first : first.url || first.imageUrl || first.mediaUrl || first.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).imageUrls) && (data as any).imageUrls.length > 0) {
-        const first = (data as any).imageUrls[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).mediaUrls) && (data as any).mediaUrls.length > 0) {
-        const first = (data as any).mediaUrls[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
-      } else if (Array.isArray((data as any).medias) && (data as any).medias.length > 0) {
-        const first = (data as any).medias[0];
-        multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
-      }
+      const scanFirst = (list: any): string | undefined => {
+        if (!list) return undefined;
+        if (Array.isArray(list) && list.length > 0) {
+          const item = list[0];
+          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        }
+        return undefined;
+      };
+
+      multiImageFirst =
+        scanFirst((data as any).images) ||
+        scanFirst((data as any).imageUrls) ||
+        scanFirst((data as any).photos) ||
+        scanFirst((data as any).photoUrls) ||
+        scanFirst((data as any).attachments) ||
+        scanFirst((data as any).mediaUrls) ||
+        scanFirst((data as any).medias) ||
+        scanFirst((data as any).media) ||
+        scanFirst((data as any).files);
 
       const resolvedContent =
         data.content ||
@@ -709,7 +771,15 @@ export const sendMultiMessageSchema = z.object({
       }
 
       const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
-      const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || multiImageFirst);
+      const isImageSignal = !!(
+        data.imageUrl ||
+        data.image ||
+        data.imageKey ||
+        (data as any).photos ||
+        (data as any).attachments ||
+        (data as any).images ||
+        multiImageFirst
+      );
 
       const type =
         data.type ||
@@ -717,7 +787,7 @@ export const sendMultiMessageSchema = z.object({
         (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
       if (type === 'text') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -725,7 +795,7 @@ export const sendMultiMessageSchema = z.object({
           });
         }
       } else if (type === 'image') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -758,7 +828,7 @@ export const sendMultiMessageSchema = z.object({
           }
         }
       } else if (type === 'audio') {
-        if (!data.content || data.content.trim().length === 0) {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -1153,46 +1223,143 @@ export const replyMessageSchema = z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
     messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }).optional(),
   }),
-  body: z.object({
-    replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
-    parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
-    replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
-    content: z
-      .string({ required_error: 'Message content is required' })
-      .trim()
-      .min(1, { message: 'Message content cannot be empty' })
-      .max(5000000, { message: 'Message content cannot exceed maximum limit' })
-      .optional(),
-    imageUrl: z.string().trim().max(5000).optional(),
-    image: z.string().trim().max(5000000).optional(),
-    mediaUrl: z.string().trim().max(5000).optional(),
-    imageKey: z.string().trim().max(5000).optional(),
-    audioUrl: z.string().trim().max(5000).optional(),
-    audio: z.string().trim().max(5000000).optional(),
-    voiceUrl: z.string().trim().max(5000).optional(),
-    url: z.string().trim().max(5000).optional(),
-    fileUrl: z.string().trim().max(5000).optional(),
-    images: z.union([z.array(z.any()), z.string()]).optional(),
-    medias: z.union([z.array(z.any()), z.string()]).optional(),
-    imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
-    mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
-    duration: z.union([z.number(), z.string()]).optional(),
-    caption: z.string().trim().max(1000).optional(),
-    type: z
-      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'])
-      .optional(),
-    messageType: z
-      .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift'], {
-        errorMap: () => ({
-          message:
-            'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
-        }),
-      })
-      .optional()
-      .default('text'),
-    clientMessageId: z.string().trim().max(100).optional(),
-    metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
-  }),
+  body: z
+    .object({
+      replyToMessageId: z.string().uuid({ message: 'Invalid replyToMessageId UUID format' }).optional(),
+      parentMessageId: z.string().uuid({ message: 'Invalid parentMessageId UUID format' }).optional(),
+      replyToId: z.string().uuid({ message: 'Invalid replyToId UUID format' }).optional(),
+      content: z
+        .union([
+          z.string().trim().max(5000000),
+          z.array(z.any()),
+          z.record(z.any()),
+        ])
+        .optional(),
+      imageUrl: z.string().trim().max(5000).optional(),
+      image: z.union([z.string().trim().max(5000000), z.array(z.any()), z.record(z.any())]).optional(),
+      mediaUrl: z.string().trim().max(5000).optional(),
+      imageKey: z.string().trim().max(5000).optional(),
+      audioUrl: z.string().trim().max(5000).optional(),
+      audio: z.string().trim().max(5000000).optional(),
+      voiceUrl: z.string().trim().max(5000).optional(),
+      url: z.string().trim().max(5000).optional(),
+      fileUrl: z.string().trim().max(5000).optional(),
+      images: z.union([z.array(z.any()), z.string()]).optional(),
+      medias: z.union([z.array(z.any()), z.string()]).optional(),
+      media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
+      photos: z.union([z.array(z.any()), z.string()]).optional(),
+      photo: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      attachments: z.union([z.array(z.any()), z.string()]).optional(),
+      attachment: z.union([z.string(), z.record(z.any()), z.array(z.any())]).optional(),
+      files: z.union([z.array(z.any()), z.string()]).optional(),
+      file: z.any().optional(),
+      imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
+      urls: z.union([z.array(z.any()), z.string()]).optional(),
+      keys: z.union([z.array(z.any()), z.string()]).optional(),
+      duration: z.union([z.number(), z.string()]).optional(),
+      caption: z.string().trim().max(1000).optional(),
+      type: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'])
+        .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
+      messageType: z
+        .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'], {
+          errorMap: () => ({
+            message:
+              'Invalid messageType. Allowed values: text, audio, image, location, contact, moment_reply, moment_gift',
+          }),
+        })
+        .optional()
+        .transform((val) => (val === 'voice' ? 'audio' : val))
+        .default('text'),
+      clientMessageId: z.string().trim().max(100).optional(),
+      metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
+    })
+    .passthrough()
+    .superRefine((data, ctx) => {
+      ensureAudioMessageContent(data);
+      ensureImageMessageContent(data);
+
+      if (Array.isArray(data.content)) {
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+      } else if (data.content && typeof data.content === 'object') {
+        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
+      }
+
+      let multiImageFirst: string | undefined;
+      const scanFirst = (list: any): string | undefined => {
+        if (!list) return undefined;
+        if (Array.isArray(list) && list.length > 0) {
+          const item = list[0];
+          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        }
+        return undefined;
+      };
+
+      multiImageFirst =
+        scanFirst((data as any).images) ||
+        scanFirst((data as any).imageUrls) ||
+        scanFirst((data as any).photos) ||
+        scanFirst((data as any).photoUrls) ||
+        scanFirst((data as any).attachments) ||
+        scanFirst((data as any).mediaUrls) ||
+        scanFirst((data as any).medias) ||
+        scanFirst((data as any).media) ||
+        scanFirst((data as any).files);
+
+      const resolvedContent =
+        data.content ||
+        data.imageUrl ||
+        data.image ||
+        data.mediaUrl ||
+        data.imageKey ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl ||
+        (data as any).url ||
+        (data as any).fileUrl ||
+        multiImageFirst;
+
+      if (resolvedContent && !data.content) {
+        data.content = resolvedContent;
+      }
+
+      const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
+      const isImageSignal = !!(
+        data.imageUrl ||
+        data.image ||
+        data.imageKey ||
+        (data as any).photos ||
+        (data as any).attachments ||
+        (data as any).images ||
+        multiImageFirst
+      );
+
+      const type =
+        data.type ||
+        data.messageType ||
+        (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
+
+      if (type === 'text') {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Message content cannot be empty for text message',
+          });
+        }
+      } else if (type === 'image') {
+        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Image URL or storage key is required in content for image message',
+          });
+        }
+      }
+    }),
 });
 
 export type GetChatListQuery = z.infer<typeof getChatListSchema>['query'];

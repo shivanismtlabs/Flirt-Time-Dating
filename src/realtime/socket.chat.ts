@@ -1205,6 +1205,7 @@ export const registerChatSocketHandlers = (
       } catch {
         partner = null;
       }
+      void chatService.syncDeliveredMessages(currentUserId, { conversationId: conv.id }).catch(() => undefined);
       if (partner) {
         socket.emit('chat:presence', partner);
         socket.emit('chat:user:status', partner);

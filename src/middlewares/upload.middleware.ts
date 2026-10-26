@@ -605,18 +605,7 @@ export const handleUploadChatMedia = (
         }
       }
 
-      if (
-        !req.body.content &&
-        !req.body.imageUrl &&
-        !req.body.image &&
-        !req.body.mediaUrl &&
-        !req.body.audioUrl &&
-        !req.body.audio &&
-        !req.body.voiceUrl &&
-        !req.body.images &&
-        !req.body.medias &&
-        !req.body.imageUrls
-      ) {
+      if (!req.body.content || !String(req.body.content).trim()) {
         req.body.content = '__FILE_ATTACHMENT__';
       }
     }
@@ -633,22 +622,25 @@ export const handleUploadChatMedia = (
 
     ensureAudioMessageContent(req.body);
 
-    if (typeof req.body.images === 'string') {
-      try {
-        req.body.images = JSON.parse(req.body.images);
-      } catch {}
-    }
-
-    if (typeof req.body.medias === 'string') {
-      try {
-        req.body.medias = JSON.parse(req.body.medias);
-      } catch {}
-    }
-
-    if (typeof req.body.imageUrls === 'string') {
-      try {
-        req.body.imageUrls = JSON.parse(req.body.imageUrls);
-      } catch {}
+    for (const key of [
+      'images',
+      'photos',
+      'attachments',
+      'medias',
+      'media',
+      'imageUrls',
+      'photoUrls',
+      'mediaUrls',
+      'urls',
+    ]) {
+      if (typeof req.body[key] === 'string') {
+        const trimmed = req.body[key].trim();
+        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+          try {
+            req.body[key] = JSON.parse(trimmed);
+          } catch {}
+        }
+      }
     }
 
     if (req.body.duration && !isNaN(Number(req.body.duration))) {

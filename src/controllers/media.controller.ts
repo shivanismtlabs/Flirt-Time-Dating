@@ -23,26 +23,13 @@ export class MediaController {
 
       // 1. Gather all attached files from multipart form fields
       const fileList: Express.Multer.File[] = [];
-      if (req.files) {
+      if (Array.isArray(req.files) && req.files.length > 0) {
+        fileList.push(...req.files);
+      } else if (req.files && typeof req.files === 'object') {
         const filesObj = req.files as Record<string, Express.Multer.File[]>;
-        const fields = [
-          'file',
-          'files',
-          'media',
-          'medias',
-          'image',
-          'images',
-          'photo',
-          'photos',
-          'audio',
-          'video',
-          'attachment',
-          'attachments',
-          'document',
-        ];
-        for (const f of fields) {
-          if (Array.isArray(filesObj[f])) {
-            fileList.push(...filesObj[f]);
+        for (const list of Object.values(filesObj)) {
+          if (Array.isArray(list)) {
+            fileList.push(...list);
           }
         }
       }
@@ -111,14 +98,19 @@ export class MediaController {
           mediaUrl: primary.mediaUrl,
           publicUrl: primary.publicUrl,
           thumbnailUrl: primary.thumbnailUrl,
+          imageUrl: primary.url,
           mimeType: primary.mimeType,
           size: primary.size,
           fileName: primary.fileName,
+          files: uploadedResults,
+          images: uploadedResults,
+          photos: uploadedResults,
+          media: uploadedResults,
+          medias: uploadedResults,
+          imageUrls: uploadedResults.map((item) => item.url),
+          urls: uploadedResults.map((item) => item.url),
+          keys: uploadedResults.map((item) => item.key),
         };
-
-        if (uploadedResults.length > 1) {
-          responseData.files = uploadedResults;
-        }
 
         return sendSuccess(res, 'Media uploaded successfully', responseData, 201);
       }

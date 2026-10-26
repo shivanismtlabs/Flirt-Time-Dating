@@ -176,3 +176,148 @@ export function ensureAudioMessageContent(body: Record<string, any> | null | und
   if (!body.content || !String(body.content).trim()) body.content = ref;
   if (!body.audioUrl && ref.length <= 5000) body.audioUrl = ref;
 }
+
+/**
+ * Resolves the first image URL or storage key from anywhere in the payload (images, medias, photos, attachments, etc.)
+ */
+export function imageReferenceFromPayload(
+  data: any,
+  metadata?: any
+): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  let meta = metadata !== undefined ? metadata : data.metadata;
+  if (typeof meta === 'string') {
+    try {
+      meta = JSON.parse(meta);
+    } catch {
+      meta = undefined;
+    }
+  }
+
+  const sources = [
+    data.imageUrl,
+    data.image,
+    data.mediaUrl,
+    data.imageKey,
+    data.url,
+    data.fileUrl,
+    data.images,
+    data.imageUrls,
+    data.photos,
+    data.photo,
+    data.photoUrls,
+    data.medias,
+    data.media,
+    data.mediaUrls,
+    data.attachments,
+    data.attachment,
+    data.files,
+    data.file,
+    meta?.imageUrl,
+    meta?.image,
+    meta?.images,
+    meta?.imageUrls,
+    meta?.photos,
+    meta?.photo,
+    meta?.photoUrls,
+    meta?.medias,
+    meta?.media,
+    meta?.mediaUrls,
+    meta?.attachments,
+    meta?.attachment,
+    meta?.files,
+    meta?.file,
+  ];
+
+  for (const src of sources) {
+    if (!src) continue;
+    let list: any[] = [];
+    if (Array.isArray(src)) {
+      list = src;
+    } else if (typeof src === 'string') {
+      const trimmed = src.trim();
+      if (!trimmed || trimmed === '__FILE_ATTACHMENT__') continue;
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          list = Array.isArray(parsed) ? parsed : [parsed];
+        } catch {
+          list = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+        }
+      } else if (trimmed.includes(',')) {
+        list = trimmed.split(',');
+      } else {
+        list = [trimmed];
+      }
+    } else if (typeof src === 'object') {
+      list = [src];
+    }
+
+    for (const item of list) {
+      if (!item) continue;
+      if (typeof item === 'string') {
+        const trimmed = item.trim();
+        if (trimmed && trimmed !== '__FILE_ATTACHMENT__' && !LOCAL_DEVICE_MEDIA.test(trimmed)) {
+          return trimmed;
+        }
+      } else if (typeof item === 'object') {
+        const candidate =
+          item.url ||
+          item.imageUrl ||
+          item.mediaUrl ||
+          item.photoUrl ||
+          item.uri ||
+          item.path ||
+          item.src ||
+          item.key ||
+          item.imageKey ||
+          item.file;
+        if (candidate && typeof candidate === 'string') {
+          const trimmed = candidate.trim();
+          if (trimmed && !LOCAL_DEVICE_MEDIA.test(trimmed)) {
+            return trimmed;
+          }
+        }
+      }
+    }
+  }
+
+  // If there are image items, but they were local device refs or empty strings, return placeholder so schema validation does not reject
+  for (const src of sources) {
+    if (!src) continue;
+    if (Array.isArray(src) && src.length > 0) return '__MULTI_IMAGE__';
+    if (typeof src === 'string' && src.trim().length > 0 && src.trim() !== '[]' && src.trim() !== '{}') {
+      return src.trim();
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Copies a resolved image URL onto content/imageUrl if empty.
+ */
+export function ensureImageMessageContent(body: Record<string, any> | null | undefined): void {
+  if (!body || typeof body !== 'object') return;
+  if (Array.isArray(body.content) && body.content.length > 0) {
+    if (!body.images) body.images = [...body.content];
+    body.content = typeof body.content[0] === 'string' ? body.content[0] : (body.content[0]?.url || body.content[0]?.imageUrl || '__MULTI_IMAGE__');
+  } else if (typeof body.content === 'string' && body.content.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(body.content.trim());
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        if (!body.images) body.images = parsed;
+        body.content = typeof parsed[0] === 'string' ? parsed[0] : (parsed[0]?.url || parsed[0]?.imageUrl || '__MULTI_IMAGE__');
+      }
+    } catch {}
+  }
+
+  const ref = imageReferenceFromPayload(body, body.metadata);
+  if (!ref) return;
+  if (!body.content || !String(body.content).trim()) {
+    body.content = ref;
+  }
+  if (!body.imageUrl && ref.length <= 5000 && !ref.startsWith('__')) {
+    body.imageUrl = ref;
+  }
+}

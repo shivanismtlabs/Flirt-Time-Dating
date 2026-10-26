@@ -226,6 +226,71 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
       expect(cindyEntry.badge).toBeDefined();
       expect(cindyEntry.badge.text).toBe('😍 1');
     });
+
+    it('sets hasUnread to false only after the viewer has seen every active story', async () => {
+      const cindyStories = await QuickMoment.findAll({
+        where: { userId: cindyUser.id },
+        order: [['createdAt', 'ASC']],
+      });
+      expect(cindyStories).toHaveLength(1);
+
+      const secondStory = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'text',
+        text: 'Second story still unread',
+        backgroundColor: '#2d0b1e',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
+
+      const viewed = await request(app)
+        .post(`/api/v1/quick-moments/${cindyStories[0].id}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+      expect(viewed.status).toBe(200);
+
+      const partial = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
+      const stillUnread = partial.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(stillUnread.hasUnread).toBe(true);
+      expect(stillUnread.totalStories).toBe(2);
+
+      await request(app)
+        .post(`/api/v1/quick-moments/${secondStory.id}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const complete = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
+      const readEntry = complete.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(readEntry.hasUnread).toBe(false);
+
+      const otherViewer = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${thirdToken}`);
+      const unreadForOther = otherViewer.body.data.otherUsers.find(
+        (u: any) => u.userId === cindyUser.id
+      );
+      expect(unreadForOther.hasUnread).toBe(true);
+    });
+
+    it('marks all moments of a user as viewed when POST /api/v1/quick-moments/user/:userId/view is called', async () => {
+      const res = await request(app)
+        .post(`/api/v1/quick-moments/user/${cindyUser.id}/view`)
+        .set('Authorization', `Bearer ${thirdToken}`);
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.hasUnread).toBe(false);
+
+      const tray = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${thirdToken}`);
+      const cindyEntry = tray.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(cindyEntry.hasUnread).toBe(false);
+    });
   });
 
   describe('3. View Own Quick Moments (Screen 2 Image 2)', () => {

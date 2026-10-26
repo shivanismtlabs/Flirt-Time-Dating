@@ -6,7 +6,6 @@
 import crypto from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
 import { Op, QueryTypes } from 'sequelize';
-import { areUsersBlocked } from '../utils/pairBlock';
 import {
   sequelize,
   User,
@@ -26,6 +25,7 @@ import { ChatMessageType } from '../models/chatMessage.model';
 import { s3Service, formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { audioReferenceFromPayload, isAudioChatFile, isImageMediaReference } from '../utils/chatMediaKind';
 import { calculateAge, calculateDistanceKm } from './discovery.service';
+import { areUsersBlocked } from '../utils/pairBlock';
 import {
   isUserConnected,
   isUserViewingConversation,
@@ -2082,15 +2082,7 @@ export class ChatService {
       throw new ChatServiceError('User profile is unavailable', 404);
     }
 
-    // Check if blocked
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: targetUser.id },
-          { userId: targetUser.id, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, targetUser.id);
 
     if (isBlocked) {
       throw new ChatServiceError('You cannot interact with this user', 403);
@@ -2226,15 +2218,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -2841,7 +2825,9 @@ export class ChatService {
       attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
     });
 
-    if (await areUsersBlocked(senderId, recipientId)) {
+    const isBlocked = await areUsersBlocked(senderId, recipientId);
+
+    if (isBlocked) {
       throw new ChatServiceError(
         'You cannot send messages to this user',
         403,
@@ -5971,15 +5957,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -6257,15 +6235,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -7025,7 +6995,8 @@ export class ChatService {
       return null;
     }
 
-    if (await areUsersBlocked(currentUserId, otherUserId)) {
+    const blocked = await areUsersBlocked(currentUserId, otherUserId);
+    if (blocked) {
       setPresenceWatch(currentUserId, conversation.id, false);
       return null;
     }
@@ -7213,15 +7184,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -7513,15 +7476,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -7731,15 +7686,7 @@ export class ChatService {
 
     const otherUserId = getOtherParticipantId(conversation, currentUserId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: otherUserId },
-          { userId: otherUserId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, otherUserId);
 
     if (isBlocked) {
       throw new ChatServiceError('Conversation unavailable or blocked', 403, 'USER_BLOCKED');
@@ -8001,14 +7948,7 @@ export class ChatService {
         throw new ChatServiceError('User profile is unavailable', 404);
       }
 
-      const isBlocked = await UserBlock.findOne({
-        where: {
-          [Op.or]: [
-            { userId: normA, blockedUserId: normB },
-            { userId: normB, blockedUserId: normA },
-          ],
-        },
-      });
+      const isBlocked = await areUsersBlocked(normA, normB);
       if (isBlocked) {
         throw new ChatServiceError('You cannot chat with this user', 403);
       }
@@ -8249,15 +8189,7 @@ export class ChatService {
       throw new ChatServiceError('You cannot start a conversation with yourself', 400);
     }
 
-    // Check if blocked
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: currentUserId, blockedUserId: recipientId },
-          { userId: recipientId, blockedUserId: currentUserId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(currentUserId, recipientId);
 
     if (isBlocked) {
       throw new ChatServiceError('You cannot chat with this user', 403);
@@ -8385,15 +8317,7 @@ export class ChatService {
       throw new ChatServiceError('Recipient does not exist or is unavailable', 404, 'RECIPIENT_NOT_FOUND');
     }
 
-    // Bidirectional block check
-    const blockRecord = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId: senderId, blockedUserId: recipientId },
-          { userId: recipientId, blockedUserId: senderId },
-        ],
-      },
-    });
+    const blockRecord = await areUsersBlocked(senderId, recipientId);
 
     if (blockRecord) {
       throw new ChatServiceError('You cannot chat with this user', 403, 'USER_BLOCKED');
@@ -9522,15 +9446,7 @@ return {
 
     const otherParticipantId = getOtherParticipantId(conversation, userId);
 
-    // Mutual block check
-    const isBlocked = await UserBlock.findOne({
-      where: {
-        [Op.or]: [
-          { userId, blockedUserId: otherParticipantId },
-          { userId: otherParticipantId, blockedUserId: userId },
-        ],
-      },
-    });
+    const isBlocked = await areUsersBlocked(userId, otherParticipantId);
 
     if (isBlocked) {
       throw new ChatServiceError('You cannot interact in this conversation', 403, 'CHAT_FORBIDDEN');

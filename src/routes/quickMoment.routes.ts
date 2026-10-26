@@ -11,6 +11,7 @@ import {
   replyQuickMomentHandler,
   getQuickMomentRepliesHandler,
   markViewedHandler,
+  markUserMomentsViewedHandler,
   getViewersHandler,
   createQuickMomentHandler,
   deleteQuickMomentHandler,
@@ -90,7 +91,10 @@ router.get(
   (req, res) => getQuickMomentRepliesHandler(req, res)
 );
 
-// 9. Mark Quick Moment as viewed / seen (POST /api/v1/quick-moments/:momentId/view)
+// 9. Mark Quick Moment as viewed / seen (POST /api/v1/quick-moments/:momentId/view, POST /api/v1/quick-moments/user/:userId/view, POST /api/v1/quick-moments/view)
+router.post('/user/:userId/view', (req, res) => markUserMomentsViewedHandler(req, res));
+router.post('/view/:momentId', (req, res) => markViewedHandler(req, res));
+router.post('/view', (req, res) => markViewedHandler(req, res));
 router.post('/:momentId/view', (req, res) => markViewedHandler(req, res));
 
 // 10. Get viewers of a Quick Moment (GET /api/v1/quick-moments/:momentId/viewers)

@@ -86,6 +86,14 @@ export const getUserQuickMomentsHandler = async (
       return sendSuccess(res, 'My quick moments fetched successfully', result, 200);
     }
 
+    if (req.query.markViewed === 'true' || req.query.markViewed === '1') {
+      try {
+        await quickMomentService.markUserMomentsViewed(viewerId, targetUserId);
+      } catch {
+        // Best effort
+      }
+    }
+
     const result = await quickMomentService.getUserQuickMoments(viewerId, targetUserId);
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -238,8 +246,8 @@ export const getQuickMomentRepliesHandler = async (
 };
 
 /**
- * POST /api/v1/quick-moments/:momentId/view
- * Mark a quick moment as seen / viewed
+ * POST /api/v1/quick-moments/:momentId/view (also POST /api/v1/quick-moments/view)
+ * Mark a quick moment (or list of quick moments) as seen / viewed
  */
 export const markViewedHandler = async (
   req: AuthenticatedRequest,
@@ -251,7 +259,21 @@ export const markViewedHandler = async (
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const momentId = req.params.momentId as string;
+    const momentIds = req.body?.momentIds;
+    if (Array.isArray(momentIds) && momentIds.length > 0) {
+      const results = [];
+      for (const id of momentIds) {
+        if (typeof id === 'string' && id.trim()) {
+          results.push(await quickMomentService.markViewed(viewerId, id.trim()));
+        }
+      }
+      return sendSuccess(res, 'Quick moments marked as viewed', { results }, 200);
+    }
+
+    const momentId = (req.params.momentId || req.body?.momentId || req.body?.id) as string;
+    if (!momentId || momentId === 'view') {
+      return sendError(res, 'Moment ID is required', 400);
+    }
     const result = await quickMomentService.markViewed(viewerId, momentId);
 
     return sendSuccess(res, 'Quick moment marked as viewed', result, 200);
@@ -260,6 +282,35 @@ export const markViewedHandler = async (
       return sendError(res, error.message, error.statusCode, error.errorCode);
     }
     return sendError(res, error.message || 'Error recording view', 500);
+  }
+};
+
+/**
+ * POST /api/v1/quick-moments/user/:userId/view
+ * Mark all active quick moments of a user as seen / viewed
+ */
+export const markUserMomentsViewedHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = req.params.userId as string;
+    if (!targetUserId) {
+      return sendError(res, 'User ID is required', 400);
+    }
+
+    const result = await quickMomentService.markUserMomentsViewed(viewerId, targetUserId);
+    return sendSuccess(res, 'User quick moments marked as viewed', result, 200);
+  } catch (error: any) {
+    if (error instanceof QuickMomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error marking user quick moments as viewed', 500);
   }
 };
 

@@ -239,6 +239,11 @@ export class QuickMomentService {
     });
 
     const activeIds = activeMoments.map((moment) => moment.id);
+    // Associations set with setDataValue are stored on dataValues only.
+    // `moment.views` stays undefined unless the rows were eager-loaded, so
+    // unread state has to be computed from these maps.
+    const reactionsByMoment = new Map<string, QuickMomentReaction[]>();
+    const viewedMomentIds = new Set<string>();
     if (activeIds.length > 0) {
       const [reactions, views] = await Promise.all([
         QuickMomentReaction.findAll({
@@ -253,29 +258,47 @@ export class QuickMomentService {
           ],
         }),
         QuickMomentView.findAll({
-          where: { quickMomentId: { [Op.in]: activeIds } },
+          where: {
+            quickMomentId: { [Op.in]: activeIds },
+            userId: viewerUserId,
+          },
           attributes: ['quickMomentId', 'userId'],
         }),
       ]);
 
-      const reactionsByMoment = new Map<string, QuickMomentReaction[]>();
       for (const reaction of reactions) {
         const list = reactionsByMoment.get(reaction.quickMomentId) || [];
         list.push(reaction);
         reactionsByMoment.set(reaction.quickMomentId, list);
       }
-      const viewsByMoment = new Map<string, QuickMomentView[]>();
       for (const view of views) {
-        const list = viewsByMoment.get(view.quickMomentId) || [];
-        list.push(view);
-        viewsByMoment.set(view.quickMomentId, list);
+        const qmId =
+          (view as any).quickMomentId ||
+          (view as any).getDataValue?.('quickMomentId') ||
+          (view as any).dataValues?.quickMomentId;
+        if (qmId) {
+          viewedMomentIds.add(String(qmId).toLowerCase());
+        }
       }
       for (const moment of activeMoments) {
-        const target = moment as unknown as { setDataValue(key: string, value: unknown): void };
-        target.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
-        target.setDataValue('views', viewsByMoment.get(moment.id) || []);
+        const target = moment as unknown as {
+          setDataValue(key: string, value: unknown): void;
+          reactions?: any[];
+          views?: any[];
+        };
+        const mReactions = reactionsByMoment.get(moment.id) || [];
+        target.setDataValue('reactions', mReactions);
+        target.reactions = mReactions;
+
+        const isViewed = viewedMomentIds.has(String(moment.id).toLowerCase());
+        const viewsList = isViewed ? [{ userId: viewerUserId, quickMomentId: moment.id }] : [];
+        target.setDataValue('views', viewsList);
+        target.views = viewsList;
       }
     }
+
+    const reactionsFor = (momentId: string): QuickMomentReaction[] =>
+      reactionsByMoment.get(momentId) || [];
 
     // 1. Group own stories
     const myMoments = activeMoments.filter((m) => m.userId === viewerUserId);
@@ -294,7 +317,7 @@ export class QuickMomentService {
     };
 
     if (myMoments.length > 0) {
-      const allMyReactions = myMoments.flatMap((m) => m.reactions || []);
+      const allMyReactions = myMoments.flatMap((m) => reactionsFor(m.id));
       const reactionSummary = buildReactionBadge(allMyReactions);
       const latestStory = myMoments[0];
 
@@ -313,7 +336,7 @@ export class QuickMomentService {
           : null,
         stories: myMoments.map((m) => {
           const cleanKey = m.mediaUrl ? extractS3Key(m.mediaUrl) : null;
-          const storyReactions = m.reactions || [];
+          const storyReactions = reactionsFor(m.id);
           const storySummary = buildReactionBadge(storyReactions);
           return {
             id: m.id,
@@ -391,11 +414,9 @@ export class QuickMomentService {
       if (!author) continue;
 
       const latest = moments[0];
-      const hasUnread = moments.some(
-        (m) => !(m.views || []).some((v: any) => v.userId === viewerUserId)
-      );
+      const hasUnread = moments.some((m) => !viewedMomentIds.has(String(m.id).toLowerCase()));
 
-      const allReactions = moments.flatMap((m) => m.reactions || []);
+      const allReactions = moments.flatMap((m) => reactionsFor(m.id));
       const reactionSummary = buildReactionBadge(allReactions);
 
       const latestCleanKey = latest.mediaUrl ? extractS3Key(latest.mediaUrl) : null;
@@ -1224,6 +1245,45 @@ export class QuickMomentService {
       momentId,
       isViewed: true,
       viewsCount: moment.viewsCount + (created ? 1 : 0),
+    };
+  }
+
+  /**
+   * 7b. MARK ALL ACTIVE MOMENTS OF A USER AS VIEWED
+   */
+  public async markUserMomentsViewed(viewerUserId: string, targetUserId: string) {
+    await ensureQuickMomentTables();
+    const now = new Date();
+    const moments = await QuickMoment.findAll({
+      where: {
+        userId: targetUserId,
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'userId', 'viewsCount'],
+    });
+
+    let newlyViewed = 0;
+    for (const moment of moments) {
+      const [, created] = await QuickMomentView.findOrCreate({
+        where: { quickMomentId: moment.id, userId: viewerUserId },
+        defaults: { quickMomentId: moment.id, userId: viewerUserId },
+      });
+      if (created) {
+        await moment.increment('viewsCount', { by: 1 });
+        newlyViewed++;
+      }
+    }
+
+    if (viewerUserId !== targetUserId && moments.length > 0) {
+      await this.keepAuthorInViewerChat(viewerUserId, targetUserId);
+    }
+
+    return {
+      userId: targetUserId,
+      totalMoments: moments.length,
+      newlyViewed,
+      hasUnread: false,
     };
   }
 

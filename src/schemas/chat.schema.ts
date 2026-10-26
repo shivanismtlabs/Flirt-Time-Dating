@@ -135,6 +135,16 @@ export const directSendMessageSchema = z.object({
     medias: z.union([z.array(z.any()), z.string()]).optional(),
     imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
     mediaUrls: z.union([z.array(z.any()), z.string()]).optional(),
+    photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
+    urls: z.union([z.array(z.any()), z.string()]).optional(),
+    keys: z.union([z.array(z.any()), z.string()]).optional(),
+    key: z.string().trim().max(5000).optional(),
+    storageKey: z.string().trim().max(5000).optional(),
+    s3Key: z.string().trim().max(5000).optional(),
+    uri: z.string().trim().max(5000).optional(),
+    path: z.string().trim().max(5000).optional(),
+    publicUrl: z.string().trim().max(5000).optional(),
+    link: z.string().trim().max(5000).optional(),
     duration: z.union([z.number(), z.string()]).optional(),
     durationMs: z.union([z.number(), z.string()]).optional(),
     caption: z.string().trim().max(1000).optional(),
@@ -145,8 +155,7 @@ export const directSendMessageSchema = z.object({
     messageType: z
       .enum(['text', 'audio', 'image', 'location', 'contact', 'moment_reply', 'moment_gift', 'voice'])
       .optional()
-      .transform((val) => (val === 'voice' ? 'audio' : val))
-      .default('text'),
+      .transform((val) => (val === 'voice' ? 'audio' : val)),
     metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     clientMessageId: z.string().trim().max(100).optional(),
     replyToMessageId: z.string().uuid('replyToMessageId must be a valid UUID').optional(),
@@ -155,6 +164,7 @@ export const directSendMessageSchema = z.object({
   })
   .superRefine((data, ctx) => {
     ensureAudioMessageContent(data);
+    ensureImageMessageContent(data);
     let multiImageFirst: string | undefined;
     if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
       const first = (data as any).images[0];
@@ -170,24 +180,59 @@ export const directSendMessageSchema = z.object({
       multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
     }
 
+    const candidateImageRef =
+      (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 && !isInvalidImageReferenceString(data.imageUrl) && !isLocalDeviceMediaReference(data.imageUrl) ? data.imageUrl.trim() : undefined) ||
+      (typeof data.image === 'string' && data.image.trim().length > 0 && !isInvalidImageReferenceString(data.image) && !isLocalDeviceMediaReference(data.image)
+        ? data.image.trim()
+        : (data.image as any)?.url || (data.image as any)?.imageUrl || (data.image as any)?.key || (data.image as any)?.uri || (data.image as any)?.path) ||
+      (typeof data.key === 'string' && data.key.trim().length > 0 && !isInvalidImageReferenceString(data.key) && !isLocalDeviceMediaReference(data.key) ? data.key.trim() : undefined) ||
+      (typeof data.storageKey === 'string' && data.storageKey.trim().length > 0 && !isInvalidImageReferenceString(data.storageKey) && !isLocalDeviceMediaReference(data.storageKey) ? data.storageKey.trim() : undefined) ||
+      (typeof data.s3Key === 'string' && data.s3Key.trim().length > 0 && !isInvalidImageReferenceString(data.s3Key) && !isLocalDeviceMediaReference(data.s3Key) ? data.s3Key.trim() : undefined) ||
+      (typeof data.imageKey === 'string' && data.imageKey.trim().length > 0 && !isInvalidImageReferenceString(data.imageKey) && !isLocalDeviceMediaReference(data.imageKey) ? data.imageKey.trim() : undefined) ||
+      (typeof data.mediaUrl === 'string' && data.mediaUrl.trim().length > 0 && !isInvalidImageReferenceString(data.mediaUrl) && !isLocalDeviceMediaReference(data.mediaUrl) ? data.mediaUrl.trim() : undefined) ||
+      multiImageFirst;
+
     const resolvedContent =
       data.content ||
-      data.imageUrl ||
-      data.image ||
-      data.mediaUrl ||
-      data.imageKey ||
+      candidateImageRef ||
       (data as any).audioUrl ||
       (data as any).audio ||
       (data as any).voiceUrl ||
       (data as any).url ||
-      (data as any).fileUrl ||
-      multiImageFirst;
+      (data as any).fileUrl;
 
     if (resolvedContent && !data.content) {
       data.content = resolvedContent;
     }
 
-    if (!data.content || data.content.trim().length === 0) {
+    const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
+    const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || (data as any).key || (data as any).images || candidateImageRef);
+    const type = data.type || data.messageType || (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
+    if (!data.type) (data as any).type = type;
+    if (!data.messageType) (data as any).messageType = type;
+
+    if (type === 'image') {
+      const isContentInvalid =
+        !data.content ||
+        typeof data.content !== 'string' ||
+        data.content.trim().length === 0 ||
+        isInvalidImageReferenceString(data.content) ||
+        isLocalDeviceMediaReference(data.content);
+
+      if (isContentInvalid) {
+        if (candidateImageRef && !isInvalidImageReferenceString(candidateImageRef) && !isLocalDeviceMediaReference(candidateImageRef)) {
+          data.content = candidateImageRef;
+        } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
+          data.content = data.caption.trim();
+        } else {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['content'],
+            message: 'Image URL or storage key is required in content for image message',
+          });
+        }
+      }
+    } else if (!data.content || data.content.trim().length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['content'],
@@ -1530,6 +1575,13 @@ export const replyMessageSchema = z.object({
       photoUrls: z.union([z.array(z.any()), z.string()]).optional(),
       urls: z.union([z.array(z.any()), z.string()]).optional(),
       keys: z.union([z.array(z.any()), z.string()]).optional(),
+      key: z.string().trim().max(5000).optional(),
+      storageKey: z.string().trim().max(5000).optional(),
+      s3Key: z.string().trim().max(5000).optional(),
+      uri: z.string().trim().max(5000).optional(),
+      path: z.string().trim().max(5000).optional(),
+      publicUrl: z.string().trim().max(5000).optional(),
+      link: z.string().trim().max(5000).optional(),
       duration: z.union([z.number(), z.string()]).optional(),
       caption: z.string().trim().max(1000).optional(),
       type: z
@@ -1544,8 +1596,7 @@ export const replyMessageSchema = z.object({
           }),
         })
         .optional()
-        .transform((val) => (val === 'voice' ? 'audio' : val))
-        .default('text'),
+        .transform((val) => (val === 'voice' ? 'audio' : val)),
       clientMessageId: z.string().trim().max(100).optional(),
       metadata: z.union([z.string(), z.record(z.any()), z.null()]).optional().nullable(),
     })
@@ -1629,6 +1680,9 @@ export const replyMessageSchema = z.object({
         data.messageType ||
         (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
 
+      if (!data.type) (data as any).type = type;
+      if (!data.messageType) (data as any).messageType = type;
+
       if (type === 'text') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
           ctx.addIssue({
@@ -1638,8 +1692,28 @@ export const replyMessageSchema = z.object({
           });
         }
       } else if (type === 'image') {
-        if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
+        const isContentInvalid =
+          !data.content ||
+          typeof data.content !== 'string' ||
+          data.content.trim().length === 0 ||
+          isInvalidImageReferenceString(data.content) ||
+          isLocalDeviceMediaReference(data.content);
+
+        if (isContentInvalid) {
+          const validCandidate =
+            candidateImageRef &&
+            !isInvalidImageReferenceString(candidateImageRef) &&
+            !isLocalDeviceMediaReference(candidateImageRef)
+              ? candidateImageRef
+              : multiImageFirst &&
+                !isInvalidImageReferenceString(multiImageFirst) &&
+                !isLocalDeviceMediaReference(multiImageFirst)
+              ? multiImageFirst
+              : undefined;
+
+          if (validCandidate) {
+            data.content = validCandidate;
+          } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
           } else {
             ctx.addIssue({

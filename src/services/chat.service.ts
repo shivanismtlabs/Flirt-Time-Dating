@@ -5222,7 +5222,8 @@ export class ChatService {
                 totalCount: Array.isArray(meta?.images) ? meta.images.length : 1,
               },
             });
-            continue;
+            success = true;
+            break;
           }
         }
 

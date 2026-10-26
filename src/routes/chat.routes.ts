@@ -134,9 +134,18 @@ router.get('/:conversationId/messages', validate(getMessagesSchema), getMessages
 router.get('/:conversationId/messages/pinned', validate(getPinnedMessagesSchema), getPinnedMessagesHandler);
 router.get('/:conversationId/pinned-messages', validate(getPinnedMessagesSchema), getPinnedMessagesHandler);
 
-// 7c. POST & PATCH /api/v1/chats/:conversationId/messages/:messageId/pin - Pin or unpin message
+// 7c. POST & PATCH & PUT & DELETE /api/v1/chats/:conversationId/messages/:messageId/pin - Pin or unpin message
 router.post('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
 router.patch('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.put('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.delete('/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.post('/:conversationId/messages/:messageId/unpin', validate(pinMessageSchema), pinMessageHandler);
+
+router.post('/conversations/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.patch('/conversations/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.put('/conversations/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.delete('/conversations/:conversationId/messages/:messageId/pin', validate(pinMessageSchema), pinMessageHandler);
+router.post('/conversations/:conversationId/messages/:messageId/unpin', validate(pinMessageSchema), pinMessageHandler);
 
 // 8. POST /api/v1/chats/:conversationId/messages - Send message (text, audio, image)
 // Supports JSON payload, base64 payload, and direct multipart/form-data media file upload to AWS S3

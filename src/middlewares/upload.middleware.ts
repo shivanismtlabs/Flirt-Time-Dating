@@ -1,7 +1,7 @@
 import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { sendError } from '../utils/response';
-import { ensureAudioMessageContent, isAudioChatFile } from '../utils/chatMediaKind';
+import { ensureAudioMessageContent, ensureImageMessageContent, isAudioChatFile } from '../utils/chatMediaKind';
 import { env } from '../config/env';
 
 // Store in memory for immediate processing and memory cleanup (biometric privacy)
@@ -572,7 +572,15 @@ export const handleUploadChatMedia = (
     const attachedFiles: Express.Multer.File[] = [];
     if (Array.isArray(req.files) && req.files.length > 0) {
       attachedFiles.push(...req.files);
-    } else if (req.file) {
+    } else if (req.files && typeof req.files === 'object') {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const list of Object.values(filesObj)) {
+        if (Array.isArray(list)) {
+          attachedFiles.push(...list);
+        }
+      }
+    }
+    if (attachedFiles.length === 0 && req.file) {
       attachedFiles.push(req.file);
     }
 
@@ -621,6 +629,7 @@ export const handleUploadChatMedia = (
     }
 
     ensureAudioMessageContent(req.body);
+    ensureImageMessageContent(req.body);
 
     for (const key of [
       'images',
@@ -642,6 +651,8 @@ export const handleUploadChatMedia = (
         }
       }
     }
+
+    ensureImageMessageContent(req.body);
 
     if (req.body.duration && !isNaN(Number(req.body.duration))) {
       req.body.duration = Number(req.body.duration);

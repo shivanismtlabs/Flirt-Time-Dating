@@ -1,6 +1,28 @@
-const IMAGE_NAME = /\.(jpe?g|png|webp|gif|avif|heic|heif|bmp)(\?|#|$)/i;
-const AUDIO_NAME = /\.(mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus)(\?|#|$)/i;
-const LOCAL_DEVICE_MEDIA = /^(file|content|ph|assets-library|blob):/i;
+export const LOCAL_DEVICE_MEDIA =
+  /^(file|content|ph|assets-library|blob):|^\/var\/|^\/data\/|^\/private\//i;
+
+export function isInvalidImageReferenceString(val: unknown): boolean {
+  if (typeof val !== 'string') return true;
+  const trimmed = val.trim();
+  if (trimmed.length === 0) return true;
+  const lower = trimmed.toLowerCase();
+  return (
+    lower === '[object object]' ||
+    lower === 'undefined' ||
+    lower === 'null' ||
+    lower === 'nan' ||
+    lower === '{}' ||
+    lower === '[]' ||
+    lower === '""' ||
+    lower === "''"
+  );
+}
+
+export function isLocalDeviceMediaReference(val: unknown): boolean {
+  if (typeof val !== 'string') return false;
+  const trimmed = val.trim();
+  return LOCAL_DEVICE_MEDIA.test(trimmed);
+}
 
 const EXPLICIT_AUDIO_KEYS = [
   'audioUrl',
@@ -201,32 +223,74 @@ export function imageReferenceFromPayload(
     data.imageKey,
     data.url,
     data.fileUrl,
+    data.uri,
+    data.imageUri,
+    data.path,
+    data.key,
+    data.storageKey,
+    data.s3Key,
+    data.mediaKey,
+    data.publicUrl,
+    data.link,
+    data.src,
+    data.thumbnailUrl,
     data.images,
     data.imageUrls,
+    data.image_urls,
     data.photos,
     data.photo,
     data.photoUrls,
+    data.photo_urls,
     data.medias,
     data.media,
     data.mediaUrls,
+    data.media_urls,
     data.attachments,
     data.attachment,
     data.files,
     data.file,
+    data.fileUrls,
+    data.file_urls,
+    data.urls,
+    data.uris,
+    data.keys,
+    data.imageKeys,
+    data.image_keys,
+    data.gallery,
+    data.pictures,
+    data.picture,
     meta?.imageUrl,
     meta?.image,
+    meta?.url,
+    meta?.uri,
+    meta?.path,
+    meta?.mediaUrl,
+    meta?.fileUrl,
+    meta?.key,
+    meta?.imageKey,
+    meta?.storageKey,
+    meta?.s3Key,
+    meta?.publicUrl,
     meta?.images,
     meta?.imageUrls,
+    meta?.image_urls,
     meta?.photos,
     meta?.photo,
     meta?.photoUrls,
+    meta?.photo_urls,
     meta?.medias,
     meta?.media,
     meta?.mediaUrls,
+    meta?.media_urls,
     meta?.attachments,
     meta?.attachment,
     meta?.files,
     meta?.file,
+    meta?.urls,
+    meta?.uris,
+    meta?.keys,
+    meta?.gallery,
+    meta?.pictures,
   ];
 
   for (const src of sources) {
@@ -257,24 +321,37 @@ export function imageReferenceFromPayload(
       if (!item) continue;
       if (typeof item === 'string') {
         const trimmed = item.trim();
-        if (trimmed && trimmed !== '__FILE_ATTACHMENT__' && !LOCAL_DEVICE_MEDIA.test(trimmed)) {
+        if (
+          trimmed &&
+          trimmed !== '__FILE_ATTACHMENT__' &&
+          !isInvalidImageReferenceString(trimmed) &&
+          !isLocalDeviceMediaReference(trimmed)
+        ) {
           return trimmed;
         }
       } else if (typeof item === 'object') {
         const candidate =
+          item.key ||
+          item.imageKey ||
+          item.storageKey ||
+          item.s3Key ||
           item.url ||
           item.imageUrl ||
           item.mediaUrl ||
+          item.publicUrl ||
           item.photoUrl ||
+          item.link ||
+          item.src ||
           item.uri ||
           item.path ||
-          item.src ||
-          item.key ||
-          item.imageKey ||
           item.file;
         if (candidate && typeof candidate === 'string') {
           const trimmed = candidate.trim();
-          if (trimmed && !LOCAL_DEVICE_MEDIA.test(trimmed)) {
+          if (
+            trimmed &&
+            !isInvalidImageReferenceString(trimmed) &&
+            !isLocalDeviceMediaReference(trimmed)
+          ) {
             return trimmed;
           }
         }
@@ -282,12 +359,31 @@ export function imageReferenceFromPayload(
     }
   }
 
-  // If there are image items, but they were local device refs or empty strings, return placeholder so schema validation does not reject
+  // Check if there are valid arrays (multi-image)
   for (const src of sources) {
     if (!src) continue;
-    if (Array.isArray(src) && src.length > 0) return '__MULTI_IMAGE__';
-    if (typeof src === 'string' && src.trim().length > 0 && src.trim() !== '[]' && src.trim() !== '{}') {
-      return src.trim();
+    if (Array.isArray(src) && src.length > 0) {
+      const hasValidItem = src.some((it) => {
+        if (!it) return false;
+        if (typeof it === 'string') {
+          return (
+            it.trim().length > 0 &&
+            !isInvalidImageReferenceString(it) &&
+            !isLocalDeviceMediaReference(it)
+          );
+        }
+        if (typeof it === 'object') {
+          const c = it.key || it.imageKey || it.url || it.imageUrl || it.uri || it.path;
+          return (
+            typeof c === 'string' &&
+            c.trim().length > 0 &&
+            !isInvalidImageReferenceString(c) &&
+            !isLocalDeviceMediaReference(c)
+          );
+        }
+        return false;
+      });
+      if (hasValidItem) return '__MULTI_IMAGE__';
     }
   }
 
@@ -295,29 +391,88 @@ export function imageReferenceFromPayload(
 }
 
 /**
- * Copies a resolved image URL onto content/imageUrl if empty.
+ * Copies a resolved image URL onto content/imageUrl if empty or invalid,
+ * and synchronizes messageType / type to 'image'.
  */
 export function ensureImageMessageContent(body: Record<string, any> | null | undefined): void {
   if (!body || typeof body !== 'object') return;
+
+  const declaredType = String(body.type || body.messageType || '').toLowerCase();
+
+  // 1. If content is an array, object, or JSON string, unpack candidate
   if (Array.isArray(body.content) && body.content.length > 0) {
     if (!body.images) body.images = [...body.content];
-    body.content = typeof body.content[0] === 'string' ? body.content[0] : (body.content[0]?.url || body.content[0]?.imageUrl || '__MULTI_IMAGE__');
-  } else if (typeof body.content === 'string' && body.content.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(body.content.trim());
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        if (!body.images) body.images = parsed;
-        body.content = typeof parsed[0] === 'string' ? parsed[0] : (parsed[0]?.url || parsed[0]?.imageUrl || '__MULTI_IMAGE__');
-      }
-    } catch {}
+    const first = body.content[0];
+    body.content =
+      typeof first === 'string'
+        ? first
+        : first?.key || first?.imageKey || first?.url || first?.imageUrl || first?.uri || first?.path || undefined;
+  } else if (typeof body.content === 'object' && body.content !== null) {
+    const c = body.content as any;
+    body.content =
+      c.key || c.imageKey || c.storageKey || c.s3Key || c.url || c.imageUrl || c.uri || c.path || c.mediaUrl || undefined;
+  } else if (typeof body.content === 'string') {
+    const trimmed = body.content.trim();
+    if (trimmed.startsWith('[') || (trimmed.startsWith('{') && !trimmed.startsWith('{"lat') && !trimmed.startsWith('{"name'))) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (!body.images) body.images = parsed;
+          const first = parsed[0];
+          body.content =
+            typeof first === 'string'
+              ? first
+              : first?.key || first?.imageKey || first?.url || first?.imageUrl || first?.uri || first?.path || undefined;
+        } else if (typeof parsed === 'object' && parsed !== null) {
+          body.content =
+            parsed.key || parsed.imageKey || parsed.storageKey || parsed.s3Key || parsed.url || parsed.imageUrl || parsed.uri || parsed.path || parsed.mediaUrl || undefined;
+        }
+      } catch {}
+    }
   }
 
+  // 2. Check if content currently has an invalid string like "[object Object]", "undefined", "null", or local device path
+  const currentContent = typeof body.content === 'string' ? body.content.trim() : '';
+  const contentIsInvalid =
+    !currentContent ||
+    isInvalidImageReferenceString(currentContent) ||
+    isLocalDeviceMediaReference(currentContent);
+
   const ref = imageReferenceFromPayload(body, body.metadata);
-  if (!ref) return;
-  if (!body.content || !String(body.content).trim()) {
-    body.content = ref;
+
+  if (contentIsInvalid) {
+    if (ref) {
+      body.content = ref;
+    } else {
+      // If content was invalid or local device path and no valid uploaded ref exists, clear it so validator rejects with 400
+      if (
+        declaredType === 'image' ||
+        isInvalidImageReferenceString(currentContent) ||
+        isLocalDeviceMediaReference(currentContent)
+      ) {
+        body.content = '';
+      }
+    }
   }
-  if (!body.imageUrl && ref.length <= 5000 && !ref.startsWith('__')) {
+
+  // 3. Synchronize type and messageType
+  const hasValidImage =
+    !!ref ||
+    (typeof body.content === 'string' &&
+      body.content.trim().length > 0 &&
+      !isInvalidImageReferenceString(body.content) &&
+      !isLocalDeviceMediaReference(body.content) &&
+      (isImageMediaReference(body.content) ||
+        body.content.startsWith('chat/') ||
+        body.content.startsWith('uploads/')));
+
+  if (declaredType === 'image' || (hasValidImage && !body.type && !body.messageType)) {
+    if (body.type !== 'image') body.type = 'image';
+    if (body.messageType !== 'image') body.messageType = 'image';
+  }
+
+  if (ref && !body.imageUrl && ref.length <= 5000 && !ref.startsWith('__')) {
     body.imageUrl = ref;
   }
 }
+

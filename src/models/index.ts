@@ -1348,6 +1348,9 @@ export const initDb = async (force = false): Promise<void> => {
 
     try {
       if (sequelize.getDialect() === 'sqlite') {
+        try {
+          await sequelize.query('PRAGMA busy_timeout = 10000;');
+        } catch (_) {}
         if (isForce) {
           try {
             await sequelize.query('PRAGMA foreign_keys = OFF;');

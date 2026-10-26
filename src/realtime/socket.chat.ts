@@ -839,8 +839,8 @@ export const registerChatSocketHandlers = (
     }
   });
 
-  // 6. Event: chat:pin_message / chat:message:pin (Message Pin / Unpin Synchronization)
-  const handlePinMessage = async (payload: any, callback?: Function) => {
+  // 6. Event: chat:pin_message / chat:message:pin / chat:unpin_message (Message Pin / Unpin Synchronization)
+  const handlePinMessage = async (payload: any, callback?: Function, forceUnpin = false) => {
     const conversationId = payload?.conversationId || payload?.conversation_id;
     const messageId = payload?.messageId || payload?.message_id;
     try {
@@ -849,16 +849,31 @@ export const registerChatSocketHandlers = (
         if (typeof callback === 'function') {
           return callback({ success: false, error });
         }
-        socket.emit('chat:message:pin:ack', {
+        const errAck = {
           success: false,
           requestId: payload?.requestId || null,
           error,
-        });
+        };
+        socket.emit('chat:message:pin:ack', errAck);
+        socket.emit('chat:pin_message:ack' as any, errAck);
+        socket.emit('message:pin:ack' as any, errAck);
         return;
       }
 
-      const rawPinned = payload.isPinned !== undefined ? payload.isPinned : payload.pinned;
-      const isPinned = rawPinned !== undefined ? !!rawPinned : true;
+      const rawPinned =
+        payload.isPinned !== undefined
+          ? payload.isPinned
+          : payload.pinned !== undefined
+          ? payload.pinned
+          : payload.is_pinned;
+
+      let isPinned = forceUnpin ? false : true;
+      if (rawPinned !== undefined) {
+        if (typeof rawPinned === 'boolean') isPinned = rawPinned;
+        else if (typeof rawPinned === 'number') isPinned = rawPinned === 1;
+        else if (typeof rawPinned === 'string') isPinned = rawPinned.toLowerCase() !== 'false' && rawPinned !== '0';
+        else isPinned = !!rawPinned;
+      }
       const scope = payload.scope === 'user' ? 'user' : 'conversation';
 
       const result = await chatService.pinMessage(
@@ -874,6 +889,13 @@ export const registerChatSocketHandlers = (
         callback({ success: true, data: result });
       }
       socket.emit('chat:message:pin:ack', ack);
+      socket.emit('chat:pin_message:ack' as any, ack);
+      socket.emit('message:pin:ack' as any, ack);
+      if (!isPinned) {
+        socket.emit('chat:unpin_message:ack' as any, ack);
+        socket.emit('chat:message:unpin:ack' as any, ack);
+        socket.emit('message:unpin:ack' as any, ack);
+      }
     } catch (err: any) {
       socketLogger.error('Error handling chat:pin_message event', err, {
         userId: currentUserId,
@@ -889,17 +911,23 @@ export const registerChatSocketHandlers = (
       if (typeof callback === 'function') {
         callback({ success: false, error: errorMessage });
       }
-      socket.emit('chat:message:pin:ack', {
+      const errAck = {
         success: false,
         requestId: payload?.requestId || null,
         error: errorMessage,
-      });
+      };
+      socket.emit('chat:message:pin:ack', errAck);
+      socket.emit('chat:pin_message:ack' as any, errAck);
+      socket.emit('message:pin:ack' as any, errAck);
     }
   };
 
-  socket.on('chat:pin_message', handlePinMessage);
-  socket.on('chat:message:pin' as any, handlePinMessage);
-  socket.on('message:pin' as any, handlePinMessage);
+  socket.on('chat:pin_message', (p: any, cb?: any) => handlePinMessage(p, cb));
+  socket.on('chat:message:pin' as any, (p: any, cb?: any) => handlePinMessage(p, cb));
+  socket.on('message:pin' as any, (p: any, cb?: any) => handlePinMessage(p, cb));
+  socket.on('chat:unpin_message' as any, (p: any, cb?: any) => handlePinMessage(p, cb, true));
+  socket.on('chat:message:unpin' as any, (p: any, cb?: any) => handlePinMessage(p, cb, true));
+  socket.on('message:unpin' as any, (p: any, cb?: any) => handlePinMessage(p, cb, true));
 
   // 7. Event: chat:edit_message & message:edit
   const handleEditMessage = async (payload: any, callback?: Function) => {

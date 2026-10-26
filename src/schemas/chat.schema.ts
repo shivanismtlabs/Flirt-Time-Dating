@@ -425,17 +425,63 @@ export const sendMessageSchema = z.object({
       ensureImageMessageContent(data);
 
       if (Array.isArray(data.content)) {
-        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || data.content[0]?.uri || data.content[0]?.path || '__MULTI_IMAGE__');
       } else if (data.content && typeof data.content === 'object') {
-        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
+        data.content = (data.content as any).url || (data.content as any).imageUrl || (data.content as any).uri || (data.content as any).path || (data.content as any).mediaUrl || (data.content as any).key || '__MULTI_IMAGE__';
       }
 
       let multiImageFirst: string | undefined;
       const scanFirst = (list: any): string | undefined => {
         if (!list) return undefined;
-        if (Array.isArray(list) && list.length > 0) {
-          const item = list[0];
-          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        let arr: any[] = [];
+        if (Array.isArray(list)) {
+          arr = list;
+        } else if (typeof list === 'string') {
+          const trimmed = list.trim();
+          if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              arr = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+              arr = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+            }
+          } else if (trimmed.includes(',')) {
+            arr = trimmed.split(',');
+          } else if (trimmed.length > 0 && trimmed !== '[]' && trimmed !== '{}') {
+            arr = [trimmed];
+          }
+        } else if (typeof list === 'object' && list !== null) {
+          arr = Object.values(list);
+        }
+
+        if (arr.length > 0) {
+          for (const item of arr) {
+            if (!item) continue;
+            if (typeof item === 'string' && item.trim().length > 0) {
+              return item.trim();
+            }
+            if (item && typeof item === 'object') {
+              const val =
+                item.url ||
+                item.imageUrl ||
+                item.mediaUrl ||
+                item.photoUrl ||
+                item.uri ||
+                item.path ||
+                item.link ||
+                item.src ||
+                item.fileUrl ||
+                item.imageUri ||
+                item.key ||
+                item.imageKey ||
+                item.storageKey ||
+                item.file;
+              if (typeof val === 'string' && val.trim().length > 0) {
+                return val.trim();
+              }
+            }
+          }
+          return '__MULTI_IMAGE__';
         }
         return undefined;
       };
@@ -443,28 +489,67 @@ export const sendMessageSchema = z.object({
       multiImageFirst =
         scanFirst((data as any).images) ||
         scanFirst((data as any).imageUrls) ||
+        scanFirst((data as any).image_urls) ||
         scanFirst((data as any).photos) ||
         scanFirst((data as any).photoUrls) ||
+        scanFirst((data as any).photo_urls) ||
         scanFirst((data as any).attachments) ||
         scanFirst((data as any).mediaUrls) ||
+        scanFirst((data as any).media_urls) ||
         scanFirst((data as any).medias) ||
         scanFirst((data as any).media) ||
-        scanFirst((data as any).files);
+        scanFirst((data as any).files) ||
+        scanFirst((data as any).fileUrls) ||
+        scanFirst((data as any).file_urls) ||
+        scanFirst((data as any).urls) ||
+        scanFirst((data as any).uris) ||
+        scanFirst((data as any).keys) ||
+        scanFirst((data as any).imageKeys) ||
+        scanFirst((data as any).image_keys) ||
+        scanFirst((data as any).gallery) ||
+        scanFirst((data as any).pictures) ||
+        scanFirst((data as any).picture) ||
+        scanFirst((data as any).metadata?.images) ||
+        scanFirst((data as any).metadata?.imageUrls) ||
+        scanFirst((data as any).metadata?.image_urls) ||
+        scanFirst((data as any).metadata?.photos) ||
+        scanFirst((data as any).metadata?.photoUrls) ||
+        scanFirst((data as any).metadata?.photo_urls) ||
+        scanFirst((data as any).metadata?.medias) ||
+        scanFirst((data as any).metadata?.mediaUrls) ||
+        scanFirst((data as any).metadata?.media) ||
+        scanFirst((data as any).metadata?.urls) ||
+        scanFirst((data as any).metadata?.files);
 
-      const resolvedContent =
-        data.content ||
-        data.imageUrl ||
-        data.image ||
-        data.mediaUrl ||
-        data.imageKey ||
-        (data as any).audioUrl ||
-        (data as any).audio ||
-        (data as any).voiceUrl ||
+      const candidateImageRef =
+        (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
+        (typeof data.image === 'string' && data.image.trim().length > 0
+          ? data.image.trim()
+          : (data.image as any)?.url || (data.image as any)?.imageUrl || (data.image as any)?.uri || (data.image as any)?.path) ||
+        (typeof data.mediaUrl === 'string' && data.mediaUrl.trim().length > 0 ? data.mediaUrl.trim() : undefined) ||
+        (typeof data.imageKey === 'string' && data.imageKey.trim().length > 0 ? data.imageKey.trim() : undefined) ||
+        (data as any).uri ||
+        (data as any).path ||
         (data as any).url ||
         (data as any).fileUrl ||
+        (data as any).key ||
+        (data as any).storageKey ||
+        (data as any).s3Key ||
+        (data as any).publicUrl ||
+        (typeof (data as any).photo === 'string' ? (data as any).photo : (data as any).photo?.url || (data as any).photo?.uri) ||
+        (typeof (data as any).media === 'string' ? (data as any).media : (data as any).media?.url || (data as any).media?.uri) ||
+        (typeof (data as any).file === 'string' ? (data as any).file : (data as any).file?.url || (data as any).file?.uri) ||
+        (data.metadata && typeof data.metadata === 'object' && ((data.metadata as any).imageUrl || (data.metadata as any).url || (data.metadata as any).uri || (data.metadata as any).mediaUrl || (data.metadata as any).path || (data.metadata as any).key)) ||
         multiImageFirst;
 
-      if (resolvedContent && !data.content) {
+      const resolvedContent =
+        (typeof data.content === 'string' && data.content.trim().length > 0 ? data.content.trim() : undefined) ||
+        candidateImageRef ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl;
+
+      if (resolvedContent && (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0)) {
         data.content = resolvedContent;
       }
 
@@ -476,7 +561,7 @@ export const sendMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
-        multiImageFirst
+        candidateImageRef
       );
 
       const type =
@@ -494,11 +579,29 @@ export const sendMessageSchema = z.object({
         }
       } else if (type === 'image') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['content'],
-            message: 'Image URL or storage key is required in content for image message',
-          });
+          if (candidateImageRef) {
+            data.content = candidateImageRef;
+          } else if (multiImageFirst) {
+            data.content = multiImageFirst;
+          } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
+            data.content = data.caption.trim();
+          } else if (
+            (Array.isArray((data as any).images) && (data as any).images.length > 0) ||
+            (Array.isArray((data as any).photos) && (data as any).photos.length > 0) ||
+            (Array.isArray((data as any).medias) && (data as any).medias.length > 0) ||
+            (Array.isArray((data as any).attachments) && (data as any).attachments.length > 0) ||
+            (data as any).images ||
+            (data as any).photos ||
+            (data as any).medias
+          ) {
+            data.content = '__MULTI_IMAGE__';
+          } else {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['content'],
+              message: 'Image URL or storage key is required in content for image message',
+            });
+          }
         }
         if (data.metadata) {
           let metaObj = data.metadata;
@@ -629,7 +732,7 @@ export const sendMultiMessageSchema = z.object({
         .preprocess(
           (val) => normalizeRecipientList(val),
           z
-            .array(z.string().min(1).max(80))
+            .array(z.string().uuid({ message: 'Invalid recipientId UUID format' }))
             .min(1, { message: 'recipientIds array cannot be empty' })
             .max(50, { message: 'Cannot send message to more than 50 recipients at once' })
         )
@@ -727,17 +830,63 @@ export const sendMultiMessageSchema = z.object({
       }
 
       if (Array.isArray(data.content)) {
-        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || data.content[0]?.uri || data.content[0]?.path || '__MULTI_IMAGE__');
       } else if (data.content && typeof data.content === 'object') {
-        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
+        data.content = (data.content as any).url || (data.content as any).imageUrl || (data.content as any).uri || (data.content as any).path || (data.content as any).mediaUrl || (data.content as any).key || '__MULTI_IMAGE__';
       }
 
       let multiImageFirst: string | undefined;
       const scanFirst = (list: any): string | undefined => {
         if (!list) return undefined;
-        if (Array.isArray(list) && list.length > 0) {
-          const item = list[0];
-          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        let arr: any[] = [];
+        if (Array.isArray(list)) {
+          arr = list;
+        } else if (typeof list === 'string') {
+          const trimmed = list.trim();
+          if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              arr = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+              arr = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+            }
+          } else if (trimmed.includes(',')) {
+            arr = trimmed.split(',');
+          } else if (trimmed.length > 0 && trimmed !== '[]' && trimmed !== '{}') {
+            arr = [trimmed];
+          }
+        } else if (typeof list === 'object' && list !== null) {
+          arr = Object.values(list);
+        }
+
+        if (arr.length > 0) {
+          for (const item of arr) {
+            if (!item) continue;
+            if (typeof item === 'string' && item.trim().length > 0) {
+              return item.trim();
+            }
+            if (item && typeof item === 'object') {
+              const val =
+                item.url ||
+                item.imageUrl ||
+                item.mediaUrl ||
+                item.photoUrl ||
+                item.uri ||
+                item.path ||
+                item.link ||
+                item.src ||
+                item.fileUrl ||
+                item.imageUri ||
+                item.key ||
+                item.imageKey ||
+                item.storageKey ||
+                item.file;
+              if (typeof val === 'string' && val.trim().length > 0) {
+                return val.trim();
+              }
+            }
+          }
+          return '__MULTI_IMAGE__';
         }
         return undefined;
       };
@@ -745,28 +894,67 @@ export const sendMultiMessageSchema = z.object({
       multiImageFirst =
         scanFirst((data as any).images) ||
         scanFirst((data as any).imageUrls) ||
+        scanFirst((data as any).image_urls) ||
         scanFirst((data as any).photos) ||
         scanFirst((data as any).photoUrls) ||
+        scanFirst((data as any).photo_urls) ||
         scanFirst((data as any).attachments) ||
         scanFirst((data as any).mediaUrls) ||
+        scanFirst((data as any).media_urls) ||
         scanFirst((data as any).medias) ||
         scanFirst((data as any).media) ||
-        scanFirst((data as any).files);
+        scanFirst((data as any).files) ||
+        scanFirst((data as any).fileUrls) ||
+        scanFirst((data as any).file_urls) ||
+        scanFirst((data as any).urls) ||
+        scanFirst((data as any).uris) ||
+        scanFirst((data as any).keys) ||
+        scanFirst((data as any).imageKeys) ||
+        scanFirst((data as any).image_keys) ||
+        scanFirst((data as any).gallery) ||
+        scanFirst((data as any).pictures) ||
+        scanFirst((data as any).picture) ||
+        scanFirst((data as any).metadata?.images) ||
+        scanFirst((data as any).metadata?.imageUrls) ||
+        scanFirst((data as any).metadata?.image_urls) ||
+        scanFirst((data as any).metadata?.photos) ||
+        scanFirst((data as any).metadata?.photoUrls) ||
+        scanFirst((data as any).metadata?.photo_urls) ||
+        scanFirst((data as any).metadata?.medias) ||
+        scanFirst((data as any).metadata?.mediaUrls) ||
+        scanFirst((data as any).metadata?.media) ||
+        scanFirst((data as any).metadata?.urls) ||
+        scanFirst((data as any).metadata?.files);
 
-      const resolvedContent =
-        data.content ||
-        data.imageUrl ||
-        data.image ||
-        data.mediaUrl ||
-        data.imageKey ||
-        (data as any).audioUrl ||
-        (data as any).audio ||
-        (data as any).voiceUrl ||
+      const candidateImageRef =
+        (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
+        (typeof data.image === 'string' && data.image.trim().length > 0
+          ? data.image.trim()
+          : (data.image as any)?.url || (data.image as any)?.imageUrl || (data.image as any)?.uri || (data.image as any)?.path) ||
+        (typeof data.mediaUrl === 'string' && data.mediaUrl.trim().length > 0 ? data.mediaUrl.trim() : undefined) ||
+        (typeof data.imageKey === 'string' && data.imageKey.trim().length > 0 ? data.imageKey.trim() : undefined) ||
+        (data as any).uri ||
+        (data as any).path ||
         (data as any).url ||
         (data as any).fileUrl ||
+        (data as any).key ||
+        (data as any).storageKey ||
+        (data as any).s3Key ||
+        (data as any).publicUrl ||
+        (typeof (data as any).photo === 'string' ? (data as any).photo : (data as any).photo?.url || (data as any).photo?.uri) ||
+        (typeof (data as any).media === 'string' ? (data as any).media : (data as any).media?.url || (data as any).media?.uri) ||
+        (typeof (data as any).file === 'string' ? (data as any).file : (data as any).file?.url || (data as any).file?.uri) ||
+        (data.metadata && typeof data.metadata === 'object' && ((data.metadata as any).imageUrl || (data.metadata as any).url || (data.metadata as any).uri || (data.metadata as any).mediaUrl || (data.metadata as any).path || (data.metadata as any).key)) ||
         multiImageFirst;
 
-      if (resolvedContent && !data.content) {
+      const resolvedContent =
+        (typeof data.content === 'string' && data.content.trim().length > 0 ? data.content.trim() : undefined) ||
+        candidateImageRef ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl;
+
+      if (resolvedContent && (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0)) {
         data.content = resolvedContent;
       }
 
@@ -778,7 +966,7 @@ export const sendMultiMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
-        multiImageFirst
+        candidateImageRef
       );
 
       const type =
@@ -796,11 +984,29 @@ export const sendMultiMessageSchema = z.object({
         }
       } else if (type === 'image') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['content'],
-            message: 'Image URL or storage key is required in content for image message',
-          });
+          if (candidateImageRef) {
+            data.content = candidateImageRef;
+          } else if (multiImageFirst) {
+            data.content = multiImageFirst;
+          } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
+            data.content = data.caption.trim();
+          } else if (
+            (Array.isArray((data as any).images) && (data as any).images.length > 0) ||
+            (Array.isArray((data as any).photos) && (data as any).photos.length > 0) ||
+            (Array.isArray((data as any).medias) && (data as any).medias.length > 0) ||
+            (Array.isArray((data as any).attachments) && (data as any).attachments.length > 0) ||
+            (data as any).images ||
+            (data as any).photos ||
+            (data as any).medias
+          ) {
+            data.content = '__MULTI_IMAGE__';
+          } else {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['content'],
+              message: 'Image URL or storage key is required in content for image message',
+            });
+          }
         }
         if (data.metadata) {
           let metaObj = data.metadata;
@@ -1074,13 +1280,26 @@ export const getUnreadCountSchema = z.object({
     .optional(),
 });
 
+const booleanPinCoerce = z
+  .union([z.boolean(), z.string(), z.number()])
+  .transform((val) => {
+    if (typeof val === 'boolean') return val;
+    if (typeof val === 'number') return val === 1;
+    if (typeof val === 'string') {
+      const lower = val.trim().toLowerCase();
+      if (lower === 'false' || lower === '0') return false;
+      return true;
+    }
+    return true;
+  });
+
 export const pinConversationSchema = z.object({
   params: z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
   }),
   body: z.object({
     isPinned: z.boolean({ required_error: 'isPinned is required (true to pin, false to unpin)' }),
-    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }).optional(),
+    messageId: z.string().min(1, { message: 'Invalid messageId' }).optional(),
     scope: z.enum(['user', 'conversation']).optional(),
   }),
 });
@@ -1088,15 +1307,32 @@ export const pinConversationSchema = z.object({
 export const pinMessageSchema = z.object({
   params: z.object({
     conversationId: z.string().uuid({ message: 'Invalid conversationId UUID format' }),
-    messageId: z.string().uuid({ message: 'Invalid messageId UUID format' }),
+    messageId: z.string().min(1, { message: 'messageId is required' }),
   }),
   body: z
     .object({
-      isPinned: z.boolean().default(true),
+      isPinned: booleanPinCoerce.optional(),
+      pinned: booleanPinCoerce.optional(),
+      is_pinned: booleanPinCoerce.optional(),
       scope: z.enum(['user', 'conversation']).optional().default('conversation'),
     })
+    .passthrough()
     .optional()
-    .default({ isPinned: true, scope: 'conversation' }),
+    .default({ isPinned: true, scope: 'conversation' })
+    .transform((data: any) => {
+      const raw =
+        data?.isPinned !== undefined
+          ? data.isPinned
+          : data?.pinned !== undefined
+          ? data.pinned
+          : data?.is_pinned;
+      const isPinned = raw !== undefined ? raw : true;
+      return {
+        isPinned,
+        pinned: isPinned,
+        scope: data?.scope || 'conversation',
+      };
+    }),
 });
 
 export const getPinnedMessagesSchema = z.object({
@@ -1283,9 +1519,9 @@ export const replyMessageSchema = z.object({
       ensureImageMessageContent(data);
 
       if (Array.isArray(data.content)) {
-        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || '__MULTI_IMAGE__');
+        data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || data.content[0]?.uri || data.content[0]?.path || '__MULTI_IMAGE__');
       } else if (data.content && typeof data.content === 'object') {
-        data.content = (data.content as any).url || (data.content as any).imageUrl || '__MULTI_IMAGE__';
+        data.content = (data.content as any).url || (data.content as any).imageUrl || (data.content as any).uri || (data.content as any).path || (data.content as any).mediaUrl || (data.content as any).key || '__MULTI_IMAGE__';
       }
 
       let multiImageFirst: string | undefined;
@@ -1293,7 +1529,7 @@ export const replyMessageSchema = z.object({
         if (!list) return undefined;
         if (Array.isArray(list) && list.length > 0) {
           const item = list[0];
-          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.uri || item?.path || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
         }
         return undefined;
       };
@@ -1309,20 +1545,35 @@ export const replyMessageSchema = z.object({
         scanFirst((data as any).media) ||
         scanFirst((data as any).files);
 
-      const resolvedContent =
-        data.content ||
-        data.imageUrl ||
-        data.image ||
-        data.mediaUrl ||
-        data.imageKey ||
-        (data as any).audioUrl ||
-        (data as any).audio ||
-        (data as any).voiceUrl ||
+      const candidateImageRef =
+        (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
+        (typeof data.image === 'string' && data.image.trim().length > 0
+          ? data.image.trim()
+          : (data.image as any)?.url || (data.image as any)?.imageUrl || (data.image as any)?.uri || (data.image as any)?.path) ||
+        (typeof data.mediaUrl === 'string' && data.mediaUrl.trim().length > 0 ? data.mediaUrl.trim() : undefined) ||
+        (typeof data.imageKey === 'string' && data.imageKey.trim().length > 0 ? data.imageKey.trim() : undefined) ||
+        (data as any).uri ||
+        (data as any).path ||
         (data as any).url ||
         (data as any).fileUrl ||
+        (data as any).key ||
+        (data as any).storageKey ||
+        (data as any).s3Key ||
+        (data as any).publicUrl ||
+        (typeof (data as any).photo === 'string' ? (data as any).photo : (data as any).photo?.url || (data as any).photo?.uri) ||
+        (typeof (data as any).media === 'string' ? (data as any).media : (data as any).media?.url || (data as any).media?.uri) ||
+        (typeof (data as any).file === 'string' ? (data as any).file : (data as any).file?.url || (data as any).file?.uri) ||
+        (data.metadata && typeof data.metadata === 'object' && ((data.metadata as any).imageUrl || (data.metadata as any).url || (data.metadata as any).uri || (data.metadata as any).mediaUrl || (data.metadata as any).path || (data.metadata as any).key)) ||
         multiImageFirst;
 
-      if (resolvedContent && !data.content) {
+      const resolvedContent =
+        (typeof data.content === 'string' && data.content.trim().length > 0 ? data.content.trim() : undefined) ||
+        candidateImageRef ||
+        (data as any).audioUrl ||
+        (data as any).audio ||
+        (data as any).voiceUrl;
+
+      if (resolvedContent && (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0)) {
         data.content = resolvedContent;
       }
 
@@ -1334,7 +1585,7 @@ export const replyMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
-        multiImageFirst
+        candidateImageRef
       );
 
       const type =
@@ -1352,11 +1603,15 @@ export const replyMessageSchema = z.object({
         }
       } else if (type === 'image') {
         if (!data.content || typeof data.content !== 'string' || data.content.trim().length === 0) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ['content'],
-            message: 'Image URL or storage key is required in content for image message',
-          });
+          if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
+            data.content = data.caption.trim();
+          } else {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['content'],
+              message: 'Image URL or storage key is required in content for image message',
+            });
+          }
         }
       }
     }),

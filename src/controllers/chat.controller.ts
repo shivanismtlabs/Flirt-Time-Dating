@@ -577,7 +577,23 @@ export const pinMessageHandler = async (req: AuthenticatedRequest, res: Response
     const currentUserId = req.user!.id;
     const conversationId = req.params.conversationId as string;
     const messageId = req.params.messageId as string;
-    const isPinned = req.body?.isPinned !== undefined ? req.body.isPinned : true;
+
+    const isExplicitUnpin = req.method === 'DELETE' || req.path.endsWith('/unpin');
+    const rawPinned =
+      req.body?.isPinned !== undefined
+        ? req.body.isPinned
+        : req.body?.pinned !== undefined
+        ? req.body.pinned
+        : req.body?.is_pinned;
+
+    let isPinned = isExplicitUnpin ? false : true;
+    if (rawPinned !== undefined) {
+      if (typeof rawPinned === 'boolean') isPinned = rawPinned;
+      else if (typeof rawPinned === 'number') isPinned = rawPinned === 1;
+      else if (typeof rawPinned === 'string') isPinned = rawPinned.toLowerCase() !== 'false' && rawPinned !== '0';
+      else isPinned = !!rawPinned;
+    }
+
     const scope = req.body?.scope === 'user' ? 'user' : 'conversation';
     const result = await chatService.pinMessage(currentUserId, conversationId, messageId, isPinned, scope);
     const message = isPinned ? 'Message pinned successfully' : 'Message unpinned successfully';

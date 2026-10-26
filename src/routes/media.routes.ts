@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { mediaController } from '../controllers/media.controller';
-import { authenticate } from '../middlewares/auth.middleware';
+import { authenticate, optionalAuthenticate } from '../middlewares/auth.middleware';
 import { validate } from '../middlewares/validate.middleware';
 import { handleUploadUniversalMedia } from '../middlewares/upload.middleware';
 import { generatePresignedUrlSchema } from '../schemas/media.schema';
@@ -8,38 +8,29 @@ import { generatePresignedUrlSchema } from '../schemas/media.schema';
 const router = Router();
 
 // Direct S3 Media Upload & Presigned URL Generation
-// Supports POST /api/v1/media/uploads, /upload, /images, /image, /photos, /photo, /files, /file, /
-router.post(
+// Supports POST, PUT, PATCH, GET on /api/v1/media/uploads, /upload, /images, /image, /photos, /photo, /files, /file, /
+router.all(
   [
     '/uploads',
+    '/uploads/*',
     '/upload',
+    '/upload/*',
     '/images',
+    '/images/*',
     '/image',
+    '/image/*',
     '/photos',
+    '/photos/*',
     '/photo',
+    '/photo/*',
     '/files',
+    '/files/*',
     '/file',
+    '/file/*',
     '/',
   ],
-  authenticate,
+  optionalAuthenticate,
   handleUploadUniversalMedia,
-  mediaController.uploadMediaHandler
-);
-
-// GET /api/v1/media/uploads or aliases for presigned URL / info retrieval
-router.get(
-  [
-    '/uploads',
-    '/upload',
-    '/images',
-    '/image',
-    '/photos',
-    '/photo',
-    '/files',
-    '/file',
-    '/',
-  ],
-  authenticate,
   mediaController.uploadMediaHandler
 );
 

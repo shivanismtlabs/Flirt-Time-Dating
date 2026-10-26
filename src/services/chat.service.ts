@@ -2399,10 +2399,9 @@ export class ChatService {
       const pinKey = (id: string) => String(id || '').trim().toLowerCase();
       for (const pin of pinRows) {
         const key = pinKey(pin.messageId);
-        const existing = pinsMap.get(key);
         const isViewer =
           String(pin.userId || '').trim().toLowerCase() === normCurrentUserId;
-        if (!existing || isViewer) {
+        if (isViewer) {
           pinsMap.set(key, pin);
         }
       }
@@ -2975,43 +2974,82 @@ export class ChatService {
 
     let rawImages = [
       ...coerceMediaList((data as any).images),
+      ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).medias),
       ...coerceMediaList((data as any).media),
+      ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).media_urls),
       ...coerceMediaList((data as any).photos),
       ...coerceMediaList((data as any).photo),
+      ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).photo_urls),
       ...coerceMediaList((data as any).attachments),
       ...coerceMediaList((data as any).attachment),
       ...coerceMediaList((data as any).files),
+      ...coerceMediaList((data as any).fileUrls),
+      ...coerceMediaList((data as any).file_urls),
+      ...coerceMediaList((data as any).gallery),
+      ...coerceMediaList((data as any).pictures),
+      ...coerceMediaList((data as any).picture),
       ...coerceMediaList(metadataObj.images),
+      ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.image_urls),
       ...coerceMediaList(metadataObj.medias),
       ...coerceMediaList(metadataObj.media),
+      ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.media_urls),
       ...coerceMediaList(metadataObj.photos),
       ...coerceMediaList(metadataObj.photo),
+      ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.photo_urls),
       ...coerceMediaList(metadataObj.attachments),
       ...coerceMediaList(metadataObj.attachment),
       ...coerceMediaList(metadataObj.files),
+      ...coerceMediaList(metadataObj.fileUrls),
+      ...coerceMediaList(metadataObj.file_urls),
+      ...coerceMediaList(metadataObj.gallery),
+      ...coerceMediaList(metadataObj.pictures),
+      ...coerceMediaList(metadataObj.picture),
     ];
     let rawImageUrls = [
       ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).media_urls),
       ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).photo_urls),
+      ...coerceMediaList((data as any).fileUrls),
+      ...coerceMediaList((data as any).file_urls),
       ...coerceMediaList((data as any).urls),
+      ...coerceMediaList((data as any).uris),
       ...coerceMediaList((data as any).keys),
+      ...coerceMediaList((data as any).imageKeys),
+      ...coerceMediaList((data as any).image_keys),
       ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.image_urls),
       ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.media_urls),
       ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.photo_urls),
+      ...coerceMediaList(metadataObj.fileUrls),
+      ...coerceMediaList(metadataObj.file_urls),
       ...coerceMediaList(metadataObj.urls),
+      ...coerceMediaList(metadataObj.uris),
       ...coerceMediaList(metadataObj.keys),
+      ...coerceMediaList(metadataObj.imageKeys),
+      ...coerceMediaList(metadataObj.image_keys),
     ];
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
     if (!data.messageType && !data.type) {
       const hasImage =
         !!(data as any).imageUrl ||
+        !!(data as any).image_url ||
         !!(data as any).image ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
         (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
-      const audioRef = (data as any).audioUrl || (data as any).audio || (data as any).voiceUrl;
+      const audioRef = (data as any).audioUrl || (data as any).audio_url || (data as any).audio || (data as any).voiceUrl || (data as any).voice_url;
       if (hasImage) {
         msgType = 'image';
       } else if (audioRef && !isImageMediaReference(audioRef)) {
@@ -3022,14 +3060,20 @@ export class ChatService {
     let rawContent = (
       data.content ||
       (data as any).imageUrl ||
+      (data as any).image_url ||
       (data as any).image ||
       (data as any).mediaUrl ||
+      (data as any).media_url ||
       (data as any).imageKey ||
+      (data as any).image_key ||
       (data as any).audioUrl ||
+      (data as any).audio_url ||
       (data as any).audio ||
       (data as any).voiceUrl ||
+      (data as any).voice_url ||
       (data as any).url ||
       (data as any).fileUrl ||
+      (data as any).file_url ||
       ''
     );
     if (!rawContent && Array.isArray(rawImages) && rawImages.length > 0) {
@@ -3038,15 +3082,29 @@ export class ChatService {
         ? firstImg
         : firstImg?.url ||
           firstImg?.imageUrl ||
+          firstImg?.image_url ||
           firstImg?.uri ||
           firstImg?.path ||
           firstImg?.mediaUrl ||
+          firstImg?.media_url ||
           firstImg?.key ||
+          firstImg?.imageKey ||
+          firstImg?.image_key ||
           '';
     }
     if (!rawContent && Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
       const firstUrl = rawImageUrls[0];
-      rawContent = typeof firstUrl === 'string' ? firstUrl : (firstUrl as any)?.url || (firstUrl as any)?.imageUrl || '';
+      rawContent = typeof firstUrl === 'string'
+        ? firstUrl
+        : (firstUrl as any)?.url ||
+          (firstUrl as any)?.imageUrl ||
+          (firstUrl as any)?.image_url ||
+          (firstUrl as any)?.mediaUrl ||
+          (firstUrl as any)?.media_url ||
+          (firstUrl as any)?.key ||
+          (firstUrl as any)?.imageKey ||
+          (firstUrl as any)?.image_key ||
+          '';
     }
     let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
 
@@ -3183,14 +3241,18 @@ export class ChatService {
             ? item
             : item?.url ||
               item?.imageUrl ||
+              item?.image_url ||
               item?.mediaUrl ||
+              item?.media_url ||
               item?.photoUrl ||
+              item?.photo_url ||
               item?.link ||
               item?.uri ||
               item?.path ||
               item?.src ||
               item?.key ||
               item?.imageKey ||
+              item?.image_key ||
               item?.file ||
               '';
         if (!raw || isLocalDeviceMediaRef(raw)) continue;
@@ -3215,14 +3277,18 @@ export class ChatService {
           ? rawItem
           : (rawItem as any)?.url ||
             (rawItem as any)?.imageUrl ||
+            (rawItem as any)?.image_url ||
             (rawItem as any)?.mediaUrl ||
+            (rawItem as any)?.media_url ||
             (rawItem as any)?.photoUrl ||
+            (rawItem as any)?.photo_url ||
             (rawItem as any)?.link ||
             (rawItem as any)?.path ||
             (rawItem as any)?.uri ||
             (rawItem as any)?.src ||
             (rawItem as any)?.key ||
             (rawItem as any)?.imageKey ||
+            (rawItem as any)?.image_key ||
             '';
         if (!raw || typeof raw !== 'string' || isLocalDeviceMediaRef(raw)) continue;
         const cleanKey = resolveIncomingImageKey(raw, senderId);
@@ -3249,7 +3315,7 @@ export class ChatService {
 
     if (uploadedImages.length > 0) {
       msgType = 'image';
-      if (!messageContent || messageContent === '__FILE_ATTACHMENT__') {
+      if (!messageContent || messageContent === '__FILE_ATTACHMENT__' || messageContent === '__MULTI_IMAGE__') {
         messageContent = uploadedImages[0].key;
       }
     }
@@ -3328,7 +3394,7 @@ export class ChatService {
           mimeType,
           fileSize: buffer.length,
         });
-      } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
+      } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__' && messageContent !== '__MULTI_IMAGE__') {
         const cleanKey = resolveIncomingImageKey(messageContent, senderId);
         if (cleanKey) {
           const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -4281,43 +4347,82 @@ export class ChatService {
 
     let rawImages = [
       ...coerceMediaList((data as any).images),
+      ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).medias),
       ...coerceMediaList((data as any).media),
-
+      ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).media_urls),
+      ...coerceMediaList((data as any).photos),
       ...coerceMediaList((data as any).photo),
+      ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).photo_urls),
       ...coerceMediaList((data as any).attachments),
       ...coerceMediaList((data as any).attachment),
       ...coerceMediaList((data as any).files),
+      ...coerceMediaList((data as any).fileUrls),
+      ...coerceMediaList((data as any).file_urls),
+      ...coerceMediaList((data as any).gallery),
+      ...coerceMediaList((data as any).pictures),
+      ...coerceMediaList((data as any).picture),
       ...coerceMediaList(metadataObj.images),
+      ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.image_urls),
       ...coerceMediaList(metadataObj.medias),
       ...coerceMediaList(metadataObj.media),
+      ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.media_urls),
       ...coerceMediaList(metadataObj.photos),
       ...coerceMediaList(metadataObj.photo),
+      ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.photo_urls),
       ...coerceMediaList(metadataObj.attachments),
       ...coerceMediaList(metadataObj.attachment),
       ...coerceMediaList(metadataObj.files),
+      ...coerceMediaList(metadataObj.fileUrls),
+      ...coerceMediaList(metadataObj.file_urls),
+      ...coerceMediaList(metadataObj.gallery),
+      ...coerceMediaList(metadataObj.pictures),
+      ...coerceMediaList(metadataObj.picture),
     ];
     let rawImageUrls = [
       ...coerceMediaList((data as any).imageUrls),
+      ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).media_urls),
       ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).photo_urls),
+      ...coerceMediaList((data as any).fileUrls),
+      ...coerceMediaList((data as any).file_urls),
       ...coerceMediaList((data as any).urls),
+      ...coerceMediaList((data as any).uris),
       ...coerceMediaList((data as any).keys),
+      ...coerceMediaList((data as any).imageKeys),
+      ...coerceMediaList((data as any).image_keys),
       ...coerceMediaList(metadataObj.imageUrls),
+      ...coerceMediaList(metadataObj.image_urls),
       ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.media_urls),
       ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.photo_urls),
+      ...coerceMediaList(metadataObj.fileUrls),
+      ...coerceMediaList(metadataObj.file_urls),
       ...coerceMediaList(metadataObj.urls),
+      ...coerceMediaList(metadataObj.uris),
       ...coerceMediaList(metadataObj.keys),
+      ...coerceMediaList(metadataObj.imageKeys),
+      ...coerceMediaList(metadataObj.image_keys),
     ];
 
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
     if (!data.messageType && !data.type) {
       const hasImage =
         !!(data as any).imageUrl ||
+        !!(data as any).image_url ||
         !!(data as any).image ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
         (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
-      const audioRef = (data as any).audioUrl || (data as any).audio || (data as any).voiceUrl;
+      const audioRef = (data as any).audioUrl || (data as any).audio_url || (data as any).audio || (data as any).voiceUrl || (data as any).voice_url;
       if (hasImage) {
         msgType = 'image';
       } else if (audioRef && !isImageMediaReference(audioRef)) {
@@ -4328,14 +4433,20 @@ export class ChatService {
     let rawContent = (
       data.content ||
       (data as any).imageUrl ||
+      (data as any).image_url ||
       (data as any).image ||
       (data as any).mediaUrl ||
+      (data as any).media_url ||
       (data as any).imageKey ||
+      (data as any).image_key ||
       (data as any).audioUrl ||
+      (data as any).audio_url ||
       (data as any).audio ||
       (data as any).voiceUrl ||
+      (data as any).voice_url ||
       (data as any).url ||
       (data as any).fileUrl ||
+      (data as any).file_url ||
       ''
     );
     if (!rawContent && Array.isArray(rawImages) && rawImages.length > 0) {
@@ -4344,15 +4455,29 @@ export class ChatService {
         ? firstImg
         : firstImg?.url ||
           firstImg?.imageUrl ||
+          firstImg?.image_url ||
           firstImg?.uri ||
           firstImg?.path ||
           firstImg?.mediaUrl ||
+          firstImg?.media_url ||
           firstImg?.key ||
+          firstImg?.imageKey ||
+          firstImg?.image_key ||
           '';
     }
     if (!rawContent && Array.isArray(rawImageUrls) && rawImageUrls.length > 0) {
       const firstUrl = rawImageUrls[0];
-      rawContent = typeof firstUrl === 'string' ? firstUrl : (firstUrl as any)?.url || (firstUrl as any)?.imageUrl || '';
+      rawContent = typeof firstUrl === 'string'
+        ? firstUrl
+        : (firstUrl as any)?.url ||
+          (firstUrl as any)?.imageUrl ||
+          (firstUrl as any)?.image_url ||
+          (firstUrl as any)?.mediaUrl ||
+          (firstUrl as any)?.media_url ||
+          (firstUrl as any)?.key ||
+          (firstUrl as any)?.imageKey ||
+          (firstUrl as any)?.image_key ||
+          '';
     }
     let messageContent = (typeof rawContent === 'string' ? rawContent : '').trim();
 
@@ -4489,11 +4614,19 @@ export class ChatService {
             ? item
             : item?.url ||
               item?.imageUrl ||
+              item?.image_url ||
+              item?.mediaUrl ||
+              item?.media_url ||
+              item?.photoUrl ||
+              item?.photo_url ||
+              item?.link ||
               item?.uri ||
               item?.path ||
-              item?.mediaUrl ||
               item?.src ||
               item?.key ||
+              item?.imageKey ||
+              item?.image_key ||
+              item?.file ||
               '';
         if (!raw || isLocalDeviceMediaRef(raw)) continue;
         const cleanKey = resolveIncomingImageKey(raw, senderId);
@@ -4517,11 +4650,18 @@ export class ChatService {
           ? rawItem
           : (rawItem as any)?.url ||
             (rawItem as any)?.imageUrl ||
+            (rawItem as any)?.image_url ||
             (rawItem as any)?.mediaUrl ||
+            (rawItem as any)?.media_url ||
+            (rawItem as any)?.photoUrl ||
+            (rawItem as any)?.photo_url ||
+            (rawItem as any)?.link ||
             (rawItem as any)?.path ||
             (rawItem as any)?.uri ||
             (rawItem as any)?.src ||
             (rawItem as any)?.key ||
+            (rawItem as any)?.imageKey ||
+            (rawItem as any)?.image_key ||
             '';
         if (!raw || typeof raw !== 'string' || isLocalDeviceMediaRef(raw)) continue;
         const cleanKey = resolveIncomingImageKey(raw, senderId);
@@ -4614,7 +4754,7 @@ export class ChatService {
           mimeType,
           fileSize: buffer.length,
         });
-      } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__') {
+      } else if (messageContent && messageContent !== '__FILE_ATTACHMENT__' && messageContent !== '__MULTI_IMAGE__') {
         const cleanKey = resolveIncomingImageKey(messageContent, senderId);
         if (cleanKey) {
           const pubUrl = s3Service.getPublicUrl(cleanKey);
@@ -4906,12 +5046,17 @@ export class ChatService {
             ? mediaSendLockKey(senderId, recipientId, `audio:${audioRepeatIds}`)
             : ''
       );
-      const t = await sequelize.transaction();
-      let savedMessage: ChatMessage | null = null;
-      let lastMessagePreview: string = '';
-      let reusedMultiContact = false;
       try {
-        let conv = conversationMap.get(recipientId);
+        let success = false;
+        let attempt = 0;
+        while (!success && attempt < 3) {
+          attempt++;
+          const t = await sequelize.transaction();
+          let savedMessage: ChatMessage | null = null;
+          let lastMessagePreview: string = '';
+          let reusedMultiContact = false;
+          try {
+            let conv = conversationMap.get(recipientId);
         if (!conv) {
           const { conversation } = await this.getOrCreateOneToOneConversation(
             senderId,
@@ -5519,25 +5664,39 @@ export class ChatService {
           primaryRecipientDto.durationMs = uploadedAudios[0].durationMs;
         }
 
-        results.push({
-          recipientId,
-          conversationId,
-          status: 'success',
-          message: primaryRecipientDto,
-        });
+            results.push({
+              recipientId,
+              conversationId,
+              status: 'success',
+              message: primaryRecipientDto,
+            });
 
-        if (!inlineSideEffects) {
-          void settleRecipient(false).catch(() => undefined);
+            if (!inlineSideEffects) {
+              void settleRecipient(false).catch(() => undefined);
+            }
+            success = true;
+          } catch (err: any) {
+            try { await t.rollback(); } catch {}
+            const isLocked =
+              err.message &&
+              (/SQLITE_BUSY/i.test(err.message) ||
+                /database is locked/i.test(err.message) ||
+                /deadlock/i.test(err.message) ||
+                /could not serialize access/i.test(err.message));
+            if (isLocked && attempt < 3) {
+              await new Promise((r) => setTimeout(r, 60 * attempt));
+              continue;
+            }
+            results.push({
+              recipientId,
+              conversationId: null,
+              status: 'failed',
+              error: err.message || 'Failed to deliver message',
+              errorCode: 'DELIVERY_ERROR',
+            });
+            break;
+          }
         }
-      } catch (err: any) {
-        await t.rollback();
-        results.push({
-          recipientId,
-          conversationId: null,
-          status: 'failed',
-          error: err.message || 'Failed to deliver message',
-          errorCode: 'DELIVERY_ERROR',
-        });
       } finally {
         releaseContactLock();
         releaseLocationLock();
@@ -7490,11 +7649,13 @@ export class ChatService {
       const io = getSocketServer();
       const legacyEvent = isPinned ? 'chat:message_pinned' : 'chat:message_unpinned';
       const aliasEvent = isPinned ? 'message:pinned' : 'message:unpinned';
-      const eventNames = ['chat:message:pin:updated', legacyEvent, aliasEvent];
+      const colonEvent = isPinned ? 'chat:message:pinned' : 'chat:message:unpinned';
+      const eventNames = ['chat:message:pin:updated', legacyEvent, aliasEvent, colonEvent];
 
       const buildPayload = (viewerId: string) => {
         const isActor =
           String(viewerId || '').trim().toLowerCase() === String(actorId || '').trim().toLowerCase();
+        const viewerMsg = buildMessage(viewerId);
         return {
           conversationId,
           messageId: message.id,
@@ -7502,8 +7663,9 @@ export class ChatService {
           pinned: isPinned,
           pinnedBy: isPinned ? pinnedBy || actorId : null,
           pinnedAt: isPinned ? pinnedAtIso : null,
-          scope: 'conversation' as const,
-          message: !isPinned && !isActor ? null : buildMessage(viewerId),
+          scope,
+          message: !isPinned && !isActor ? null : viewerMsg,
+          pinnedMessage: isPinned ? viewerMsg : null,
         };
       };
 
@@ -7514,7 +7676,8 @@ export class ChatService {
       };
 
       // Each participant gets a message shaped for their own side of the chat.
-      for (const userId of [conversation.user1Id, conversation.user2Id]) {
+      const targetUserIds = scope === 'user' ? [actorId] : [conversation.user1Id, conversation.user2Id];
+      for (const userId of targetUserIds) {
         if (!userId) continue;
         const payload = buildPayload(userId);
         const rooms = new Set([
@@ -7527,24 +7690,29 @@ export class ChatService {
       }
 
       // Open chats join these rooms. Deliver a per-viewer payload so isMine stays correct.
-      for (const room of [`conversation:${conversationId}`, `chat:${conversationId}`]) {
-        let sockets: any[] = [];
-        try {
-          sockets = await io.in(room).fetchSockets();
-        } catch {
-          sockets = [];
-        }
+      if (scope === 'conversation') {
+        const notifiedSocketIds = new Set<string>();
+        for (const room of [`conversation:${conversationId}`, `chat:${conversationId}`]) {
+          let sockets: any[] = [];
+          try {
+            sockets = await io.in(room).fetchSockets();
+          } catch {
+            sockets = [];
+          }
 
-        if (sockets.length === 0) {
-          emitPayload(room, buildPayload(actorId));
-          continue;
-        }
+          if (sockets.length === 0) {
+            emitPayload(room, buildPayload(actorId));
+            continue;
+          }
 
-        for (const remote of sockets) {
-          const viewerId = remote.data?.user?.userId || actorId;
-          const payload = buildPayload(viewerId);
-          for (const eventName of eventNames) {
-            remote.emit(eventName, payload);
+          for (const remote of sockets) {
+            if (notifiedSocketIds.has(remote.id)) continue;
+            notifiedSocketIds.add(remote.id);
+            const viewerId = remote.data?.user?.userId || actorId;
+            const payload = buildPayload(viewerId);
+            for (const eventName of eventNames) {
+              remote.emit(eventName, payload);
+            }
           }
         }
       }
@@ -7572,9 +7740,12 @@ export class ChatService {
     conversationId: string;
     messageId: string;
     isPinned: boolean;
+    pinned: boolean;
+    scope: 'user' | 'conversation';
     pinnedAt: Date | string | null;
     pinnedBy: string | null;
     message: ChatMessageDTO | null;
+    pinnedMessage: ChatMessageDTO | null;
   }> {
     const conversation = await Conversation.findByPk(conversationId, {
       attributes: ['id', 'user1Id', 'user2Id', 'isDeletedForEveryone', 'lastMessageAt'],
@@ -7745,13 +7916,24 @@ export class ChatService {
       metadata: msgMeta,
     });
 
+    const pinnedAtIso = isPinned
+      ? (pinnedAt instanceof Date
+          ? pinnedAt.toISOString()
+          : pinnedAt
+          ? String(pinnedAt)
+          : now.toISOString())
+      : null;
+
     return {
       conversationId,
       messageId: canonicalMessageId,
       isPinned,
-      pinnedAt,
-      pinnedBy,
+      pinned: isPinned,
+      scope,
+      pinnedAt: pinnedAtIso,
+      pinnedBy: isPinned ? (pinnedBy || currentUserId) : null,
       message: messageSnapshot,
+      pinnedMessage: isPinned ? messageSnapshot : null,
     };
   }
 

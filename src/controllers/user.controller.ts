@@ -172,28 +172,6 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       })
     );
 
-    // 4. Permanent Moments: Maximum 4 permanent moments ordered by newest first
-    let permanentMoments: any[] = [];
-    try {
-      const myMomentsResult = await momentService.getUserMoments(userId, userId, {
-        page: 1,
-        limit: 4,
-      });
-      const rawMoments = (myMomentsResult?.moments || []).slice(0, 4);
-      permanentMoments = rawMoments.map((m: any) => ({
-        id: m.id,
-        caption: m.caption || '',
-        createdAt: m.createdAt || m.publishedAt,
-        firstImageUrl: m.firstImageUrl || m.imageUrl || null,
-        thumbnailUrl: m.thumbnailUrl || null,
-        imageCount: m.imageCount || m.mediaCount || 1,
-        likeCount: m.likeCount ?? m.likesCount ?? 0,
-        commentCount: m.commentCount ?? m.commentsCount ?? 0,
-        isLiked: !!m.isLiked,
-        hasMultipleImages: (m.imageCount || m.mediaCount || 1) > 1,
-      }));
-    } catch { }
-
     // 5. Voice Intro
     let voiceIntro: any = null;
     if (user.voicePromptUrl) {
@@ -206,65 +184,92 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       };
     }
 
-    // 6. Quick Moments: 24-hr tray summary
-    let quickMomentsSummary: any = {
-      items: [],
-      canAdd: true,
-    };
+    // Moments, tray, and notification settings do not depend on each other.
+    const [permanentMoments, quickMomentsSummary, userNotifySettings] = await Promise.all([
+      (async (): Promise<any[]> => {
+        try {
+          const myMomentsResult = await momentService.getUserMoments(userId, userId, {
+            page: 1,
+            limit: 4,
+          });
+          const rawMoments = (myMomentsResult?.moments || []).slice(0, 4);
+          return rawMoments.map((m: any) => ({
+            id: m.id,
+            caption: m.caption || '',
+            createdAt: m.createdAt || m.publishedAt,
+            firstImageUrl: m.firstImageUrl || m.imageUrl || null,
+            thumbnailUrl: m.thumbnailUrl || null,
+            imageCount: m.imageCount || m.mediaCount || 1,
+            likeCount: m.likeCount ?? m.likesCount ?? 0,
+            commentCount: m.commentCount ?? m.commentsCount ?? 0,
+            isLiked: !!m.isLiked,
+            hasMultipleImages: (m.imageCount || m.mediaCount || 1) > 1,
+          }));
+        } catch {
+          return [];
+        }
+      })(),
+      (async () => {
+        const empty = { items: [] as any[], canAdd: true };
+        try {
+          const { quickMomentService } = await import('../services/quickMoment.service');
+          const trayResult = await quickMomentService.getTray(userId);
 
-    try {
-      const { quickMomentService } = await import('../services/quickMoment.service');
-      const trayResult = await quickMomentService.getTray(userId);
+          const myStories = (trayResult.myStatus?.stories || []).map((s: any) => ({
+            id: s.id,
+            author: {
+              id: user.id,
+              name: displayName,
+              avatar: primaryProfilePhoto?.thumbnailUrl || null,
+              isVerified: !!user.isFaceVerified,
+            },
+            mediaThumbnail: s.thumbnailUrl || s.imageUrl,
+            createdAt: s.createdAt,
+            expiresAt: s.expiresAt || null,
+            isViewed: true,
+            isSelf: true,
+          }));
 
-      const myStories = (trayResult.myStatus?.stories || []).map((s: any) => ({
-        id: s.id,
-        author: {
-          id: user.id,
-          name: displayName,
-          avatar: primaryProfilePhoto?.thumbnailUrl || null,
-          isVerified: !!user.isFaceVerified,
-        },
-        mediaThumbnail: s.thumbnailUrl || s.imageUrl,
-        createdAt: s.createdAt,
-        expiresAt: s.expiresAt || null,
-        isViewed: true,
-        isSelf: true,
-      }));
+          const otherMomentsList = trayResult.otherUsers || (trayResult as any).tray || [];
+          const otherItems = otherMomentsList.map((t: any) => ({
+            id: t.firstMomentId || t.userId,
+            author: {
+              id: t.userId,
+              name: t.name,
+              avatar: t.avatar,
+              isVerified: !!t.isVerified,
+            },
+            mediaThumbnail: t.preview?.thumbnailUrl || t.preview?.imageUrl || null,
+            createdAt: t.preview?.createdAt || null,
+            isViewed: !t.hasUnread,
+            isSelf: false,
+          }));
 
-      const otherMomentsList = trayResult.otherUsers || (trayResult as any).tray || [];
-      const otherItems = otherMomentsList.map((t: any) => ({
-        id: t.firstMomentId || t.userId,
-        author: {
-          id: t.userId,
-          name: t.name,
-          avatar: t.avatar,
-          isVerified: !!t.isVerified,
-        },
-        mediaThumbnail: t.preview?.thumbnailUrl || t.preview?.imageUrl || null,
-        createdAt: t.preview?.createdAt || null,
-        isViewed: !t.hasUnread,
-        isSelf: false,
-      }));
-
-      quickMomentsSummary = {
-        items: [...myStories, ...otherItems],
-        canAdd: true,
-      };
-    } catch { }
+          return {
+            items: [...myStories, ...otherItems],
+            canAdd: true,
+          };
+        } catch {
+          return empty;
+        }
+      })(),
+      (async () => {
+        let settings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
+        try {
+          const settingRecord = await NotificationSetting.findOne({ where: { userId } });
+          if (settingRecord) {
+            settings = {
+              ...settings,
+              ...settingRecord.toResponseJSON(),
+            };
+          }
+        } catch { }
+        return settings;
+      })(),
+    ]);
 
     // 7. Structured Profile Object (only requested fields, no redundant data)
     const moreAboutMe = formatMoreAboutMe(user);
-
-    let userNotifySettings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
-    try {
-      const settingRecord = await NotificationSetting.findOne({ where: { userId } });
-      if (settingRecord) {
-        userNotifySettings = {
-          ...userNotifySettings,
-          ...settingRecord.toResponseJSON(),
-        };
-      }
-    } catch { }
 
     const profileData = {
       id: user.id,

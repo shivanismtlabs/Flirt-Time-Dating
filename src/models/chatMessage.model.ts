@@ -19,6 +19,7 @@ export interface ChatMessageAttributes {
   content: string;
   messageType: ChatMessageType;
   metadata?: string | null;
+  clientMessageId?: string | null;
   isDelivered?: boolean;
   deliveredAt?: Date | null;
   isRead: boolean;
@@ -33,6 +34,7 @@ export interface ChatMessageCreationAttributes
     | 'id'
     | 'messageType'
     | 'metadata'
+    | 'clientMessageId'
     | 'isDelivered'
     | 'deliveredAt'
     | 'isRead'
@@ -51,6 +53,7 @@ export class ChatMessage
   declare public content: string;
   declare public messageType: ChatMessageType;
   declare public metadata: string | null;
+  declare public clientMessageId: string | null;
   declare public isDelivered: boolean;
   declare public deliveredAt: Date | null;
   declare public isRead: boolean;
@@ -124,6 +127,10 @@ ChatMessage.init(
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    clientMessageId: {
+      type: DataTypes.STRING(80),
+      allowNull: true,
+    },
     isDelivered: {
       type: DataTypes.BOOLEAN,
       defaultValue: false,
@@ -151,6 +158,14 @@ ChatMessage.init(
       {
         fields: ['conversationId'],
         name: 'idx_chat_messages_conversation',
+      },
+      {
+        fields: ['conversationId', 'senderId', 'clientMessageId'],
+        name: 'idx_chat_messages_client_id',
+      },
+      {
+        fields: ['conversationId', 'createdAt'],
+        name: 'idx_chat_messages_conv_created',
       },
       {
         fields: ['recipientId', 'isRead'],

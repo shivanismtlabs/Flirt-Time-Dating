@@ -425,6 +425,54 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(msg1InHistory.isPinned).toBe(false);
       expect(historyRes.body.data.pinnedMessages.map((m: any) => m.id)).toEqual([msg2.id]);
       expect(historyRes.body.data.pinnedMessages[0].pinned).toBe(true);
+      expect(historyRes.body.data.pinnedMessages[0].content).toBe(msg2.content);
+      expect(historyRes.body.data.pinnedMessages[0].sender.name).toBe('Bob Smith');
+      expect(historyRes.body.data.pinnedMessages[0].sender.name).toBe(
+        historyRes.body.data.pinnedMessages[0].sender.displayName
+      );
+    });
+
+    it('should keep pinned photo content after the chat is reopened', async () => {
+      const photoKey = `chat/${userA.id}/1700000000_pinned_photo.jpg`;
+      const sent = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ messageType: 'image', content: photoKey, caption: 'Beach day' });
+
+      expect(sent.status).toBe(201);
+      const photoId = sent.body.data.id;
+
+      const pinRes = await request(app)
+        .post(`/api/v1/chats/${convAB.id}/messages/${photoId}/pin`)
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ isPinned: true });
+      expect(pinRes.status).toBe(200);
+      expect(pinRes.body.data.message.content).toBeTruthy();
+      expect(pinRes.body.data.message.imageUrl).toBeTruthy();
+      expect(pinRes.body.data.message.medias.length).toBeGreaterThan(0);
+
+      const historyRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages`)
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      const pinned = historyRes.body.data.pinnedMessages.find((m: any) => m.id === photoId);
+      expect(pinned).toBeTruthy();
+      expect(pinned.content).toBeTruthy();
+      expect(pinned.imageUrl).toBeTruthy();
+      expect(pinned.images.length).toBeGreaterThan(0);
+      expect(pinned.medias.length).toBeGreaterThan(0);
+      expect(pinned.metadata.caption).toBe('Beach day');
+      expect(pinned.sender.name).toBe(pinned.sender.displayName);
+
+      const pinnedRes = await request(app)
+        .get(`/api/v1/chats/${convAB.id}/messages/pinned`)
+        .set('Authorization', `Bearer ${tokenA}`);
+      const fromList = pinnedRes.body.data.messages.find((m: any) => m.id === photoId);
+      expect(fromList.content).toBeTruthy();
+      expect(fromList.imageUrl).toBeTruthy();
+      expect(fromList.images.length).toBeGreaterThan(0);
+      expect(fromList.medias.length).toBeGreaterThan(0);
+      expect(fromList.sender.name).toBeTruthy();
     });
 
     it('should keep every pin, with the latest pin first, after the chat is reloaded', async () => {
@@ -457,6 +505,7 @@ describe('Fetch Messages & Pinned Messages — REST API + Socket.IO', () => {
       expect(pinnedIds).toContain(msg1.id);
       expect(historyRes.body.data.pinnedMessages[0].content).toBe(msg3.content);
       expect(historyRes.body.data.pinnedMessages[0].pinned).toBe(true);
+      expect(historyRes.body.data.pinnedMessages[0].sender.name).toBeTruthy();
 
       const pinnedRes = await request(app)
         .get(`/api/v1/chats/${convAB.id}/messages/pinned`)

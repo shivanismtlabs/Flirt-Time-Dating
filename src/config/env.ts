@@ -14,6 +14,8 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD || 'postgres',
   DB_LOGGING: process.env.DB_LOGGING === 'true',
   DB_SSL: process.env.DB_SSL === 'true',
+  DB_POOL_MAX: parseInt(process.env.DB_POOL_MAX || '20', 10),
+  DB_STATEMENT_TIMEOUT_MS: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '20000', 10),
 
   JWT_SECRET: process.env.JWT_SECRET || 'super_secret_jwt_key_flirttime_2026_change_in_production',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',

@@ -5,7 +5,7 @@
 
 import crypto from 'crypto';
 import { AsyncLocalStorage } from 'async_hooks';
-import { Op } from 'sequelize';
+import { Op, QueryTypes } from 'sequelize';
 import {
   sequelize,
   User,
@@ -435,6 +435,11 @@ export const galleryKeysFromMeta = (meta: any, content?: string | null): Set<str
   return keys;
 };
 
+/** Child photo id -> the gallery bubble that still appears in history. */
+const galleryAbsorbedIds = new WeakMap<ChatMessageDTO[], Map<string, string>>();
+
+const chatIdKey = (id: unknown): string => String(id || '').trim().toLowerCase();
+
 /** Photos from one send share galleryId or clientMessageId, so history shows one group. */
 export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMessageDTO[] => {
   const groupKey = (msg: ChatMessageDTO): string | null => {
@@ -467,7 +472,12 @@ export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMess
     return Math.abs(msgTime - prevTime) < 15000 && (prev.images?.length || 0) < Number(metaOf(msg).galleryCount);
   };
 
+  const absorbedIds = new Map<string, string>();
+
   const mergeInto = (prev: ChatMessageDTO, msg: ChatMessageDTO) => {
+    const from = chatIdKey(msg.id);
+    const to = chatIdKey(prev.id);
+    if (from && to) absorbedIds.set(from, to);
     const images = dedupeChatImages([...(prev.images || []), ...(msg.images || [])]).map(decorateChatGalleryImage);
     const imageUrls = images.map((img: any) => img.imageUrl || img.url).filter(Boolean);
     prev.images = images;
@@ -507,6 +517,7 @@ export const collapseChatImageGalleries = (messages: ChatMessageDTO[]): ChatMess
     }
     mergeInto(prev, msg);
   }
+  galleryAbsorbedIds.set(out, absorbedIds);
   return out;
 };
 
@@ -875,6 +886,61 @@ const clientMessageIdLike = (clientMessageId: string) => ({
   [Op.like]: `%"clientMessageId":"${String(clientMessageId).replace(/[\\%_]/g, '')}"%`,
 });
 
+const CLIENT_ID_LOOKUP_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Indexed lookup first. A metadata LIKE is only the fallback for rows saved
+ * before clientMessageId existed, and only inside this conversation's recent window.
+ */
+const findClientMessages = async (
+  conversationId: string,
+  senderId: string,
+  clientMessageId: string,
+  transaction?: any
+): Promise<ChatMessage[]> => {
+  const wanted = String(clientMessageId);
+  const safePrefix = wanted.replace(/[\\%_]/g, '');
+  const indexed = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      [Op.or]: [
+        { clientMessageId: wanted },
+        { clientMessageId: { [Op.like]: `${safePrefix}-%` } },
+      ],
+    },
+    order: [
+      ['createdAt', 'ASC'],
+      ['id', 'ASC'],
+    ],
+    transaction,
+  });
+  const matched = indexed.filter((row) =>
+    sameClientSend(row.clientMessageId || clientMessageIdFromMetadata(row.metadata), wanted)
+  );
+  if (matched.length > 0) return matched;
+
+  const since = new Date(Date.now() - CLIENT_ID_LOOKUP_WINDOW_MS);
+  const legacy = await ChatMessage.findAll({
+    where: {
+      conversationId,
+      senderId,
+      createdAt: { [Op.gte]: since },
+      clientMessageId: null,
+      metadata: clientMessageIdLike(wanted),
+    },
+    limit: 20,
+    order: [
+      ['createdAt', 'ASC'],
+      ['id', 'ASC'],
+    ],
+    transaction,
+  });
+  return legacy.filter((row) =>
+    sameClientSend(clientMessageIdFromMetadata(row.metadata), wanted)
+  );
+};
+
 const sameClientSend = (stored: string | null, wanted: string): boolean => {
   if (!stored || !wanted) return false;
   if (stored === wanted) return true;
@@ -1041,6 +1107,105 @@ export const presentChatMessage = (dto: ChatMessageDTO): ChatMessageDTO => {
     next.metadata = meta;
   }
   return next;
+};
+
+/**
+ * Photo and voice fields the open chat reads.
+ * A reloaded pin uses this same shape, otherwise the pin bar has no content.
+ */
+const fillChatMediaFields = (
+  dto: ChatMessageDTO,
+  messageType: string | null | undefined,
+  content: string | null | undefined,
+  parsedMetadata: any
+): ChatMessageDTO => {
+  const kind = String(messageType || '').toLowerCase();
+  if (kind === 'image') {
+    const cleanKey = content ? s3Service.extractKey(content) : '';
+    const resolvedUrl =
+      parsedMetadata?.imageUrl ||
+      parsedMetadata?.url ||
+      parsedMetadata?.mediaUrl ||
+      (cleanKey ? s3Service.getPublicUrl(cleanKey) : undefined);
+    const resolvedThumb =
+      parsedMetadata?.thumbnailUrl ||
+      (cleanKey ? s3Service.getThumbnailUrl(cleanKey) : undefined);
+
+    dto.imageUrl = resolvedUrl;
+    dto.thumbnailUrl = resolvedThumb;
+    dto.mediaUrl = resolvedUrl;
+    dto.url = resolvedUrl;
+
+    if (Array.isArray(parsedMetadata?.images) && parsedMetadata.images.length > 0) {
+      const gallery = parsedMetadata.images.map(decorateChatGalleryImage);
+      dto.images = gallery;
+      dto.imageUrls = gallery.map((img: any) =>
+        typeof img === 'string' ? img : img.url || img.imageUrl || ''
+      );
+    } else if (Array.isArray(parsedMetadata?.imageUrls) && parsedMetadata.imageUrls.length > 0) {
+      const urls: string[] = parsedMetadata.imageUrls.map((img: any) =>
+        typeof img === 'string' ? img : img.url || img.imageUrl || ''
+      );
+      dto.imageUrls = urls;
+      dto.images = urls.map((url: string) => decorateChatGalleryImage(url));
+    } else {
+      dto.images = resolvedUrl
+        ? [
+            decorateChatGalleryImage({
+              url: resolvedUrl,
+              imageUrl: resolvedUrl,
+              thumbnailUrl: resolvedThumb,
+              key: cleanKey,
+            }),
+          ]
+        : [];
+      dto.imageUrls = resolvedUrl ? [resolvedUrl] : [];
+    }
+    dto.mediaUrls = dto.imageUrls;
+    dto.medias = toChatMedias(dto.images);
+  } else if (kind === 'audio') {
+    const cleanKey = content ? s3Service.extractKey(content) : '';
+    const resolvedAudio =
+      parsedMetadata?.audioUrl ||
+      parsedMetadata?.voiceUrl ||
+      parsedMetadata?.url ||
+      parsedMetadata?.mediaUrl ||
+      (cleanKey ? s3Service.getPublicUrl(cleanKey) : undefined);
+
+    dto.audioUrl = resolvedAudio;
+    dto.voiceUrl = resolvedAudio;
+    dto.mediaUrl = resolvedAudio;
+    dto.url = resolvedAudio;
+
+    const dur =
+      parsedMetadata?.duration !== undefined ? Number(parsedMetadata.duration) : undefined;
+    if (dur !== undefined && !Number.isNaN(dur)) {
+      dto.duration = dur;
+      dto.durationMs =
+        parsedMetadata?.durationMs !== undefined ? Number(parsedMetadata.durationMs) : dur * 1000;
+    }
+  }
+  return dto;
+};
+
+/** Pin bar reads the bubble that is still on screen, including a merged gallery. */
+const visiblePinnedMessage = (
+  pageMessages: ChatMessageDTO[],
+  pinnedMessage: ChatMessageDTO
+): ChatMessageDTO => {
+  const onPage = new Map(pageMessages.map((message) => [chatIdKey(message.id), message]));
+  const direct = onPage.get(chatIdKey(pinnedMessage.id));
+  const parentId = galleryAbsorbedIds.get(pageMessages)?.get(chatIdKey(pinnedMessage.id));
+  const parent = parentId ? onPage.get(parentId) : undefined;
+  const full = direct || parent;
+  if (!full) return pinnedMessage;
+  return {
+    ...full,
+    isPinned: true,
+    pinned: true,
+    pinnedAt: pinnedMessage.pinnedAt ?? full.pinnedAt ?? null,
+    pinnedBy: pinnedMessage.pinnedBy ?? full.pinnedBy ?? null,
+  };
 };
 
 export const buildViewerChatMessage = (
@@ -1444,14 +1609,37 @@ export class ChatService {
     >();
     if (conversationIds.length === 0) return latest;
 
-    const rows = await ChatMessage.findAll({
-      attributes: ['conversationId', 'senderId', 'messageType', 'content', 'metadata', 'createdAt', 'id', 'isRead', 'isDelivered', 'deliveredAt', 'readAt'],
-      where: { conversationId: { [Op.in]: conversationIds } },
-      order: [
-        ['createdAt', 'DESC'],
-        ['id', 'DESC'],
-      ],
-    });
+    const rows =
+      sequelize.getDialect() === 'postgres'
+        ? await sequelize.query<ChatMessage>(
+            `SELECT DISTINCT ON ("conversationId")
+               "id", "conversationId", "senderId", "messageType", "content", "metadata",
+               "createdAt", "isRead", "isDelivered", "deliveredAt", "readAt"
+             FROM "chat_messages"
+             WHERE "conversationId" IN (:ids)
+             ORDER BY "conversationId", "createdAt" DESC, "id" DESC`,
+            { replacements: { ids: conversationIds }, type: QueryTypes.SELECT }
+          )
+        : await ChatMessage.findAll({
+            attributes: [
+              'conversationId',
+              'senderId',
+              'messageType',
+              'content',
+              'metadata',
+              'createdAt',
+              'id',
+              'isRead',
+              'isDelivered',
+              'deliveredAt',
+              'readAt',
+            ],
+            where: { conversationId: { [Op.in]: conversationIds } },
+            order: [
+              ['createdAt', 'DESC'],
+              ['id', 'DESC'],
+            ],
+          });
 
     for (const row of rows) {
       if (!latest.has(row.conversationId)) {
@@ -2547,7 +2735,15 @@ export class ChatService {
           page: 1,
           limit: 50,
         });
-        pinnedMessages = pinned.messages;
+        const seenPins = new Set<string>();
+        pinnedMessages = pinned.messages.reduce<ChatMessageDTO[]>((list, pinnedMessage) => {
+          const visible = visiblePinnedMessage(messages, pinnedMessage);
+          const key = chatIdKey(visible.id);
+          if (!key || seenPins.has(key)) return list;
+          seenPins.add(key);
+          list.push(visible);
+          return list;
+        }, []);
       } catch {
         pinnedMessages = messages.filter((message) => message.isPinned || message.pinned);
       }
@@ -3290,15 +3486,7 @@ export class ChatService {
     try {
     if (data.clientMessageId) {
       const wantedClientId = String(data.clientMessageId);
-      const existingRows = (
-        await ChatMessage.findAll({
-          where: {
-            conversationId,
-            senderId,
-            metadata: clientMessageIdLike(wantedClientId),
-          },
-        })
-      ).filter((row) => sameClientSend(clientMessageIdFromMetadata(row.metadata), wantedClientId));
+      const existingRows = await findClientMessages(conversationId, senderId, wantedClientId);
 
       if (existingRows.length > 0) {
         const existingKeys = new Set<string>();
@@ -3675,6 +3863,7 @@ export class ChatService {
             content: item.content,
             messageType: item.type,
             metadata: metadataPayload,
+            clientMessageId: clientMsgId || null,
             isRead: false,
           },
           { transaction: t }
@@ -4706,14 +4895,8 @@ export class ChatService {
 
         // Idempotency check: if clientMessageId already processed, return existing message
         if (clientMessageId) {
-          const existingMessage = await ChatMessage.findOne({
-            where: {
-              conversationId,
-              senderId,
-              metadata: clientMessageIdLike(clientMessageId),
-            },
-            transaction: t,
-          });
+          const existingMessage =
+            (await findClientMessages(conversationId, senderId, clientMessageId, t))[0] || null;
 
           const sameText =
             !!existingMessage && String(existingMessage.content || '') === messageContent;
@@ -5004,6 +5187,7 @@ export class ChatService {
               content: item.content,
               messageType: item.type,
               metadata: metadataPayload,
+              clientMessageId: clientMsgId || null,
               isRead: false,
             },
             { transaction: t }
@@ -7207,17 +7391,13 @@ export class ChatService {
     const senderUser = await User.findByPk(message.senderId, {
       attributes: ['id', 'username', 'firstName', 'lastName', 'fullName', 'profilePicture'],
     });
-    const sender: ChatMessageSenderDTO = senderUser
-      ? {
-          id: senderUser.id,
-          displayName: resolveChatDisplayName(senderUser),
-          profileImageUrl: formatMediaUrl(senderUser.profilePicture),
-        }
-      : {
-          id: message.senderId,
-          displayName: 'Participant',
-          profileImageUrl: null,
-        };
+    const senderName = senderUser ? resolveChatDisplayName(senderUser) : 'Participant';
+    const sender: ChatMessageSenderDTO = {
+      id: senderUser?.id || message.senderId,
+      displayName: senderName,
+      name: senderName,
+      profileImageUrl: senderUser ? formatMediaUrl(senderUser.profilePicture) : null,
+    };
 
     const pinnedAtIso =
       pinnedAt instanceof Date ? pinnedAt.toISOString() : pinnedAt ? String(pinnedAt) : null;
@@ -7232,7 +7412,7 @@ export class ChatService {
       const isMine =
         String(message.senderId || '').trim().toLowerCase() ===
         String(viewerId || '').trim().toLowerCase();
-      return {
+      return presentChatMessage(fillChatMediaFields({
         id: message.id,
         conversationId,
         senderId: message.senderId,
@@ -7242,6 +7422,10 @@ export class ChatService {
         metadata: parsedMetadata,
         status,
         receiptStatus: status,
+        messageStatus: status === 'read' ? 'seen' : status,
+        seen: !!message.isRead,
+        direction: isMine ? 'sent' : 'received',
+        isIncoming: !isMine,
         isDelivered: !!message.isDelivered,
         deliveredAt: message.deliveredAt || null,
         isRead: !!message.isRead,
@@ -7259,7 +7443,7 @@ export class ChatService {
         replyToMessageId: parsedMetadata?.replyToMessageId || null,
         replyTo: parsedMetadata?.replyTo || null,
         sender,
-      };
+      }, message.messageType, message.content, parsedMetadata));
     };
 
     const actorMessage = buildMessage(actorId);
@@ -7572,7 +7756,10 @@ export class ChatService {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
-    if (conversation.user1Id !== currentUserId && conversation.user2Id !== currentUserId) {
+    const viewerKey = String(currentUserId || '').trim().toLowerCase();
+    const isMember =
+      chatIdKey(conversation.user1Id) === viewerKey || chatIdKey(conversation.user2Id) === viewerKey;
+    if (!isMember) {
       throw new ChatServiceError('Conversation not found', 404);
     }
 
@@ -7604,7 +7791,6 @@ export class ChatService {
         ['id', 'DESC'],
       ],
     });
-    const viewerKey = String(currentUserId || '').trim().toLowerCase();
     const seenMessageIds = new Set<string>();
     const viewerPins = allPins.filter((pin) => {
       const owner = String(pin.userId || '').trim().toLowerCase();
@@ -7657,27 +7843,25 @@ export class ChatService {
     ]);
 
     const userSenderMap = new Map<string, ChatMessageSenderDTO>();
-    if (user1) {
-      userSenderMap.set(user1.id, {
-        id: user1.id,
-        displayName: resolveChatDisplayName(user1),
-        profileImageUrl: formatMediaUrl(user1.profilePicture),
+    const rememberSender = (user: User | null) => {
+      if (!user) return;
+      const displayName = resolveChatDisplayName(user);
+      userSenderMap.set(chatIdKey(user.id), {
+        id: user.id,
+        displayName,
+        name: displayName,
+        profileImageUrl: formatMediaUrl(user.profilePicture),
       });
-    }
-    if (user2) {
-      userSenderMap.set(user2.id, {
-        id: user2.id,
-        displayName: resolveChatDisplayName(user2),
-        profileImageUrl: formatMediaUrl(user2.profilePicture),
-      });
-    }
+    };
+    rememberSender(user1);
+    rememberSender(user2);
 
-    const messageMap = new Map(messages.map((m) => [m.id, m]));
+    const messageMap = new Map(messages.map((m) => [chatIdKey(m.id), m]));
 
     // Preserve pinRows order (most recently pinned first)
     const pinnedMessageDtos: ChatMessageDTO[] = [];
     for (const pin of pinRows) {
-      const msg = messageMap.get(pin.messageId);
+      const msg = messageMap.get(chatIdKey(pin.messageId));
       if (!msg) continue; // Message was cleared or deleted
 
       let parsedMetadata: any = null;
@@ -7689,12 +7873,33 @@ export class ChatService {
         }
       }
 
+      const deletedForViewer =
+        Array.isArray(parsedMetadata?.deletedForUserIds) &&
+        parsedMetadata.deletedForUserIds.some((id: unknown) => chatIdKey(id) === viewerKey);
+
       if (
         parsedMetadata?.isDeletedForEveryone ||
         parsedMetadata?.isDeleted ||
-        (Array.isArray(parsedMetadata?.deletedForUserIds) && parsedMetadata.deletedForUserIds.includes(currentUserId))
+        deletedForViewer
       ) {
         continue;
+      }
+
+      if (parsedMetadata && typeof parsedMetadata === 'object') {
+        if (typeof parsedMetadata.images === 'string') {
+          try {
+            parsedMetadata.images = JSON.parse(parsedMetadata.images);
+          } catch {
+            // keep the original value
+          }
+        }
+        if (typeof parsedMetadata.imageUrls === 'string') {
+          try {
+            parsedMetadata.imageUrls = JSON.parse(parsedMetadata.imageUrls);
+          } catch {
+            // keep the original value
+          }
+        }
       }
 
       if (msg.messageType === 'image' && msg.content) {
@@ -7711,6 +7916,23 @@ export class ChatService {
         if (!parsedMetadata.mediaUrl) {
           parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
         }
+        if (!parsedMetadata.url) {
+          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+        }
+      } else if (msg.messageType === 'audio' && msg.content) {
+        if (!parsedMetadata || typeof parsedMetadata !== 'object') {
+          parsedMetadata = {};
+        }
+        const cleanKey = s3Service.extractKey(msg.content);
+        if (!parsedMetadata.audioUrl) {
+          parsedMetadata.audioUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.mediaUrl) {
+          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        }
+        if (!parsedMetadata.url) {
+          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+        }
       }
 
       const status: 'sent' | 'delivered' | 'read' = msg.isRead
@@ -7719,15 +7941,28 @@ export class ChatService {
           ? 'delivered'
           : 'sent';
 
-      const isMine = String(msg.senderId || '').trim().toLowerCase() === viewerKey;
-      pinnedMessageDtos.push(presentChatMessage({
+      const isMine = chatIdKey(msg.senderId) === viewerKey;
+      const sender = userSenderMap.get(chatIdKey(msg.senderId)) || {
+        id: msg.senderId,
+        displayName: isMine ? 'You' : 'Participant',
+        name: isMine ? 'You' : 'Participant',
+        profileImageUrl: null,
+      };
+      const caption =
+        typeof parsedMetadata?.caption === 'string' ? parsedMetadata.caption.trim() : '';
+      const storedContent = String(msg.content || '');
+      pinnedMessageDtos.push(presentChatMessage(fillChatMediaFields({
         id: msg.id,
         conversationId: msg.conversationId,
         senderId: msg.senderId,
         recipientId: msg.recipientId,
-        content: msg.content,
+        content: storedContent || caption,
         messageType: (msg.messageType as any) || 'text',
         metadata: parsedMetadata,
+        ...contactFieldsFromMeta(msg.messageType, parsedMetadata, {
+          senderId: msg.senderId,
+          isMine,
+        }),
         status,
         receiptStatus: status,
         messageStatus: status === 'read' ? 'seen' : status,
@@ -7750,13 +7985,8 @@ export class ChatService {
         editedAt: parsedMetadata?.editedAt || null,
         replyToMessageId: parsedMetadata?.replyToMessageId || null,
         replyTo: parsedMetadata?.replyTo || null,
-        sender: userSenderMap.get(String(msg.senderId || '').trim().toLowerCase()) ||
-          userSenderMap.get(msg.senderId) || {
-          id: msg.senderId,
-          displayName: isMine ? 'You' : 'Participant',
-          profileImageUrl: null,
-        },
-      }));
+        sender,
+      }, msg.messageType, storedContent, parsedMetadata)));
     }
 
     const totalPages = Math.ceil(count / limit) || 1;
@@ -9931,6 +10161,7 @@ return {
               content: srcMsg.content,
               messageType: srcMsg.messageType,
               metadata: JSON.stringify(destMeta),
+              clientMessageId: perMessageClientId || null,
               isRead: false,
             },
             { transaction: t }

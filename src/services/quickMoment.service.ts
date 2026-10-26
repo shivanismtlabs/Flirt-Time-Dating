@@ -118,9 +118,14 @@ function mapQuickMomentReaction(r: any) {
 }
 
 let quickMomentTablesReady = false;
+let quickMomentSyncRetryAt = 0;
+
+export function markQuickMomentTablesReady(): void {
+  quickMomentTablesReady = true;
+}
 
 export async function ensureQuickMomentTables(): Promise<void> {
-  if (quickMomentTablesReady) return;
+  if (quickMomentTablesReady || Date.now() < quickMomentSyncRetryAt) return;
   try {
     await QuickMoment.sync();
     await QuickMomentReaction.sync();
@@ -128,6 +133,7 @@ export async function ensureQuickMomentTables(): Promise<void> {
     await QuickMomentReply.sync();
     quickMomentTablesReady = true;
   } catch (err: any) {
+    quickMomentSyncRetryAt = Date.now() + 60_000;
     console.warn('[QuickMoment Schema Warning]:', err.message);
   }
 }
@@ -215,7 +221,8 @@ export class QuickMomentService {
     await ensureQuickMomentTables();
     const now = new Date();
 
-    // Fetch all active, non-expired quick moments
+    // Moments and their reactions/views are loaded apart so Sequelize does not
+    // build one giant join of every story × reaction × view.
     const activeMoments = await QuickMoment.findAll({
       where: {
         status: 'active',
@@ -227,10 +234,16 @@ export class QuickMomentService {
           as: 'author',
           attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city'],
         },
-        {
-          model: QuickMomentReaction,
-          as: 'reactions',
-          attributes: ['id', 'emoji', 'userId', 'createdAt'],
+      ],
+      order: [['createdAt', 'DESC']],
+    });
+
+    const activeIds = activeMoments.map((moment) => moment.id);
+    if (activeIds.length > 0) {
+      const [reactions, views] = await Promise.all([
+        QuickMomentReaction.findAll({
+          where: { quickMomentId: { [Op.in]: activeIds } },
+          attributes: ['id', 'quickMomentId', 'emoji', 'userId', 'createdAt'],
           include: [
             {
               model: User,
@@ -238,15 +251,30 @@ export class QuickMomentService {
               attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
             },
           ],
-        },
-        {
-          model: QuickMomentView,
-          as: 'views',
-          attributes: ['userId'],
-        },
-      ],
-      order: [['createdAt', 'DESC']],
-    });
+        }),
+        QuickMomentView.findAll({
+          where: { quickMomentId: { [Op.in]: activeIds } },
+          attributes: ['quickMomentId', 'userId'],
+        }),
+      ]);
+
+      const reactionsByMoment = new Map<string, QuickMomentReaction[]>();
+      for (const reaction of reactions) {
+        const list = reactionsByMoment.get(reaction.quickMomentId) || [];
+        list.push(reaction);
+        reactionsByMoment.set(reaction.quickMomentId, list);
+      }
+      const viewsByMoment = new Map<string, QuickMomentView[]>();
+      for (const view of views) {
+        const list = viewsByMoment.get(view.quickMomentId) || [];
+        list.push(view);
+        viewsByMoment.set(view.quickMomentId, list);
+      }
+      for (const moment of activeMoments) {
+        moment.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
+        moment.setDataValue('views', viewsByMoment.get(moment.id) || []);
+      }
+    }
 
     // 1. Group own stories
     const myMoments = activeMoments.filter((m) => m.userId === viewerUserId);

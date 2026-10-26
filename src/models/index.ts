@@ -1332,6 +1332,8 @@ export const initDb = async (force = false): Promise<void> => {
           await QuickMomentReply.sync();
           await MomentGift.sync();
           await MomentCommentLike.sync();
+          const { markQuickMomentTablesReady } = await import('../services/quickMoment.service');
+          markQuickMomentTablesReady();
         } catch (_qmSyncErr: any) {
           console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
         }
@@ -1616,6 +1618,7 @@ export const ensureChatTables = async (): Promise<void> => {
         await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "isDelivered" BOOLEAN DEFAULT false;');
         await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "deliveredAt" TIMESTAMP WITH TIME ZONE;');
         await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "clientMessageId" VARCHAR(80);');
         // Backfill existing read messages so receipts are consistent
         await sequelize.query(`
           UPDATE "chat_messages"
@@ -1632,6 +1635,8 @@ export const ensureChatTables = async (): Promise<void> => {
       try {
         await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_recipient_deliv" ON "chat_messages" ("recipientId", "isDelivered");');
         await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_type" ON "chat_messages" ("messageType");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_client_id" ON "chat_messages" ("conversationId", "senderId", "clientMessageId");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_conv_created" ON "chat_messages" ("conversationId", "createdAt" DESC);');
         await sequelize.query(`CREATE INDEX IF NOT EXISTS "idx_chat_messages_moment_reply_id" ON "chat_messages" (substring(metadata from '"momentId":"([0-9a-fA-F-]{36})"')) WHERE "messageType" = 'moment_reply';`);
         await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_moments_status_published" ON "moments" ("status", "publishedAt" DESC);');
       } catch (_idxErr: any) {}
@@ -1658,6 +1663,9 @@ export const ensureChatTables = async (): Promise<void> => {
       } catch (_e) {}
       try {
         await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "clientMessageId" VARCHAR(80);');
       } catch (_e) {}
       try {
         await sequelize.query('ALTER TABLE "video_calls" ADD COLUMN "callType" VARCHAR(20) DEFAULT \'video\';');

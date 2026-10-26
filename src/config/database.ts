@@ -21,8 +21,8 @@ export const sequelize = isTestEnv
       dialect: 'postgres',
       logging: env.DB_LOGGING ? console.log : false,
       pool: {
-        max: 10,
-        min: 0,
+        max: Number.isFinite(env.DB_POOL_MAX) && env.DB_POOL_MAX > 0 ? env.DB_POOL_MAX : 20,
+        min: 2,
         acquire: 30000,
         idle: 10000,
       },
@@ -35,6 +35,18 @@ export const sequelize = isTestEnv
           }
         : {},
     });
+
+if (!isTestEnv) {
+  const statementTimeoutMs =
+    Number.isFinite(env.DB_STATEMENT_TIMEOUT_MS) && env.DB_STATEMENT_TIMEOUT_MS > 0
+      ? env.DB_STATEMENT_TIMEOUT_MS
+      : 20000;
+  sequelize.addHook('afterConnect', (connection: unknown) => {
+    const client = connection as { query?: (sql: string) => Promise<unknown> };
+    if (!client.query) return undefined;
+    return client.query(`SET statement_timeout = ${statementTimeoutMs}`);
+  });
+}
 
 export const connectDatabase = async (): Promise<boolean> => {
   try {

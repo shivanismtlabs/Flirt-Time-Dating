@@ -638,27 +638,26 @@ export class MomentService {
       }
     }
 
-    const { count, rows: moments } = await Moment.findAndCountAll({
-      where: { [Op.and]: whereConditions },
-      include: [
-        {
-          model: MomentMedia,
-          as: 'media',
-        },
-        {
-          model: MomentReaction,
-          as: 'reactions',
-        },
-      ],
-      distinct: true,
-      order: [
-        ['publishedAt', 'DESC'],
-        ['id', 'DESC'],
-        [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
-      ],
-      limit,
-      offset,
-    });
+    const momentWhere = { [Op.and]: whereConditions };
+    const [count, moments] = await Promise.all([
+      Moment.count({ where: momentWhere }),
+      Moment.findAll({
+        where: momentWhere,
+        include: [
+          {
+            model: MomentMedia,
+            as: 'media',
+          },
+        ],
+        order: [
+          ['publishedAt', 'DESC'],
+          ['id', 'DESC'],
+          [{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC'],
+        ],
+        limit,
+        offset,
+      }),
+    ]);
 
     // 6. Replies / comments counts & gifts counts
     const momentIds = moments.map((m: any) => m.id);
@@ -670,25 +669,37 @@ export class MomentService {
     }
 
     if (momentIds.length > 0) {
-      try {
-        const counted = await this.countMomentReplies(momentIds);
-        for (const [id, total] of counted) repliesCountMap.set(id, total);
-      } catch {}
-
-      try {
-        const giftRecords = await MomentGift.findAll({
+      const [counted, giftRecords, reactionRows] = await Promise.all([
+        this.countMomentReplies(momentIds).catch(() => new Map<string, number>()),
+        MomentGift.findAll({
           where: { momentId: { [Op.in]: momentIds } },
           attributes: ['momentId', 'quantity'],
-        });
+        }).catch(() => [] as MomentGift[]),
+        MomentReaction.findAll({
+          where: { momentId: { [Op.in]: momentIds } },
+          attributes: ['momentId', 'userId', 'reaction'],
+        }).catch(() => [] as MomentReaction[]),
+      ]);
 
-        for (const g of giftRecords) {
-          const mId = g.momentId;
-          const qty = Number(g.quantity) || 1;
-          if (giftsCountMap.has(mId)) {
-            giftsCountMap.set(mId, (giftsCountMap.get(mId) || 0) + qty);
-          }
+      for (const [id, total] of counted) repliesCountMap.set(id, total);
+
+      for (const g of giftRecords) {
+        const mId = g.momentId;
+        const qty = Number(g.quantity) || 1;
+        if (giftsCountMap.has(mId)) {
+          giftsCountMap.set(mId, (giftsCountMap.get(mId) || 0) + qty);
         }
-      } catch {}
+      }
+
+      const reactionsByMoment = new Map<string, MomentReaction[]>();
+      for (const row of reactionRows) {
+        const list = reactionsByMoment.get(row.momentId) || [];
+        list.push(row);
+        reactionsByMoment.set(row.momentId, list);
+      }
+      for (const moment of moments) {
+        moment.setDataValue('reactions', reactionsByMoment.get(moment.id) || []);
+      }
     }
 
     const { momentCounts, compatibilityMap } = await this.getCompatibilityAndMomentCounts(

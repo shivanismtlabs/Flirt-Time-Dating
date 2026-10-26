@@ -172,18 +172,19 @@ export const decorateChatGalleryImage = (img: any): any => {
     const full = img.startsWith('http://') || img.startsWith('https://')
       ? img
       : s3Service.getPublicUrl(key);
+    const thumb = key ? s3Service.getThumbnailUrl(key) : full;
     return {
       url: full,
       imageUrl: full,
       mediaUrl: full,
-      thumbnailUrl: full,
+      thumbnailUrl: thumb,
       path: full,
       uri: full,
       src: full,
       key,
     };
   }
-  const raw = img.url || img.imageUrl || img.mediaUrl || img.path || img.uri || img.src || '';
+  const raw = img.url || img.imageUrl || img.mediaUrl || img.path || img.uri || img.src || img.link || '';
   const key = img.key || (raw ? s3Service.extractKey(raw) : '');
   const full =
     raw && (String(raw).startsWith('http://') || String(raw).startsWith('https://'))
@@ -191,12 +192,13 @@ export const decorateChatGalleryImage = (img: any): any => {
       : key
         ? s3Service.getPublicUrl(key)
         : '';
+  const thumb = img.thumbnailUrl || (key ? s3Service.getThumbnailUrl(key) : full);
   return {
     ...img,
     url: full,
     imageUrl: full,
     mediaUrl: full,
-    thumbnailUrl: full || img.thumbnailUrl,
+    thumbnailUrl: thumb,
     path: full,
     uri: full,
     src: full,
@@ -2974,20 +2976,32 @@ export class ChatService {
     let rawImages = [
       ...coerceMediaList((data as any).images),
       ...coerceMediaList((data as any).medias),
+      ...coerceMediaList((data as any).media),
+      ...coerceMediaList((data as any).photos),
+      ...coerceMediaList((data as any).photo),
+      ...coerceMediaList((data as any).attachments),
+      ...coerceMediaList((data as any).attachment),
+      ...coerceMediaList((data as any).files),
       ...coerceMediaList(metadataObj.images),
       ...coerceMediaList(metadataObj.medias),
+      ...coerceMediaList(metadataObj.media),
+      ...coerceMediaList(metadataObj.photos),
+      ...coerceMediaList(metadataObj.photo),
+      ...coerceMediaList(metadataObj.attachments),
+      ...coerceMediaList(metadataObj.attachment),
+      ...coerceMediaList(metadataObj.files),
     ];
-    if (rawImages.length === 0) {
-      rawImages = [
-        ...coerceMediaList(metadataObj.photos),
-        ...coerceMediaList(metadataObj.attachments),
-      ];
-    }
     let rawImageUrls = [
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).urls),
+      ...coerceMediaList((data as any).keys),
       ...coerceMediaList(metadataObj.imageUrls),
       ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.urls),
+      ...coerceMediaList(metadataObj.keys),
     ];
 
     let msgType: ChatMessageType = (data.messageType as ChatMessageType) || (data.type as ChatMessageType) || 'text';
@@ -3169,11 +3183,15 @@ export class ChatService {
             ? item
             : item?.url ||
               item?.imageUrl ||
+              item?.mediaUrl ||
+              item?.photoUrl ||
+              item?.link ||
               item?.uri ||
               item?.path ||
-              item?.mediaUrl ||
               item?.src ||
               item?.key ||
+              item?.imageKey ||
+              item?.file ||
               '';
         if (!raw || isLocalDeviceMediaRef(raw)) continue;
         const cleanKey = resolveIncomingImageKey(raw, senderId);
@@ -3198,10 +3216,13 @@ export class ChatService {
           : (rawItem as any)?.url ||
             (rawItem as any)?.imageUrl ||
             (rawItem as any)?.mediaUrl ||
+            (rawItem as any)?.photoUrl ||
+            (rawItem as any)?.link ||
             (rawItem as any)?.path ||
             (rawItem as any)?.uri ||
             (rawItem as any)?.src ||
             (rawItem as any)?.key ||
+            (rawItem as any)?.imageKey ||
             '';
         if (!raw || typeof raw !== 'string' || isLocalDeviceMediaRef(raw)) continue;
         const cleanKey = resolveIncomingImageKey(raw, senderId);
@@ -4261,20 +4282,32 @@ export class ChatService {
     let rawImages = [
       ...coerceMediaList((data as any).images),
       ...coerceMediaList((data as any).medias),
+      ...coerceMediaList((data as any).media),
+
+      ...coerceMediaList((data as any).photo),
+      ...coerceMediaList((data as any).attachments),
+      ...coerceMediaList((data as any).attachment),
+      ...coerceMediaList((data as any).files),
       ...coerceMediaList(metadataObj.images),
       ...coerceMediaList(metadataObj.medias),
+      ...coerceMediaList(metadataObj.media),
+      ...coerceMediaList(metadataObj.photos),
+      ...coerceMediaList(metadataObj.photo),
+      ...coerceMediaList(metadataObj.attachments),
+      ...coerceMediaList(metadataObj.attachment),
+      ...coerceMediaList(metadataObj.files),
     ];
-    if (rawImages.length === 0) {
-      rawImages = [
-        ...coerceMediaList(metadataObj.photos),
-        ...coerceMediaList(metadataObj.attachments),
-      ];
-    }
     let rawImageUrls = [
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).mediaUrls),
+      ...coerceMediaList((data as any).photoUrls),
+      ...coerceMediaList((data as any).urls),
+      ...coerceMediaList((data as any).keys),
       ...coerceMediaList(metadataObj.imageUrls),
       ...coerceMediaList(metadataObj.mediaUrls),
+      ...coerceMediaList(metadataObj.photoUrls),
+      ...coerceMediaList(metadataObj.urls),
+      ...coerceMediaList(metadataObj.keys),
     ];
 
     let msgType: ChatMessageType = (data.messageType || data.type || 'text') as ChatMessageType;
@@ -5166,6 +5199,14 @@ export class ChatService {
 
         let lastSaved: ChatMessage | undefined;
         if (!reusedMultiContact) {
+        const isRecipientViewing = isUserViewingConversation(recipientId, conversationId);
+        const isRecipientOnline = isRecipientViewing || isUserConnected(recipientId);
+        const sendTime = new Date();
+        const initialDelivered = isRecipientOnline;
+        const initialDeliveredAt = isRecipientOnline ? sendTime : null;
+        const initialRead = isRecipientViewing;
+        const initialReadAt = isRecipientViewing ? sendTime : null;
+
         for (let i = 0; i < itemsToCreate.length; i++) {
           const item = itemsToCreate[i];
           const clientMsgId =
@@ -5190,7 +5231,10 @@ export class ChatService {
               content: item.content,
               messageType: item.type,
               metadata: metadataPayload,
-              isRead: false,
+              isDelivered: initialDelivered,
+              deliveredAt: initialDeliveredAt,
+              isRead: initialRead,
+              readAt: initialReadAt,
             },
             { transaction: t }
           );
@@ -5282,6 +5326,12 @@ export class ChatService {
                 ? dur * 1000
                 : undefined;
 
+          const currentStatus: 'sent' | 'delivered' | 'read' = savedMessage.isRead
+            ? 'read'
+            : savedMessage.isDelivered
+              ? 'delivered'
+              : 'sent';
+
           const dto: ChatMessageDTO = {
             id: savedMessage.id,
             conversationId: savedMessage.conversationId,
@@ -5290,12 +5340,14 @@ export class ChatService {
             content: savedMessage.content,
             messageType: savedMessage.messageType as any,
             metadata: parsedMeta,
-            status: 'sent',
-            receiptStatus: 'sent',
-            isDelivered: false,
-            deliveredAt: null,
-            isRead: false,
-            readAt: null,
+            status: currentStatus,
+            receiptStatus: currentStatus,
+            messageStatus: currentStatus === 'read' ? 'seen' : currentStatus,
+            seen: !!savedMessage.isRead,
+            isDelivered: !!savedMessage.isDelivered,
+            deliveredAt: savedMessage.deliveredAt || null,
+            isRead: !!savedMessage.isRead,
+            readAt: savedMessage.readAt || null,
             sentAt: savedMessage.createdAt,
             createdAt: savedMessage.createdAt,
             isMine: true,
@@ -5933,7 +5985,7 @@ export class ChatService {
     try {
       return await withConversationReceiptLock(conversationId, async () => {
         const ids = await this.pendingReceiptIds(recipientId, conversationId, messageIds);
-        if (ids.length === 0) return 'sent';
+        if (ids.length === 0) return this.liveStatusForIds(messageIds);
         if (isUserViewingConversation(recipientId, conversationId)) {
           await this.markIdsRead(recipientId, conversationId, ids, receiptSink);
           return this.liveStatusForIds(messageIds);
@@ -5942,12 +5994,12 @@ export class ChatService {
           await this.markIdsDelivered(recipientId, conversationId, ids, receiptSink);
           return this.liveStatusForIds(messageIds);
         }
-        return 'sent';
+        return this.liveStatusForIds(messageIds);
       });
     } catch {
       // receipt side effects must not fail the send
     }
-    return 'sent';
+    return this.liveStatusForIds(messageIds);
   }
 
   public async syncOutgoingReceipts(
@@ -6690,6 +6742,9 @@ export class ChatService {
 
       const senderPreview = viewerPreviews?.sender || lastMessagePreview;
       const recipientPreview = viewerPreviews?.recipient || lastMessagePreview;
+      const msgStatus =
+        (message as any).status ||
+        ((message as any).isRead ? 'read' : (message as any).isDelivered ? 'delivered' : 'sent');
       const lastMessageFor = (content: string) => ({
         id: message.id,
         content,
@@ -6697,6 +6752,14 @@ export class ChatService {
         senderId: message.senderId,
         sentAt: messageTimestamp,
         createdAt: messageTimestamp,
+        status: msgStatus,
+        receiptStatus: (message as any).receiptStatus || msgStatus,
+        messageStatus: (message as any).messageStatus || (msgStatus === 'read' ? 'seen' : msgStatus),
+        seen: !!(message as any).isRead,
+        isDelivered: !!(message as any).isDelivered,
+        deliveredAt: (message as any).deliveredAt || null,
+        isRead: !!(message as any).isRead,
+        readAt: (message as any).readAt || null,
         ...(viewerPreviews ? { deletedForEveryone: true } : {}),
       });
 
@@ -6936,6 +6999,10 @@ export class ChatService {
       getSocketServer();
     } catch {
       return;
+    }
+
+    if (isOnline) {
+      void this.syncDeliveredMessages(userId).catch(() => undefined);
     }
 
     const now = new Date();
@@ -7764,6 +7831,8 @@ export class ChatService {
       return {
         conversationId,
         messages: [],
+        pinnedMessage: null,
+        pinnedMessages: [],
         pagination: {
           page,
           limit,
@@ -10009,6 +10078,14 @@ return {
         const savedMessages: ChatMessage[] = [];
         let lastMessagePreview: string = '';
 
+        const isRecipientViewing = isUserViewingConversation(recipientId, conversationId);
+        const isRecipientOnline = isRecipientViewing || isUserConnected(recipientId);
+        const sendTime = new Date();
+        const initialDelivered = isRecipientOnline;
+        const initialDeliveredAt = isRecipientOnline ? sendTime : null;
+        const initialRead = isRecipientViewing;
+        const initialReadAt = isRecipientViewing ? sendTime : null;
+
         for (let i = 0; i < orderedSourceMessages.length; i++) {
           const srcMsg = orderedSourceMessages[i];
           const perMessageClientId = baseClientMessageId
@@ -10092,7 +10169,10 @@ return {
               content: srcMsg.content,
               messageType: srcMsg.messageType,
               metadata: JSON.stringify(destMeta),
-              isRead: false,
+              isDelivered: initialDelivered,
+              deliveredAt: initialDeliveredAt,
+              isRead: initialRead,
+              readAt: initialReadAt,
             },
             { transaction: t }
           );
@@ -10195,6 +10275,12 @@ return {
                 ? dur * 1000
                 : undefined;
 
+          const currentStatus: 'sent' | 'delivered' | 'read' = savedMessage.isRead
+            ? 'read'
+            : savedMessage.isDelivered
+              ? 'delivered'
+              : 'sent';
+
           const dto: ChatMessageDTO = {
             id: savedMessage.id,
             conversationId: savedMessage.conversationId,
@@ -10203,10 +10289,13 @@ return {
             content: savedMessage.content,
             messageType: savedMessage.messageType as any,
             metadata: parsedMeta,
-            status: savedMessage.status,
+            status: currentStatus,
+            receiptStatus: currentStatus,
+            messageStatus: currentStatus === 'read' ? 'seen' : currentStatus,
+            seen: !!savedMessage.isRead,
             isDelivered: !!savedMessage.isDelivered,
             deliveredAt: savedMessage.deliveredAt || null,
-            isRead: savedMessage.isRead,
+            isRead: !!savedMessage.isRead,
             readAt: savedMessage.readAt || null,
             sentAt: savedMessage.createdAt,
             createdAt: savedMessage.createdAt,
@@ -10254,14 +10343,14 @@ return {
                 ...dto,
                 isMine: false,
                 isSender: false,
-                status: 'sent' as const,
-                receiptStatus: 'sent' as const,
-                messageStatus: 'sent' as const,
-                seen: false,
-                isDelivered: false,
-                deliveredAt: null,
-                isRead: false,
-                readAt: null,
+                status: dto.status,
+                receiptStatus: dto.receiptStatus || dto.status,
+                messageStatus: dto.messageStatus || dto.status,
+                seen: !!dto.isRead,
+                isDelivered: !!dto.isDelivered,
+                deliveredAt: dto.deliveredAt || null,
+                isRead: !!dto.isRead,
+                readAt: dto.readAt || null,
               };
 
               const incomingRooms = [...userSocketRooms(recipientId), ...threadSocketRooms(conversationId)];

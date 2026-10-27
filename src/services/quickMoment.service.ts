@@ -64,6 +64,7 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
 
   const counts: Record<string, number> = {};
   for (const r of reactions) {
+    if (!r || !r.emoji) continue;
     counts[r.emoji] = (counts[r.emoji] || 0) + 1;
   }
 
@@ -71,8 +72,12 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
     .map(([emoji, count]) => ({ emoji, count }))
     .sort((a, b) => b.count - a.count);
 
+  if (breakdown.length === 0) {
+    return { badgeText: null, topEmojis: [], total: 0, breakdown: [] };
+  }
+
   const topEmojis = breakdown.slice(0, 2).map((b) => b.emoji);
-  const total = reactions.length;
+  const total = breakdown.reduce((acc, curr) => acc + curr.count, 0);
 
   // e.g. "😍 5" or "😍🔥 3"
   const emojiPrefix = topEmojis.join('');
@@ -348,9 +353,12 @@ export class QuickMomentService {
             text: m.text,
             createdAt: m.createdAt,
             reactionsCount: storySummary.total,
+            totalReactions: storySummary.total,
             topEmojis: storySummary.topEmojis,
             badgeText: storySummary.badgeText,
             reactionsBreakdown: storySummary.breakdown,
+            viewsCount: Math.max(m.viewsCount || 0, m.views ? m.views.length : 0),
+            repliesCount: m.repliesCount || 0,
             reactions: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
             reactors: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
           };
@@ -428,6 +436,7 @@ export class QuickMomentService {
         mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
         text: latest.text ? (latest.text.length > 30 ? `${latest.text.slice(0, 30)}...` : latest.text) : null,
         backgroundColor: latest.backgroundColor,
+        createdAt: latest.createdAt,
       };
 
       otherUsers.push({
@@ -438,6 +447,8 @@ export class QuickMomentService {
         isSubscribed: !!author.isSubscribed,
         hasUnread,
         totalStories: moments.length,
+        totalMoments: moments.length,
+        unreadCount: moments.filter((m) => !viewedMomentIds.has(String(m.id).toLowerCase())).length,
         latestTimeAgo: formatTimeAgo(latest.createdAt, true),
         preview,
         badge: reactionSummary.badgeText
@@ -455,7 +466,9 @@ export class QuickMomentService {
     otherUsers.sort((a, b) => {
       if (a.hasUnread && !b.hasUnread) return -1;
       if (!a.hasUnread && b.hasUnread) return 1;
-      return 0;
+      const timeA = a.preview?.createdAt ? new Date(a.preview.createdAt).getTime() : 0;
+      const timeB = b.preview?.createdAt ? new Date(b.preview.createdAt).getTime() : 0;
+      return timeB - timeA;
     });
 
     return {
@@ -521,13 +534,16 @@ export class QuickMomentService {
       const reactions = m.reactions || [];
       const reactionSummary = buildReactionBadge(reactions);
 
+      const actualRepliesCount = m.repliesCount || 0;
+      const actualViewsCount = Math.max(m.viewsCount || 0, m.views ? m.views.length : 0);
+
       // Badge format: "😍🔥 3 · 💬 2 replies" matching Image 2
       let badgeParts: string[] = [];
       if (reactionSummary.badgeText) {
         badgeParts.push(reactionSummary.badgeText);
       }
-      if (m.repliesCount > 0) {
-        badgeParts.push(`💬 ${m.repliesCount} ${m.repliesCount === 1 ? 'reply' : 'replies'}`);
+      if (actualRepliesCount > 0) {
+        badgeParts.push(`💬 ${actualRepliesCount} ${actualRepliesCount === 1 ? 'reply' : 'replies'}`);
       }
       const badgeText = badgeParts.length > 0 ? badgeParts.join(' · ') : null;
 
@@ -550,10 +566,12 @@ export class QuickMomentService {
         expiresAt: m.expiresAt,
         badgeText,
         reactionsCount: reactionSummary.total,
+        totalReactions: reactionSummary.total,
         topEmojis: reactionSummary.topEmojis,
         reactionsBreakdown: reactionSummary.breakdown,
-        repliesCount: m.repliesCount,
-        viewsCount: m.viewsCount || (m.views ? m.views.length : 0),
+        repliesCount: actualRepliesCount,
+        viewsCount: actualViewsCount,
+        totalViews: actualViewsCount,
         isMine: true,
         reactions: reactions.map((r: any) => mapQuickMomentReaction(r)),
         reactors: reactions.map((r: any) => mapQuickMomentReaction(r)),
@@ -575,7 +593,9 @@ export class QuickMomentService {
         avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
       },
       totalStories: slides.length,
+      totalMoments: slides.length,
       stories: slides,
+      slides: slides,
     };
   }
 
@@ -668,6 +688,8 @@ export class QuickMomentService {
       );
       const isViewed = (m.views || []).some((v: any) => v.userId === viewerUserId);
       const reactionSummary = buildReactionBadge(m.reactions || []);
+      const actualRepliesCount = m.repliesCount || 0;
+      const actualViewsCount = Math.max(m.viewsCount || 0, m.views ? m.views.length : 0);
 
       return {
         id: m.id,
@@ -693,9 +715,13 @@ export class QuickMomentService {
         availableEmojis: ALLOWED_EMOJIS,
         replyPlaceholder: `Reply to ${authorDisplayName}...`,
         reactionsCount: reactionSummary.total,
+        totalReactions: reactionSummary.total,
         topEmojis: reactionSummary.topEmojis,
         reactionsBreakdown: reactionSummary.breakdown,
         badgeText: reactionSummary.badgeText,
+        repliesCount: actualRepliesCount,
+        viewsCount: actualViewsCount,
+        totalViews: actualViewsCount,
         reactions: (m.reactions || []).map((r: any) => {
           const isOwnerView = viewerUserId === targetUserId;
           const row = mapQuickMomentReaction(r);
@@ -736,7 +762,9 @@ export class QuickMomentService {
         isSubscribed: !!targetUser.isSubscribed,
       },
       totalStories: slides.length,
+      totalMoments: slides.length,
       stories: slides,
+      slides: slides,
     };
   }
 
@@ -944,6 +972,7 @@ export class QuickMomentService {
       momentId,
       myReaction: currentEmoji,
       totalReactions: reactionSummary.total,
+      reactionsCount: reactionSummary.total,
       topEmojis: reactionSummary.topEmojis,
       badgeText: reactionSummary.badgeText,
       breakdown: reactionSummary.breakdown,
@@ -995,8 +1024,12 @@ export class QuickMomentService {
       message,
     });
 
-    // Increment repliesCount
-    await moment.increment('repliesCount', { by: 1 });
+    const repliesCount = await QuickMomentReply.count({
+      where: { quickMomentId: momentId },
+    });
+
+    moment.repliesCount = repliesCount;
+    await moment.save();
 
     const sender = await User.findByPk(viewerUserId, {
       attributes: ['id', 'fullName', 'nickName'],
@@ -1017,6 +1050,8 @@ export class QuickMomentService {
       momentId,
       repliedToUserId: moment.userId,
       message,
+      repliesCount,
+      totalReplies: repliesCount,
       sentAt: new Date(),
     };
   }
@@ -1195,9 +1230,16 @@ export class QuickMomentService {
         : null,
     }));
 
+    if (moment.repliesCount !== count) {
+      moment.repliesCount = count;
+      await moment.save();
+    }
+
     return {
       momentId,
       total: count,
+      repliesCount: count,
+      totalReplies: count,
       replies,
       pagination: {
         page,
@@ -1207,10 +1249,14 @@ export class QuickMomentService {
       },
       views: {
         total: viewers.length,
+        totalViews: viewers.length,
+        viewsCount: viewers.length,
         viewers,
       },
       reactions: {
         total: reactionSummary.total,
+        totalReactions: reactionSummary.total,
+        reactionsCount: reactionSummary.total,
         topEmojis: reactionSummary.topEmojis,
         badgeText: reactionSummary.badgeText,
         breakdown: reactionSummary.breakdown,
@@ -1233,8 +1279,13 @@ export class QuickMomentService {
       defaults: { quickMomentId: momentId, userId: viewerUserId },
     });
 
-    if (created) {
-      await moment.increment('viewsCount', { by: 1 });
+    const totalViews = await QuickMomentView.count({
+      where: { quickMomentId: momentId },
+    });
+
+    if (moment.viewsCount !== totalViews) {
+      moment.viewsCount = totalViews;
+      await moment.save();
     }
 
     if (moment.userId !== viewerUserId) {
@@ -1244,7 +1295,8 @@ export class QuickMomentService {
     return {
       momentId,
       isViewed: true,
-      viewsCount: moment.viewsCount + (created ? 1 : 0),
+      viewsCount: totalViews,
+      totalViews,
     };
   }
 
@@ -1270,8 +1322,14 @@ export class QuickMomentService {
         defaults: { quickMomentId: moment.id, userId: viewerUserId },
       });
       if (created) {
-        await moment.increment('viewsCount', { by: 1 });
         newlyViewed++;
+      }
+      const totalViews = await QuickMomentView.count({
+        where: { quickMomentId: moment.id },
+      });
+      if (moment.viewsCount !== totalViews) {
+        moment.viewsCount = totalViews;
+        await moment.save();
       }
     }
 
@@ -1282,6 +1340,7 @@ export class QuickMomentService {
     return {
       userId: targetUserId,
       totalMoments: moments.length,
+      totalStories: moments.length,
       newlyViewed,
       hasUnread: false,
     };
@@ -1323,9 +1382,15 @@ export class QuickMomentService {
       timeAgo: formatTimeAgo(v.createdAt, false),
     }));
 
+    if (moment.viewsCount !== viewers.length) {
+      moment.viewsCount = viewers.length;
+      await moment.save();
+    }
+
     return {
       momentId,
       totalViews: viewers.length,
+      viewsCount: viewers.length,
       viewers,
     };
   }
@@ -1564,6 +1629,61 @@ export class QuickMomentService {
     await moment.save();
 
     return { success: true, message: 'Quick moment deleted successfully' };
+  }
+
+  /**
+   * 11. GET USER QUICK MOMENT STATS & METRICS
+   * Calculates overall active counts, total created stories, views, reactions, and replies.
+   */
+  public async getQuickMomentStats(userId: string) {
+    await ensureQuickMomentTables();
+    const now = new Date();
+
+    const activeMoments = await QuickMoment.findAll({
+      where: {
+        userId,
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'viewsCount', 'repliesCount', 'createdAt', 'expiresAt'],
+    });
+
+    const allUserMoments = await QuickMoment.findAll({
+      where: { userId },
+      attributes: ['id'],
+    });
+    const momentIds = allUserMoments.map((m) => m.id);
+
+    let totalViewsAggregate = 0;
+    let totalReactionsAggregate = 0;
+    let totalRepliesAggregate = 0;
+
+    if (momentIds.length > 0) {
+      const [vCount, rCount, repCount] = await Promise.all([
+        QuickMomentView.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+        QuickMomentReaction.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+        QuickMomentReply.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+      ]);
+      totalViewsAggregate = vCount;
+      totalReactionsAggregate = rCount;
+      totalRepliesAggregate = repCount;
+    }
+
+    const activeCount = activeMoments.length;
+    const activeViews = activeMoments.reduce((acc, m) => acc + (m.viewsCount || 0), 0);
+    const activeReplies = activeMoments.reduce((acc, m) => acc + (m.repliesCount || 0), 0);
+
+    return {
+      userId,
+      activeCount,
+      totalActiveStories: activeCount,
+      totalStoriesCreated: allUserMoments.length,
+      totalViews: totalViewsAggregate,
+      totalReactions: totalReactionsAggregate,
+      totalReplies: totalRepliesAggregate,
+      activeViews,
+      activeReplies,
+    };
   }
 }
 

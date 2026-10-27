@@ -16,6 +16,7 @@ import {
   createQuickMomentHandler,
   deleteQuickMomentHandler,
   getPresignedUploadUrlHandler,
+  getQuickMomentStatsHandler,
 } from '../controllers/quickMoment.controller';
 import {
   createQuickMomentSchema,
@@ -35,6 +36,10 @@ router.use(authenticate);
 // 1. Screen 1: Story tray / bar (GET /api/v1/quick-moments/tray and /api/v1/quick-moments)
 router.get('/tray', (req, res) => getTrayHandler(req, res));
 router.get('/', (req, res) => getTrayHandler(req, res));
+
+// 1b. User Quick Moments stats & counts (GET /api/v1/quick-moments/stats and /counts)
+router.get('/stats', (req, res) => getQuickMomentStatsHandler(req, res));
+router.get('/counts', (req, res) => getQuickMomentStatsHandler(req, res));
 
 // 2. Screen 2: View own active Quick Moments slides (GET /api/v1/quick-moments/me)
 router.get('/me', (req, res) => getMyQuickMomentsHandler(req, res));

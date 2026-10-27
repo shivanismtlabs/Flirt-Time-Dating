@@ -656,4 +656,199 @@ describe('Quick Moments (24-Hour Stories) Feature APIs', () => {
       expect(deleted?.status).toBe('deleted');
     });
   });
+
+  describe('8. Accurate Calculation of Counts & Quick Moment Metrics', () => {
+    let testMomentId: string;
+
+    beforeEach(async () => {
+      const moment = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'text',
+        text: 'Counting test story',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
+      testMomentId = moment.id;
+    });
+
+    it('accurately calculates and returns viewsCount on markViewed without duplicate inflation', async () => {
+      // 1st viewer (Alex)
+      const res1 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.isViewed).toBe(true);
+      expect(res1.body.data.viewsCount).toBe(1);
+
+      // Repeat view from same viewer (idempotent, should NOT inflate count)
+      const res1Repeat = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      expect(res1Repeat.status).toBe(200);
+      expect(res1Repeat.body.data.viewsCount).toBe(1);
+
+      // 2nd viewer (Sam)
+      const res2 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/view`)
+        .set('Authorization', `Bearer ${thirdToken}`);
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.viewsCount).toBe(2);
+
+      // Verify DB count matches
+      const updated = await QuickMoment.findByPk(testMomentId);
+      expect(updated?.viewsCount).toBe(2);
+
+      // Verify author viewers list matches
+      const viewersRes = await request(app)
+        .get(`/api/v1/quick-moments/${testMomentId}/viewers`)
+        .set('Authorization', `Bearer ${cindyToken}`);
+
+      expect(viewersRes.status).toBe(200);
+      expect(viewersRes.body.data.totalViews).toBe(2);
+      expect(viewersRes.body.data.viewers).toHaveLength(2);
+    });
+
+    it('accurately calculates repliesCount and updates database column', async () => {
+      const res1 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/reply`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ message: 'First reply' });
+
+      expect(res1.status).toBe(200);
+      expect(res1.body.data.repliesCount).toBe(1);
+
+      const res2 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/reply`)
+        .set('Authorization', `Bearer ${thirdToken}`)
+        .send({ message: 'Second reply' });
+
+      expect(res2.status).toBe(200);
+      expect(res2.body.data.repliesCount).toBe(2);
+
+      const dbMoment = await QuickMoment.findByPk(testMomentId);
+      expect(dbMoment?.repliesCount).toBe(2);
+    });
+
+    it('accurately calculates reaction counts, topEmojis, and breakdown badge', async () => {
+      // Alex reacts with 😍
+      const r1 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '😍' });
+
+      expect(r1.body.data.totalReactions).toBe(1);
+      expect(r1.body.data.reactionsCount).toBe(1);
+      expect(r1.body.data.badgeText).toBe('😍 1');
+
+      // Sam reacts with 🔥
+      const r2 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/react`)
+        .set('Authorization', `Bearer ${thirdToken}`)
+        .send({ emoji: '🔥' });
+
+      expect(r2.body.data.totalReactions).toBe(2);
+      expect(r2.body.data.reactionsCount).toBe(2);
+      expect(r2.body.data.badgeText).toBe('😍🔥 2');
+      expect(r2.body.data.breakdown).toHaveLength(2);
+
+      // Alex toggles off 😍
+      const r3 = await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '😍' });
+
+      expect(r3.body.data.action).toBe('removed');
+      expect(r3.body.data.totalReactions).toBe(1);
+      expect(r3.body.data.reactionsCount).toBe(1);
+      expect(r3.body.data.badgeText).toBe('🔥 1');
+    });
+
+    it('accurately calculates unreadCount and story totals in tray', async () => {
+      // Add a 2nd active moment for Cindy
+      const secondMoment = await QuickMoment.create({
+        userId: cindyUser.id,
+        type: 'text',
+        text: 'Second active story',
+        publishedAt: new Date(),
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        status: 'active',
+        viewsCount: 0,
+        repliesCount: 0,
+      });
+
+      // Before viewing: totalStories = 2, unreadCount = 2, hasUnread = true
+      const tray1 = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const cindyEntry1 = tray1.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(cindyEntry1).toBeDefined();
+      expect(cindyEntry1.totalStories).toBe(2);
+      expect(cindyEntry1.unreadCount).toBe(2);
+      expect(cindyEntry1.hasUnread).toBe(true);
+
+      // View 1 story: totalStories = 2, unreadCount = 1, hasUnread = true
+      await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const tray2 = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const cindyEntry2 = tray2.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(cindyEntry2.totalStories).toBe(2);
+      expect(cindyEntry2.unreadCount).toBe(1);
+      expect(cindyEntry2.hasUnread).toBe(true);
+
+      // View 2nd story: totalStories = 2, unreadCount = 0, hasUnread = false
+      await request(app)
+        .post(`/api/v1/quick-moments/${secondMoment.id}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const tray3 = await request(app)
+        .get('/api/v1/quick-moments/tray')
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      const cindyEntry3 = tray3.body.data.otherUsers.find((u: any) => u.userId === cindyUser.id);
+      expect(cindyEntry3.totalStories).toBe(2);
+      expect(cindyEntry3.unreadCount).toBe(0);
+      expect(cindyEntry3.hasUnread).toBe(false);
+    });
+
+    it('returns overall quick moments stats and counts via GET /api/v1/quick-moments/stats', async () => {
+      // Alex views, reacts, and replies to Cindy's story
+      await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/view`)
+        .set('Authorization', `Bearer ${alexToken}`);
+
+      await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/react`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ emoji: '❤️' });
+
+      await request(app)
+        .post(`/api/v1/quick-moments/${testMomentId}/reply`)
+        .set('Authorization', `Bearer ${alexToken}`)
+        .send({ message: 'Awesome!' });
+
+      const statsRes = await request(app)
+        .get(`/api/v1/quick-moments/stats?userId=${cindyUser.id}`)
+        .set('Authorization', `Bearer ${cindyToken}`);
+
+      expect(statsRes.status).toBe(200);
+      expect(statsRes.body.success).toBe(true);
+      expect(statsRes.body.data.activeCount).toBe(1);
+      expect(statsRes.body.data.totalActiveStories).toBe(1);
+      expect(statsRes.body.data.totalViews).toBe(1);
+      expect(statsRes.body.data.totalReactions).toBe(1);
+      expect(statsRes.body.data.totalReplies).toBe(1);
+    });
+  });
 });

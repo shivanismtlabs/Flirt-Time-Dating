@@ -422,3 +422,32 @@ export const getPresignedUploadUrlHandler = async (
     return sendError(res, error.message || 'Error generating presigned upload URL', 500);
   }
 };
+
+/**
+ * GET /api/v1/quick-moments/stats (and /counts)
+ * Calculates and returns quick moments metrics and counts
+ */
+export const getQuickMomentStatsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const viewerId = req.user?.id;
+    if (!viewerId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const targetUserId = (req.query?.userId as string) || viewerId;
+    const result = await quickMomentService.getQuickMomentStats(targetUserId);
+
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    return sendSuccess(res, 'Quick moments stats fetched successfully', result, 200);
+  } catch (error: any) {
+    if (error instanceof QuickMomentServiceError) {
+      return sendError(res, error.message, error.statusCode, error.errorCode);
+    }
+    return sendError(res, error.message || 'Error fetching quick moments stats', 500);
+  }
+};

@@ -202,6 +202,70 @@ export function ensureAudioMessageContent(body: Record<string, any> | null | und
   if (!body.audioUrl && ref.length <= 5000) body.audioUrl = ref;
 }
 
+export type MediaIdsValidationResult =
+  | { status: 'valid'; keys: string[] }
+  | { status: 'not_provided' }
+  | { status: 'empty' }
+  | { status: 'not_array' }
+  | { status: 'invalid_item'; index: number; reason: string };
+
+export function inspectMediaIds(raw: unknown): MediaIdsValidationResult {
+  if (raw === undefined || raw === null) {
+    return { status: 'not_provided' };
+  }
+
+  let list: unknown[] | null = null;
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (typeof raw === 'string') {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          list = parsed;
+        } else {
+          return { status: 'not_array' };
+        }
+      } catch {
+        return { status: 'not_array' };
+      }
+    } else {
+      return { status: 'not_array' };
+    }
+  } else {
+    return { status: 'not_array' };
+  }
+
+  if (!list || list.length === 0) {
+    return { status: 'empty' };
+  }
+
+  const validKeys: string[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const item = list[i];
+    if (typeof item !== 'string') {
+      return { status: 'invalid_item', index: i, reason: 'Each mediaId must be a valid image storage key string' };
+    }
+    const trimmed = item.trim();
+    if (trimmed.length === 0) {
+      return { status: 'invalid_item', index: i, reason: 'Image storage key cannot be empty' };
+    }
+    if (isInvalidImageReferenceString(trimmed)) {
+      return { status: 'invalid_item', index: i, reason: 'Invalid image reference in mediaIds' };
+    }
+    if (isLocalDeviceMediaReference(trimmed)) {
+      return { status: 'invalid_item', index: i, reason: 'Local device file URI is not permitted in mediaIds' };
+    }
+    if (trimmed.includes('..') || trimmed.includes('\\') || trimmed.includes('\0')) {
+      return { status: 'invalid_item', index: i, reason: 'Invalid media storage key path' };
+    }
+    validKeys.push(trimmed);
+  }
+
+  return { status: 'valid', keys: validKeys };
+}
+
 /**
  * Resolves the first image URL or storage key from anywhere in the payload (images, medias, photos, attachments, etc.)
  */
@@ -224,6 +288,9 @@ export function imageReferenceFromPayload(
     data.image,
     data.mediaUrl,
     data.imageKey,
+    data.mediaIds,
+    data.mediaId,
+    data.media_ids,
     data.url,
     data.fileUrl,
     data.uri,
@@ -264,6 +331,9 @@ export function imageReferenceFromPayload(
     data.picture,
     meta?.imageUrl,
     meta?.image,
+    meta?.mediaIds,
+    meta?.mediaId,
+    meta?.media_ids,
     meta?.url,
     meta?.uri,
     meta?.path,
@@ -401,6 +471,15 @@ export function ensureImageMessageContent(body: Record<string, any> | null | und
   if (!body || typeof body !== 'object') return;
 
   const declaredType = String(body.type || body.messageType || '').toLowerCase();
+
+  const mediaIdsInspection = inspectMediaIds(
+    body.mediaIds ?? body.media_ids ?? body.metadata?.mediaIds ?? body.metadata?.media_ids
+  );
+  if (mediaIdsInspection.status === 'valid' && mediaIdsInspection.keys.length > 0) {
+    if (!body.images || (Array.isArray(body.images) && body.images.length === 0)) {
+      body.images = [...mediaIdsInspection.keys];
+    }
+  }
 
   // 1. If content is an array, object, or JSON string, unpack candidate
   if (Array.isArray(body.content) && body.content.length > 0) {

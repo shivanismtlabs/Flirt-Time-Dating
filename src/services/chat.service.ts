@@ -2972,7 +2972,19 @@ export class ChatService {
       metadataObj.replyTo = replyToRef;
     }
 
+    const mediaIdsList = [
+      ...coerceMediaList((data as any).mediaIds),
+      ...coerceMediaList((data as any).media_ids),
+      ...coerceMediaList((data as any).mediaId),
+      ...coerceMediaList((data as any).media_id),
+      ...coerceMediaList(metadataObj.mediaIds),
+      ...coerceMediaList(metadataObj.media_ids),
+      ...coerceMediaList(metadataObj.mediaId),
+      ...coerceMediaList(metadataObj.media_id),
+    ];
+
     let rawImages = [
+      ...mediaIdsList,
       ...coerceMediaList((data as any).images),
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).image_urls),
@@ -3013,6 +3025,7 @@ export class ChatService {
       ...coerceMediaList(metadataObj.picture),
     ];
     let rawImageUrls = [
+      ...mediaIdsList,
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).mediaUrls),
@@ -3047,6 +3060,7 @@ export class ChatService {
         !!(data as any).imageUrl ||
         !!(data as any).image_url ||
         !!(data as any).image ||
+        (Array.isArray(mediaIdsList) && mediaIdsList.length > 0) ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
         (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
       const audioRef = (data as any).audioUrl || (data as any).audio_url || (data as any).audio || (data as any).voiceUrl || (data as any).voice_url;
@@ -4351,7 +4365,19 @@ export class ChatService {
       }
     }
 
+    const mediaIdsList = [
+      ...coerceMediaList((data as any).mediaIds),
+      ...coerceMediaList((data as any).media_ids),
+      ...coerceMediaList((data as any).mediaId),
+      ...coerceMediaList((data as any).media_id),
+      ...coerceMediaList(metadataObj.mediaIds),
+      ...coerceMediaList(metadataObj.media_ids),
+      ...coerceMediaList(metadataObj.mediaId),
+      ...coerceMediaList(metadataObj.media_id),
+    ];
+
     let rawImages = [
+      ...mediaIdsList,
       ...coerceMediaList((data as any).images),
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).image_urls),
@@ -4392,6 +4418,7 @@ export class ChatService {
       ...coerceMediaList(metadataObj.picture),
     ];
     let rawImageUrls = [
+      ...mediaIdsList,
       ...coerceMediaList((data as any).imageUrls),
       ...coerceMediaList((data as any).image_urls),
       ...coerceMediaList((data as any).mediaUrls),
@@ -4426,6 +4453,7 @@ export class ChatService {
         !!(data as any).imageUrl ||
         !!(data as any).image_url ||
         !!(data as any).image ||
+        (Array.isArray(mediaIdsList) && mediaIdsList.length > 0) ||
         (Array.isArray(rawImages) && rawImages.length > 0) ||
         (Array.isArray(rawImageUrls) && rawImageUrls.length > 0);
       const audioRef = (data as any).audioUrl || (data as any).audio_url || (data as any).audio || (data as any).voiceUrl || (data as any).voice_url;
@@ -8648,7 +8676,11 @@ export class ChatService {
       defaults: {
         user1Id: u1,
         user2Id: u2,
-        lastMessage: input.content || '',
+        lastMessage:
+          input.content ||
+          (Array.isArray((input as any).mediaIds) && (input as any).mediaIds.length > 0 ? (input as any).mediaIds[0] : '') ||
+          (Array.isArray((input as any).media_ids) && (input as any).media_ids.length > 0 ? (input as any).media_ids[0] : '') ||
+          '',
         lastMessageAt: now,
       },
     });

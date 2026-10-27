@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   ensureAudioMessageContent,
   ensureImageMessageContent,
+  inspectMediaIds,
   isInvalidImageReferenceString,
   isLocalDeviceMediaReference,
 } from '../utils/chatMediaKind';
@@ -108,6 +109,58 @@ const optionalRecipientRef = z.preprocess(
     .optional()
 );
 
+export const applyChatMediaIdsValidation = (
+  data: any,
+  ctx: z.RefinementCtx
+): {
+  mediaIdsInspection: ReturnType<typeof inspectMediaIds>;
+  firstValidMediaId?: string;
+} => {
+  const mediaIdsRaw =
+    (data as any).mediaIds ??
+    (data as any).media_ids ??
+    (data as any).metadata?.mediaIds ??
+    (data as any).metadata?.media_ids;
+
+  const mediaIdsInspection = inspectMediaIds(mediaIdsRaw);
+
+  if (mediaIdsInspection.status === 'not_array') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['mediaIds'],
+      message: 'mediaIds must be an array of image storage keys',
+    });
+  } else if (mediaIdsInspection.status === 'invalid_item') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['mediaIds', mediaIdsInspection.index],
+      message: mediaIdsInspection.reason,
+    });
+  }
+
+  let firstValidMediaId: string | undefined;
+  if (mediaIdsInspection.status === 'valid' && mediaIdsInspection.keys.length > 0) {
+    firstValidMediaId = mediaIdsInspection.keys[0];
+    if (
+      !data.content ||
+      typeof data.content !== 'string' ||
+      data.content.trim().length === 0 ||
+      isInvalidImageReferenceString(data.content) ||
+      isLocalDeviceMediaReference(data.content)
+    ) {
+      data.content = firstValidMediaId;
+    }
+    if (!data.imageUrl) {
+      data.imageUrl = data.content;
+    }
+    if (!(data as any).images || (Array.isArray((data as any).images) && (data as any).images.length === 0)) {
+      (data as any).images = [...mediaIdsInspection.keys];
+    }
+  }
+
+  return { mediaIdsInspection, firstValidMediaId };
+};
+
 export const directSendMessageSchema = z.object({
   recipientId: z.preprocess(
     (val) => normalizeRecipientIdentifier(val),
@@ -131,6 +184,18 @@ export const directSendMessageSchema = z.object({
     voiceUrl: z.string().trim().max(5000).optional(),
     url: z.string().trim().max(5000).optional(),
     fileUrl: z.string().trim().max(5000).optional(),
+    mediaIds: z
+      .union([z.array(z.any()), z.string()], {
+        errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+      })
+      .optional(),
+    mediaId: z.string().trim().max(5000).optional(),
+    media_ids: z
+      .union([z.array(z.any()), z.string()], {
+        errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+      })
+      .optional(),
+    media_id: z.string().trim().max(5000).optional(),
     images: z.union([z.array(z.any()), z.string()]).optional(),
     medias: z.union([z.array(z.any()), z.string()]).optional(),
     imageUrls: z.union([z.array(z.any()), z.string()]).optional(),
@@ -165,6 +230,8 @@ export const directSendMessageSchema = z.object({
   .superRefine((data, ctx) => {
     ensureAudioMessageContent(data);
     ensureImageMessageContent(data);
+    const { mediaIdsInspection, firstValidMediaId } = applyChatMediaIdsValidation(data, ctx);
+
     let multiImageFirst: string | undefined;
     if (Array.isArray((data as any).images) && (data as any).images.length > 0) {
       const first = (data as any).images[0];
@@ -178,9 +245,13 @@ export const directSendMessageSchema = z.object({
     } else if (Array.isArray((data as any).medias) && (data as any).medias.length > 0) {
       const first = (data as any).medias[0];
       multiImageFirst = typeof first === 'string' ? first : first?.url || first?.imageUrl || first?.mediaUrl || first?.key || '__MULTI_IMAGE__';
+    } else if (Array.isArray((data as any).mediaIds) && (data as any).mediaIds.length > 0) {
+      const first = (data as any).mediaIds[0];
+      multiImageFirst = typeof first === 'string' ? first : '__MULTI_IMAGE__';
     }
 
     const candidateImageRef =
+      firstValidMediaId ||
       (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 && !isInvalidImageReferenceString(data.imageUrl) && !isLocalDeviceMediaReference(data.imageUrl) ? data.imageUrl.trim() : undefined) ||
       (typeof data.image === 'string' && data.image.trim().length > 0 && !isInvalidImageReferenceString(data.image) && !isLocalDeviceMediaReference(data.image)
         ? data.image.trim()
@@ -206,7 +277,15 @@ export const directSendMessageSchema = z.object({
     }
 
     const isAudioSignal = !!((data as any).audioUrl || (data as any).audio || (data as any).voiceUrl);
-    const isImageSignal = !!(data.imageUrl || data.image || data.imageKey || (data as any).key || (data as any).images || candidateImageRef);
+    const isImageSignal = !!(
+      data.imageUrl ||
+      data.image ||
+      data.imageKey ||
+      (data as any).key ||
+      (data as any).images ||
+      (mediaIdsInspection.status === 'valid' && mediaIdsInspection.keys.length > 0) ||
+      candidateImageRef
+    );
     const type = data.type || data.messageType || (isImageSignal ? 'image' : isAudioSignal ? 'audio' : 'text');
     if (!data.type) (data as any).type = type;
     if (!data.messageType) (data as any).messageType = type;
@@ -225,6 +304,13 @@ export const directSendMessageSchema = z.object({
         } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
           data.content = data.caption.trim();
         } else {
+          if (mediaIdsInspection.status === 'empty') {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['mediaIds'],
+              message: 'mediaIds array cannot be empty',
+            });
+          }
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
             path: ['content'],
@@ -432,6 +518,18 @@ export const sendMessageSchema = z.object({
       voiceUrl: z.string().trim().max(5000).optional(),
       url: z.string().trim().max(5000).optional(),
       fileUrl: z.string().trim().max(5000).optional(),
+      mediaIds: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      mediaId: z.string().trim().max(5000).optional(),
+      media_ids: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      media_id: z.string().trim().max(5000).optional(),
       images: z.union([z.array(z.any()), z.string()]).optional(),
       medias: z.union([z.array(z.any()), z.string()]).optional(),
       media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
@@ -479,6 +577,7 @@ export const sendMessageSchema = z.object({
     .superRefine((data, ctx) => {
       ensureAudioMessageContent(data);
       ensureImageMessageContent(data);
+      const { mediaIdsInspection, firstValidMediaId } = applyChatMediaIdsValidation(data, ctx);
 
       if (Array.isArray(data.content)) {
         data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || data.content[0]?.uri || data.content[0]?.path || '__MULTI_IMAGE__');
@@ -543,6 +642,8 @@ export const sendMessageSchema = z.object({
       };
 
       multiImageFirst =
+        scanFirst((data as any).mediaIds) ||
+        scanFirst((data as any).media_ids) ||
         scanFirst((data as any).images) ||
         scanFirst((data as any).imageUrls) ||
         scanFirst((data as any).image_urls) ||
@@ -565,6 +666,8 @@ export const sendMessageSchema = z.object({
         scanFirst((data as any).gallery) ||
         scanFirst((data as any).pictures) ||
         scanFirst((data as any).picture) ||
+        scanFirst((data as any).metadata?.mediaIds) ||
+        scanFirst((data as any).metadata?.media_ids) ||
         scanFirst((data as any).metadata?.images) ||
         scanFirst((data as any).metadata?.imageUrls) ||
         scanFirst((data as any).metadata?.image_urls) ||
@@ -578,6 +681,7 @@ export const sendMessageSchema = z.object({
         scanFirst((data as any).metadata?.files);
 
       const candidateImageRef =
+        firstValidMediaId ||
         (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
         (typeof data.image === 'string' && data.image.trim().length > 0
           ? data.image.trim()
@@ -617,6 +721,7 @@ export const sendMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
+        (mediaIdsInspection.status === 'valid' && mediaIdsInspection.keys.length > 0) ||
         candidateImageRef
       );
 
@@ -661,6 +766,13 @@ export const sendMessageSchema = z.object({
           } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
           } else {
+            if (mediaIdsInspection.status === 'empty') {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['mediaIds'],
+                message: 'mediaIds array cannot be empty',
+              });
+            }
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['content'],
@@ -825,6 +937,18 @@ export const sendMultiMessageSchema = z.object({
       voiceUrl: z.string().trim().max(5000).optional(),
       url: z.string().trim().max(5000).optional(),
       fileUrl: z.string().trim().max(5000).optional(),
+      mediaIds: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      mediaId: z.string().trim().max(5000).optional(),
+      media_ids: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      media_id: z.string().trim().max(5000).optional(),
       images: z.union([z.array(z.any()), z.string()]).optional(),
       medias: z.union([z.array(z.any()), z.string()]).optional(),
       media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
@@ -882,6 +1006,7 @@ export const sendMultiMessageSchema = z.object({
     .superRefine((data, ctx) => {
       ensureAudioMessageContent(data);
       ensureImageMessageContent(data);
+      const { mediaIdsInspection, firstValidMediaId } = applyChatMediaIdsValidation(data, ctx);
 
       const hasRecipients =
         (data.recipientIds && data.recipientIds.length > 0) ||
@@ -964,6 +1089,8 @@ export const sendMultiMessageSchema = z.object({
       };
 
       multiImageFirst =
+        scanFirst((data as any).mediaIds) ||
+        scanFirst((data as any).media_ids) ||
         scanFirst((data as any).images) ||
         scanFirst((data as any).imageUrls) ||
         scanFirst((data as any).image_urls) ||
@@ -986,6 +1113,8 @@ export const sendMultiMessageSchema = z.object({
         scanFirst((data as any).gallery) ||
         scanFirst((data as any).pictures) ||
         scanFirst((data as any).picture) ||
+        scanFirst((data as any).metadata?.mediaIds) ||
+        scanFirst((data as any).metadata?.media_ids) ||
         scanFirst((data as any).metadata?.images) ||
         scanFirst((data as any).metadata?.imageUrls) ||
         scanFirst((data as any).metadata?.image_urls) ||
@@ -999,6 +1128,7 @@ export const sendMultiMessageSchema = z.object({
         scanFirst((data as any).metadata?.files);
 
       const candidateImageRef =
+        firstValidMediaId ||
         (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
         (typeof data.image === 'string' && data.image.trim().length > 0
           ? data.image.trim()
@@ -1038,6 +1168,7 @@ export const sendMultiMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
+        (mediaIdsInspection.status === 'valid' && mediaIdsInspection.keys.length > 0) ||
         candidateImageRef
       );
 
@@ -1082,6 +1213,13 @@ export const sendMultiMessageSchema = z.object({
           } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
           } else {
+            if (mediaIdsInspection.status === 'empty') {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ['mediaIds'],
+                message: 'mediaIds array cannot be empty',
+              });
+            }
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               path: ['content'],
@@ -1561,6 +1699,18 @@ export const replyMessageSchema = z.object({
       voiceUrl: z.string().trim().max(5000).optional(),
       url: z.string().trim().max(5000).optional(),
       fileUrl: z.string().trim().max(5000).optional(),
+      mediaIds: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      mediaId: z.string().trim().max(5000).optional(),
+      media_ids: z
+        .union([z.array(z.any()), z.string()], {
+          errorMap: () => ({ message: 'mediaIds must be an array of storage key strings' }),
+        })
+        .optional(),
+      media_id: z.string().trim().max(5000).optional(),
       images: z.union([z.array(z.any()), z.string()]).optional(),
       medias: z.union([z.array(z.any()), z.string()]).optional(),
       media: z.union([z.array(z.any()), z.string(), z.record(z.any())]).optional(),
@@ -1604,6 +1754,7 @@ export const replyMessageSchema = z.object({
     .superRefine((data, ctx) => {
       ensureAudioMessageContent(data);
       ensureImageMessageContent(data);
+      const { mediaIdsInspection, firstValidMediaId } = applyChatMediaIdsValidation(data, ctx);
 
       if (Array.isArray(data.content)) {
         data.content = typeof data.content[0] === 'string' ? data.content[0] : (data.content[0]?.url || data.content[0]?.imageUrl || data.content[0]?.uri || data.content[0]?.path || '__MULTI_IMAGE__');
@@ -1614,14 +1765,62 @@ export const replyMessageSchema = z.object({
       let multiImageFirst: string | undefined;
       const scanFirst = (list: any): string | undefined => {
         if (!list) return undefined;
-        if (Array.isArray(list) && list.length > 0) {
-          const item = list[0];
-          return typeof item === 'string' ? item : item?.url || item?.imageUrl || item?.uri || item?.path || item?.mediaUrl || item?.key || '__MULTI_IMAGE__';
+        let arr: any[] = [];
+        if (Array.isArray(list)) {
+          arr = list;
+        } else if (typeof list === 'string') {
+          const trimmed = list.trim();
+          if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              arr = Array.isArray(parsed) ? parsed : [parsed];
+            } catch {
+              arr = trimmed.includes(',') ? trimmed.split(',') : [trimmed];
+            }
+          } else if (trimmed.includes(',')) {
+            arr = trimmed.split(',');
+          } else if (trimmed.length > 0 && trimmed !== '[]' && trimmed !== '{}') {
+            arr = [trimmed];
+          }
+        } else if (typeof list === 'object' && list !== null) {
+          arr = Object.values(list);
+        }
+
+        if (arr.length > 0) {
+          for (const item of arr) {
+            if (!item) continue;
+            if (typeof item === 'string' && item.trim().length > 0) {
+              return item.trim();
+            }
+            if (item && typeof item === 'object') {
+              const val =
+                item.url ||
+                item.imageUrl ||
+                item.mediaUrl ||
+                item.photoUrl ||
+                item.uri ||
+                item.path ||
+                item.link ||
+                item.src ||
+                item.fileUrl ||
+                item.imageUri ||
+                item.key ||
+                item.imageKey ||
+                item.storageKey ||
+                item.file;
+              if (typeof val === 'string' && val.trim().length > 0) {
+                return val.trim();
+              }
+            }
+          }
+          return '__MULTI_IMAGE__';
         }
         return undefined;
       };
 
       multiImageFirst =
+        scanFirst((data as any).mediaIds) ||
+        scanFirst((data as any).media_ids) ||
         scanFirst((data as any).images) ||
         scanFirst((data as any).imageUrls) ||
         scanFirst((data as any).photos) ||
@@ -1633,6 +1832,9 @@ export const replyMessageSchema = z.object({
         scanFirst((data as any).files);
 
       const candidateImageRef =
+        firstValidMediaId ||
+        (typeof (data as any).mediaId === 'string' && (data as any).mediaId.trim().length > 0 ? (data as any).mediaId.trim() : undefined) ||
+        (typeof (data as any).media_id === 'string' && (data as any).media_id.trim().length > 0 ? (data as any).media_id.trim() : undefined) ||
         (typeof data.imageUrl === 'string' && data.imageUrl.trim().length > 0 ? data.imageUrl.trim() : undefined) ||
         (typeof data.image === 'string' && data.image.trim().length > 0
           ? data.image.trim()
@@ -1672,6 +1874,10 @@ export const replyMessageSchema = z.object({
         (data as any).photos ||
         (data as any).attachments ||
         (data as any).images ||
+        (data as any).mediaIds ||
+        (data as any).media_ids ||
+        (data as any).mediaId ||
+        (data as any).media_id ||
         candidateImageRef
       );
 
@@ -1715,6 +1921,11 @@ export const replyMessageSchema = z.object({
             data.content = validCandidate;
           } else if (data.caption && typeof data.caption === 'string' && data.caption.trim().length > 0) {
             data.content = data.caption.trim();
+          } else if (
+            mediaIdsInspection &&
+            (mediaIdsInspection.status === 'empty' || mediaIdsInspection.status === 'invalid_item')
+          ) {
+            // Already flagged on mediaIds
           } else {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,

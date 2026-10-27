@@ -199,10 +199,18 @@ export const registerChatSocketHandlers = (
       }
 
       const normalizedImages = [
+        ...coerceMediaList(payload.mediaIds),
+        ...coerceMediaList(payload.media_ids),
+        ...coerceMediaList(payload.mediaId),
+        ...coerceMediaList(payload.media_id),
         ...coerceMediaList(payload.images),
         ...coerceMediaList(payload.medias),
         ...coerceMediaList(payload.photos),
         ...coerceMediaList(payload.attachments),
+        ...coerceMediaList(payload.metadata?.mediaIds),
+        ...coerceMediaList(payload.metadata?.media_ids),
+        ...coerceMediaList(payload.metadata?.mediaId),
+        ...coerceMediaList(payload.metadata?.media_id),
         ...coerceMediaList(payload.metadata?.images),
         ...coerceMediaList(payload.metadata?.medias),
         ...coerceMediaList(payload.metadata?.photos),
@@ -210,8 +218,12 @@ export const registerChatSocketHandlers = (
       ];
 
       const normalizedImageUrls = [
+        ...coerceMediaList(payload.mediaIds),
+        ...coerceMediaList(payload.media_ids),
         ...coerceMediaList(payload.imageUrls),
         ...coerceMediaList(payload.mediaUrls),
+        ...coerceMediaList(payload.metadata?.mediaIds),
+        ...coerceMediaList(payload.metadata?.media_ids),
         ...coerceMediaList(payload.metadata?.imageUrls),
         ...coerceMediaList(payload.metadata?.mediaUrls),
       ];
@@ -223,6 +235,10 @@ export const registerChatSocketHandlers = (
         const hasImage =
           payload.imageUrl ||
           payload.image ||
+          payload.mediaIds ||
+          payload.media_ids ||
+          payload.mediaId ||
+          payload.media_id ||
           payload.key ||
           payload.storageKey ||
           payload.s3Key ||
@@ -267,6 +283,18 @@ export const registerChatSocketHandlers = (
           msgType === 'audio' || msgType === 'voice'
         );
         if (audioRef) content = audioRef;
+      }
+      if (!content && (payload.mediaIds || payload.media_ids || payload.mediaId || payload.media_id)) {
+        const mList = [
+          ...coerceMediaList(payload.mediaIds),
+          ...coerceMediaList(payload.media_ids),
+          ...coerceMediaList(payload.mediaId),
+          ...coerceMediaList(payload.media_id),
+        ];
+        if (mList.length > 0) {
+          const firstM = mList[0];
+          content = typeof firstM === 'string' ? firstM : firstM?.key || firstM?.url || '';
+        }
       }
       if (!content && normalizedImages.length > 0) {
         const firstImg = normalizedImages[0];
@@ -328,6 +356,8 @@ export const registerChatSocketHandlers = (
           clientMessageId: payload.clientMessageId || payload.clientMsgId,
           clientMessageIds: payload.clientMessageIds,
           metadata: payload.metadata,
+          mediaIds: payload.mediaIds || payload.media_ids,
+          media_ids: payload.media_ids,
           images: normalizedImages.length > 0 ? normalizedImages : undefined,
           imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
           mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
@@ -396,6 +426,8 @@ export const registerChatSocketHandlers = (
             clientMessageId: payload.clientMessageId || payload.clientMsgId,
             replyToMessageId,
             metadata: payload.metadata,
+            mediaIds: payload.mediaIds || payload.media_ids,
+            media_ids: payload.media_ids,
             images: normalizedImages.length > 0 ? normalizedImages : undefined,
             imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
             mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
@@ -428,6 +460,8 @@ export const registerChatSocketHandlers = (
           messageType: msgType,
           clientMessageId: payload.clientMessageId || payload.clientMsgId,
           metadata: payload.metadata,
+          mediaIds: payload.mediaIds || payload.media_ids,
+          media_ids: payload.media_ids,
           images: normalizedImages.length > 0 ? normalizedImages : undefined,
           imageUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,
           mediaUrls: normalizedImageUrls.length > 0 ? normalizedImageUrls : undefined,

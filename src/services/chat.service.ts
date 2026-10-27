@@ -172,7 +172,9 @@ export const decorateChatGalleryImage = (img: any): any => {
     const full = img.startsWith('http://') || img.startsWith('https://')
       ? img
       : s3Service.getPublicUrl(key);
-    const thumb = key ? s3Service.getThumbnailUrl(key) : full;
+    // S3 /thumbnails/ returns 404 when no async thumbnail generation Lambda is running.
+    // Fallback immediately to the full accessible image URL so chat images are visible.
+    const thumb = full;
     return {
       url: full,
       imageUrl: full,
@@ -192,7 +194,10 @@ export const decorateChatGalleryImage = (img: any): any => {
       : key
         ? s3Service.getPublicUrl(key)
         : '';
-  const thumb = img.thumbnailUrl || (key ? s3Service.getThumbnailUrl(key) : full);
+  const thumb =
+    img.thumbnailUrl && !img.thumbnailUrl.includes('/thumbnails/')
+      ? img.thumbnailUrl
+      : full;
   return {
     ...img,
     url: full,
@@ -217,11 +222,15 @@ export const toChatMedias = (images: any[] | undefined | null): any[] => {
       const decorated = decorateChatGalleryImage(img);
       const url = decorated?.imageUrl || decorated?.url || '';
       if (!url) return null;
+      const thumb =
+        decorated?.thumbnailUrl && !decorated.thumbnailUrl.includes('/thumbnails/')
+          ? decorated.thumbnailUrl
+          : url;
       return {
         id: decorated?.key || url || `image-${index}`,
         kind: 'image',
         url,
-        thumbnailUrl: decorated?.thumbnailUrl || url,
+        thumbnailUrl: thumb,
         mimeType: decorated?.mimeType || img?.mimeType || 'image/jpeg',
         width: decorated?.width ?? img?.width ?? null,
         height: decorated?.height ?? img?.height ?? null,
@@ -365,7 +374,10 @@ export const buildChatGalleryMeta = (
   const meta: Record<string, any> = {
     ...base,
     imageUrl: first.imageUrl || first.url || '',
-    thumbnailUrl: first.thumbnailUrl || first.imageUrl || '',
+    thumbnailUrl:
+      first.thumbnailUrl && !first.thumbnailUrl.includes('/thumbnails/')
+        ? first.thumbnailUrl
+        : first.imageUrl || first.url || '',
     mediaUrl: first.mediaUrl || first.imageUrl || '',
     url: first.url || first.imageUrl || '',
     mimeType: uploadedImages[0]?.mimeType,
@@ -798,6 +810,41 @@ const findRecentDuplicateImage = async (
   return null;
 };
 
+/** Finds a very recent image message from this user in this conversation to group consecutive photos into a WhatsApp-style album */
+const findRecentBurstImage = async (
+  conversationId: string,
+  senderId: string,
+  transaction?: any
+): Promise<ChatMessage | null> => {
+  const since = new Date(Date.now() - 15000); // 15 seconds burst window
+  const lastMsg = await ChatMessage.findOne({
+    where: {
+      conversationId,
+      createdAt: { [Op.gte]: since },
+    },
+    order: [['createdAt', 'DESC']],
+    transaction,
+  });
+  if (
+    lastMsg &&
+    String(lastMsg.senderId).toLowerCase() === String(senderId).toLowerCase() &&
+    lastMsg.messageType === 'image'
+  ) {
+    let meta: any = {};
+    try {
+      meta = JSON.parse(lastMsg.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    const galleryCount = Array.isArray(meta?.images) ? meta.images.length : 1;
+    // Only group if previous message has no text caption and hasn't reached max album size (10)
+    if (!meta.caption && galleryCount < 10) {
+      return lastMsg;
+    }
+  }
+  return null;
+};
+
 const findRecentDuplicateAudios = async (
   conversationId: string,
   senderId: string,
@@ -1111,8 +1158,9 @@ const fillChatMediaFields = (
       parsedMetadata?.mediaUrl ||
       (cleanKey ? s3Service.getPublicUrl(cleanKey) : undefined);
     const resolvedThumb =
-      parsedMetadata?.thumbnailUrl ||
-      (cleanKey ? s3Service.getThumbnailUrl(cleanKey) : undefined);
+      (parsedMetadata?.thumbnailUrl && !parsedMetadata.thumbnailUrl.includes('/thumbnails/'))
+        ? parsedMetadata.thumbnailUrl
+        : resolvedUrl;
 
     dto.imageUrl = resolvedUrl;
     dto.thumbnailUrl = resolvedThumb;
@@ -2482,10 +2530,11 @@ export class ChatService {
           parsedMetadata.images = parsedMetadata.imageUrls.map((u: any) => {
             const rawUrl = typeof u === 'string' ? u : u?.url || u?.imageUrl || '';
             const k = s3Service.extractKey(rawUrl);
+            const pub = rawUrl ? s3Service.getPublicUrl(k) : '';
             return {
-              url: rawUrl ? s3Service.getPublicUrl(k) : '',
-              imageUrl: rawUrl ? s3Service.getPublicUrl(k) : '',
-              thumbnailUrl: rawUrl ? s3Service.getThumbnailUrl(k) : '',
+              url: pub,
+              imageUrl: pub,
+              thumbnailUrl: pub,
               key: k,
             };
           });
@@ -2497,17 +2546,18 @@ export class ChatService {
           parsedMetadata = {};
         }
         const cleanKey = s3Service.extractKey(msg.content);
-        if (!parsedMetadata.thumbnailUrl) {
-          parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
-        }
+        const pub = s3Service.getPublicUrl(cleanKey);
         if (!parsedMetadata.imageUrl) {
-          parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.imageUrl = pub;
+        }
+        if (!parsedMetadata.thumbnailUrl || parsedMetadata.thumbnailUrl.includes('/thumbnails/')) {
+          parsedMetadata.thumbnailUrl = pub;
         }
         if (!parsedMetadata.mediaUrl) {
-          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.mediaUrl = pub;
         }
         if (!parsedMetadata.url) {
-          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.url = pub;
         }
         if (Array.isArray(parsedMetadata.images)) {
           parsedMetadata.images = parsedMetadata.images.map((img: any) => {
@@ -2639,8 +2689,9 @@ export class ChatService {
           parsedMetadata?.mediaUrl ||
           (cleanKey ? s3Service.getPublicUrl(cleanKey) : undefined);
         const resolvedThumb =
-          parsedMetadata?.thumbnailUrl ||
-          (cleanKey ? s3Service.getThumbnailUrl(cleanKey) : undefined);
+          (parsedMetadata?.thumbnailUrl && !parsedMetadata.thumbnailUrl.includes('/thumbnails/'))
+            ? parsedMetadata.thumbnailUrl
+            : resolvedUrl;
 
         msgItem.imageUrl = resolvedUrl;
         msgItem.thumbnailUrl = resolvedThumb;
@@ -3239,7 +3290,7 @@ export class ChatService {
             s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
           }
           const pubUrl = s3Service.getPublicUrl(s3Key);
-          const thUrl = s3Service.getThumbnailUrl(s3Key);
+          const thUrl = pubUrl;
           uploadedImages.push({
             url: pubUrl,
             imageUrl: pubUrl,
@@ -3279,7 +3330,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(raw, senderId);
         if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -3314,7 +3365,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(raw, senderId);
         if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -3404,7 +3455,7 @@ export class ChatService {
         s3Service.generateAndUploadThumbnail(s3Key, buffer).catch(() => {});
 
         const pubUrl = s3Service.getPublicUrl(s3Key);
-        const thUrl = s3Service.getThumbnailUrl(s3Key);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -3418,7 +3469,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(messageContent, senderId);
         if (cleanKey) {
           const pubUrl = s3Service.getPublicUrl(cleanKey);
-          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          const thUrl = pubUrl;
           uploadedImages.push({
             url: pubUrl,
             imageUrl: pubUrl,
@@ -3576,11 +3627,27 @@ export class ChatService {
         : ''
     );
     try {
+    let existingRows: ChatMessage[] = [];
     if (data.clientMessageId) {
       const wantedClientId = String(data.clientMessageId);
-      const existingRows = await findClientMessages(conversationId, senderId, wantedClientId);
+      existingRows = await findClientMessages(conversationId, senderId, wantedClientId);
+    }
 
-      if (existingRows.length > 0) {
+    // WhatsApp-style photo album grouping:
+    // If consecutive photos are sent by the same user in quick succession (burst within 15 seconds)
+    // without clientMessageId match, group them into the recent album bubble like WhatsApp.
+    const isPurePhotoSend =
+      uploadedImages.length > 0 &&
+      uploadedAudios.length === 0 &&
+      (!messageContent || messageContent === uploadedImages[0].key || messageContent === '__MULTI_IMAGE__' || messageContent === '__FILE_ATTACHMENT__');
+    if (existingRows.length === 0 && isPurePhotoSend) {
+      const recentImage = await findRecentBurstImage(conversationId, senderId);
+      if (recentImage) {
+        existingRows = [recentImage];
+      }
+    }
+
+    if (existingRows.length > 0) {
         const existingKeys = new Set<string>();
         for (const row of existingRows) {
           let rowMeta: any = {};
@@ -3630,8 +3697,9 @@ export class ChatService {
           meta?.imageUrl ||
           (existingMessage.messageType === 'image' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
         const thumbnailUrl =
-          meta?.thumbnailUrl ||
-          (existingMessage.messageType === 'image' ? s3Service.getThumbnailUrl(existingMessage.content) : undefined);
+          (meta?.thumbnailUrl && !meta.thumbnailUrl.includes('/thumbnails/'))
+            ? meta.thumbnailUrl
+            : imageUrl;
         const audioUrl =
           meta?.audioUrl ||
           meta?.voiceUrl ||
@@ -3770,7 +3838,6 @@ export class ChatService {
           };
         }
       }
-    }
 
     // 6. Build the items to insert into chat_messages
     const itemsToCreate: Array<{
@@ -4009,8 +4076,9 @@ export class ChatService {
         parsedMeta?.imageUrl ||
         (savedMessage.messageType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
       const thumbnailUrl =
-        parsedMeta?.thumbnailUrl ||
-        (savedMessage.messageType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+        (parsedMeta?.thumbnailUrl && !parsedMeta.thumbnailUrl.includes('/thumbnails/'))
+          ? parsedMeta.thumbnailUrl
+          : imageUrl;
       const audioUrl =
         parsedMeta?.audioUrl ||
         parsedMeta?.voiceUrl ||
@@ -4034,6 +4102,10 @@ export class ChatService {
         : savedMessage.isDelivered
           ? 'delivered'
           : 'sent';
+
+      const dtoImages = parsedMeta?.images || (uploadedImages.length > 0 ? uploadedImages : undefined);
+      const dtoImageUrls = parsedMeta?.imageUrls || (uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : undefined);
+      const dtoMedias = toChatMedias(dtoImages);
 
       const dto: ChatMessageDTO = {
         id: savedMessage.id,
@@ -4077,8 +4149,9 @@ export class ChatService {
         url,
         duration: dur,
         durationMs: durMs,
-        images: parsedMeta?.images || (uploadedImages.length > 0 ? uploadedImages : undefined),
-        imageUrls: parsedMeta?.imageUrls || (uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : undefined),
+        images: dtoImages,
+        imageUrls: dtoImageUrls,
+        medias: dtoMedias,
       };
 
       allDtos.push(dto);
@@ -4632,7 +4705,7 @@ export class ChatService {
             s3Service.generateAndUploadThumbnail(s3Key, file.buffer).catch(() => {});
           }
           const pubUrl = s3Service.getPublicUrl(s3Key);
-          const thUrl = s3Service.getThumbnailUrl(s3Key);
+          const thUrl = pubUrl;
           uploadedImages.push({
             url: pubUrl,
             imageUrl: pubUrl,
@@ -4672,7 +4745,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(raw, senderId);
         if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -4707,7 +4780,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(raw, senderId);
         if (!cleanKey) continue;
         const pubUrl = s3Service.getPublicUrl(cleanKey);
-        const thUrl = s3Service.getThumbnailUrl(cleanKey);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -4784,7 +4857,7 @@ export class ChatService {
         s3Service.generateAndUploadThumbnail(s3Key, buffer).catch(() => {});
 
         const pubUrl = s3Service.getPublicUrl(s3Key);
-        const thUrl = s3Service.getThumbnailUrl(s3Key);
+        const thUrl = pubUrl;
         uploadedImages.push({
           url: pubUrl,
           imageUrl: pubUrl,
@@ -4798,7 +4871,7 @@ export class ChatService {
         const cleanKey = resolveIncomingImageKey(messageContent, senderId);
         if (cleanKey) {
           const pubUrl = s3Service.getPublicUrl(cleanKey);
-          const thUrl = s3Service.getThumbnailUrl(cleanKey);
+          const thUrl = pubUrl;
           uploadedImages.push({
             url: pubUrl,
             imageUrl: pubUrl,
@@ -5168,8 +5241,9 @@ export class ChatService {
               meta?.imageUrl ||
               (existingMessage.messageType === 'image' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
             const thumbnailUrl =
-              meta?.thumbnailUrl ||
-              (existingMessage.messageType === 'image' ? s3Service.getThumbnailUrl(existingMessage.content) : undefined);
+              (meta?.thumbnailUrl && !meta.thumbnailUrl.includes('/thumbnails/'))
+                ? meta.thumbnailUrl
+                : imageUrl;
             const audioUrl =
               meta?.audioUrl ||
               (existingMessage.messageType === 'audio' ? s3Service.getPublicUrl(existingMessage.content) : undefined);
@@ -5492,8 +5566,9 @@ export class ChatService {
             parsedMeta?.imageUrl ||
             (savedMessage.messageType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
           const thumbnailUrl =
-            parsedMeta?.thumbnailUrl ||
-            (savedMessage.messageType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+            (parsedMeta?.thumbnailUrl && !parsedMeta.thumbnailUrl.includes('/thumbnails/'))
+              ? parsedMeta.thumbnailUrl
+              : imageUrl;
           const audioUrl =
             parsedMeta?.audioUrl ||
             parsedMeta?.voiceUrl ||
@@ -7615,14 +7690,15 @@ export class ChatService {
         parsedMetadata = {};
       }
       const cleanKey = s3Service.extractKey(message.content);
-      if (!parsedMetadata.thumbnailUrl) {
-        parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
-      }
+      const pub = s3Service.getPublicUrl(cleanKey);
       if (!parsedMetadata.imageUrl) {
-        parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+        parsedMetadata.imageUrl = pub;
+      }
+      if (!parsedMetadata.thumbnailUrl || parsedMetadata.thumbnailUrl.includes('/thumbnails/')) {
+        parsedMetadata.thumbnailUrl = pub;
       }
       if (!parsedMetadata.mediaUrl) {
-        parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+        parsedMetadata.mediaUrl = pub;
       }
     }
 
@@ -8156,17 +8232,18 @@ export class ChatService {
           parsedMetadata = {};
         }
         const cleanKey = s3Service.extractKey(msg.content);
-        if (!parsedMetadata.thumbnailUrl) {
-          parsedMetadata.thumbnailUrl = s3Service.getThumbnailUrl(cleanKey);
-        }
+        const pub = s3Service.getPublicUrl(cleanKey);
         if (!parsedMetadata.imageUrl) {
-          parsedMetadata.imageUrl = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.imageUrl = pub;
+        }
+        if (!parsedMetadata.thumbnailUrl || parsedMetadata.thumbnailUrl.includes('/thumbnails/')) {
+          parsedMetadata.thumbnailUrl = pub;
         }
         if (!parsedMetadata.mediaUrl) {
-          parsedMetadata.mediaUrl = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.mediaUrl = pub;
         }
         if (!parsedMetadata.url) {
-          parsedMetadata.url = s3Service.getPublicUrl(cleanKey);
+          parsedMetadata.url = pub;
         }
       } else if (msg.messageType === 'audio' && msg.content) {
         if (!parsedMetadata || typeof parsedMetadata !== 'object') {
@@ -10484,8 +10561,9 @@ return {
             parsedMeta?.imageUrl ||
             (savedMessage.messageType === 'image' ? s3Service.getPublicUrl(savedMessage.content) : undefined);
           const thumbnailUrl =
-            parsedMeta?.thumbnailUrl ||
-            (savedMessage.messageType === 'image' ? s3Service.getThumbnailUrl(savedMessage.content) : undefined);
+            (parsedMeta?.thumbnailUrl && !parsedMeta.thumbnailUrl.includes('/thumbnails/'))
+              ? parsedMeta.thumbnailUrl
+              : imageUrl;
           const audioUrl =
             parsedMeta?.audioUrl ||
             parsedMeta?.voiceUrl ||

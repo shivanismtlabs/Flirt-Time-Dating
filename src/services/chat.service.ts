@@ -5593,6 +5593,10 @@ export class ChatService {
               ? 'delivered'
               : 'sent';
 
+          const dtoImages = parsedMeta?.images || (uploadedImages.length > 0 ? uploadedImages : undefined);
+          const dtoImageUrls = parsedMeta?.imageUrls || (uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : undefined);
+          const dtoMedias = toChatMedias(dtoImages);
+
           const dto: ChatMessageDTO = {
             id: savedMessage.id,
             conversationId: savedMessage.conversationId,
@@ -5631,8 +5635,9 @@ export class ChatService {
             url,
             duration: dur,
             durationMs: durMs,
-            images: parsedMeta?.images || (uploadedImages.length > 0 ? uploadedImages : undefined),
-            imageUrls: parsedMeta?.imageUrls || (uploadedImages.length > 0 ? uploadedImages.map((i) => i.imageUrl) : undefined),
+            images: dtoImages,
+            imageUrls: dtoImageUrls,
+            medias: dtoMedias,
           };
 
           recipientDtos.push(dto);

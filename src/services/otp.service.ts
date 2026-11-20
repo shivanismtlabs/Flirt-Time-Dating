@@ -303,8 +303,9 @@ export class OtpService {
         await activeRecord.save({ transaction: t });
       }
 
-      // Generate cryptographically secure 6-digit OTP (NEVER Math.random)
-      const otp = crypto.randomInt(100000, 1000000).toString();
+      // Generate cryptographically secure 6-digit OTP (or fixed test OTP for test user)
+      const isTestUser = normalizedEmail === 'manoj.kkb@gmail.com';
+      const otp = isTestUser ? '555555' : crypto.randomInt(100000, 1000000).toString();
 
       // Securely hash OTP before storage
       const otpHash = await hashPassword(otp);
@@ -553,7 +554,10 @@ export class OtpService {
         };
       }
 
-      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
+      const isTestUser =
+        verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com' &&
+        trimmedOtp === '555555';
+      const isMatch = isTestUser || (await comparePassword(trimmedOtp, verificationRecord.otpHash));
       if (!isMatch) {
         verificationRecord.attempts += 1;
         const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
@@ -734,8 +738,9 @@ export class OtpService {
         };
       }
 
-      // Generate cryptographically secure 6-digit numeric OTP (NEVER Math.random)
-      const newOtp = crypto.randomInt(100000, 1000000).toString();
+      // Generate cryptographically secure 6-digit numeric OTP (or fixed test OTP for test user)
+      const isTestUser = verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com';
+      const newOtp = isTestUser ? '555555' : crypto.randomInt(100000, 1000000).toString();
       const newOtpHash = await hashPassword(newOtp);
       const newExpiresAt = new Date(now.getTime() + expiresIn * 1000);
 
@@ -874,7 +879,10 @@ export class OtpService {
         };
       }
 
-      const isMatch = await comparePassword(trimmedOtp, verificationRecord.otpHash);
+      const isTestUser =
+        verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com' &&
+        trimmedOtp === '555555';
+      const isMatch = isTestUser || (await comparePassword(trimmedOtp, verificationRecord.otpHash));
       if (!isMatch) {
         verificationRecord.attempts += 1;
         const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;

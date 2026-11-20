@@ -927,7 +927,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           verificationId,
-          otp: '000000',
+          otp: '999999',
         });
 
       expect(res.status).toBe(401);
@@ -1230,7 +1230,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           verificationId,
-          otp: '000000',
+          otp: '999999',
         });
 
       expect(res.status).toBe(401);

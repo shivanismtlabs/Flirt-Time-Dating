@@ -301,7 +301,7 @@ describe('Phone OTP through Firebase Auth', () => {
 
     const res = await request(app).post('/api/v1/auth/phone/verify-otp').send({
       verificationId: requested.body.data.verificationId,
-      otp: '000000',
+      otp: '999999',
     });
 
     expect(res.status).toBe(401);

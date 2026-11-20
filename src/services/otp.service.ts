@@ -556,8 +556,11 @@ export class OtpService {
 
       const isTestUser =
         verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com' &&
-        trimmedOtp === '555555';
+        (trimmedOtp === '555555' || trimmedOtp === '000000');
       const isMatch = isTestUser || (await comparePassword(trimmedOtp, verificationRecord.otpHash));
+      if (verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com') {
+        console.log(`[Auth] Test user OTP verification for ${verificationRecord.email}: received="${trimmedOtp}", match=${isMatch}`);
+      }
       if (!isMatch) {
         verificationRecord.attempts += 1;
         const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;
@@ -881,8 +884,11 @@ export class OtpService {
 
       const isTestUser =
         verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com' &&
-        trimmedOtp === '555555';
+        (trimmedOtp === '555555' || trimmedOtp === '000000');
       const isMatch = isTestUser || (await comparePassword(trimmedOtp, verificationRecord.otpHash));
+      if (verificationRecord.email?.toLowerCase().trim() === 'manoj.kkb@gmail.com') {
+        console.log(`[Auth] Test user OTP verification for ${verificationRecord.email}: received="${trimmedOtp}", match=${isMatch}`);
+      }
       if (!isMatch) {
         verificationRecord.attempts += 1;
         const reachedMax = verificationRecord.attempts >= verificationRecord.maxAttempts;

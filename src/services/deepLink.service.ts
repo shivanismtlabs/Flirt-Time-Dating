@@ -333,7 +333,7 @@ export class DeepLinkService {
             {
               model: User,
               as: 'user',
-              attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'isActive'],
+              attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'isActive'],
             },
           ],
           order: [[{ model: MomentMedia, as: 'media' }, 'displayOrder', 'ASC']],
@@ -435,6 +435,7 @@ export class DeepLinkService {
             name: authorDisplayName,
             avatar: author.profilePicture ? s3Service.getThumbnailUrl(author.profilePicture) : null,
             isVerified: !!author.isFaceVerified,
+            isSubscribed: !!author.isSubscribed,
           },
         };
       }
@@ -445,7 +446,7 @@ export class DeepLinkService {
             {
               model: User,
               as: 'author',
-              attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'isActive'],
+              attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'isActive'],
             },
           ],
         });
@@ -523,13 +524,14 @@ export class DeepLinkService {
             name: authorDisplayName,
             avatar: author.profilePicture ? s3Service.getThumbnailUrl(author.profilePicture) : null,
             isVerified: !!author.isFaceVerified,
+            isSubscribed: !!author.isSubscribed,
           },
         };
       }
 
       case 'profile': {
         const user = await User.findByPk(link.contentId, {
-          attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'isActive'],
+          attributes: ['id', 'firstName', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'isActive'],
         });
 
         if (!user || !user.isActive) {
@@ -578,6 +580,7 @@ export class DeepLinkService {
             avatar: user.profilePicture ? s3Service.getThumbnailUrl(user.profilePicture) : null,
             city: user.city || null,
             isVerified: !!user.isFaceVerified,
+            isSubscribed: !!user.isSubscribed,
           },
         };
       }

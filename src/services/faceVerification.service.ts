@@ -38,6 +38,7 @@ export interface VerificationResponseData {
     status: string;
     message: string;
   };
+  currentStep?: string | null;
 }
 
 export class FaceVerificationServiceError extends Error {
@@ -251,6 +252,7 @@ export class FaceVerificationService {
             status: 'unavailable_single_frame',
             message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
           },
+          currentStep: user.onboardingStep || null,
         };
       }
 
@@ -320,6 +322,7 @@ export class FaceVerificationService {
             status: 'unavailable_single_frame',
             message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
           },
+          currentStep: user.onboardingStep || null,
         };
       }
 
@@ -435,6 +438,8 @@ export class FaceVerificationService {
           if (!user.profilePicture) {
             user.profilePicture = s3Key;
           }
+          user.onboardingStep = 'completed';
+          user.isProfileComplete = true;
           await user.save({ transaction });
         }
 
@@ -484,6 +489,7 @@ export class FaceVerificationService {
           status: 'unavailable_single_frame',
           message: 'Single 2D selfie image cannot establish 3D liveness or active presence',
         },
+        currentStep: user.onboardingStep || null,
       };
     } finally {
       this.activeUserVerifications.delete(userId);

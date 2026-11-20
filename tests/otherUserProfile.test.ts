@@ -9,6 +9,7 @@ import {
   SwipeAction,
   Match,
   UserBlock,
+  Conversation,
   initDb,
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
@@ -32,6 +33,7 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
 
   beforeEach(async () => {
     // Clear all related tables
+    await Conversation.destroy({ where: {} });
     await Match.destroy({ where: {} });
     await SwipeAction.destroy({ where: {} });
     await UserBlock.destroy({ where: {} });
@@ -182,9 +184,16 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(data.isVerified).toBe(true);
       expect(data.profilePhoto).toContain('https://flirttime-media.s3.amazonaws.com/profiles/meera_main.jpg');
       expect(data.city).toBe('Mumbai');
+      expect(data.fullLocation).toBe('Mumbai');
+      expect(data.location).toBeUndefined();
+      expect(data.state).toBeUndefined();
+      expect(data.country).toBeUndefined();
+      expect(data.county).toBeUndefined();
       expect(typeof data.distanceKm).toBe('number');
       expect(data.bio).toBe('Plant mom. Amateur chef. Professional overthinker.');
       expect(typeof data.vibeScore).toBe('number');
+      expect(data.vibeScore).toBe(50);
+      expect(data.vibeScore).toBe(data.profileMatchPercentage);
       expect(data.vibeExplanation).toBeDefined();
       expect(data.vibeExplanation.text).toMatch(/you both love cooking/i);
       expect(data.vibeExplanation.sharedInterests).toEqual(['Cooking']);
@@ -198,10 +207,16 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(Array.isArray(data.interests)).toBe(true);
       expect(data.interests.length).toBe(2);
       expect(data.sharedInterests).toEqual(['Cooking']);
+      expect(data.commonInterestsCount).toBe(1);
+      expect(data.profileMatchPercentage).toBe(50);
+      expect(data.profile_match_percentage).toBeUndefined();
+      expect(data.common_interests_count).toBeUndefined();
       expect(data.action).toBeNull();
       expect(data.myAction).toBeNull();
       expect(data.isMatched).toBe(false);
       expect(data.canConnect).toBe(true);
+      expect(typeof data.conversationId).toBe('string');
+      expect(data.conversationId).toMatch(/^[0-9a-fA-F-]{36}$/);
     });
   });
 
@@ -377,7 +392,8 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
 
       expect(res.status).toBe(200);
       expect(res.body.data.sharedInterests).toEqual([]);
-      expect(res.body.data.vibeScore).toBeNull();
+      expect(res.body.data.vibeScore).toBe(0);
+      expect(res.body.data.vibeScore).toBe(res.body.data.profileMatchPercentage);
       expect(res.body.data.vibeExplanation).toBeNull();
     });
 
@@ -574,7 +590,8 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(res.body.data.moments).toEqual([]);
       expect(res.body.data.interests).toEqual([]);
       expect(res.body.data.sharedInterests).toEqual([]);
-      expect(res.body.data.vibeScore).toBeNull();
+      expect(res.body.data.vibeScore).toBe(0);
+      expect(res.body.data.vibeScore).toBe(res.body.data.profileMatchPercentage);
       expect(res.body.data.vibeExplanation).toBeNull();
     });
   });
@@ -731,5 +748,97 @@ describe('Other User Profile Detail API (GET /api/v1/users/:userId/profile)', ()
       expect(res.body.data.totalPhotos).toBe(3);
     });
   });
+
+  describe('18. Profile Match Percentage & Compatibility Verification', () => {
+    it('should compute combined match percentage with preferences (70% interests + 30% lookingFor)', async () => {
+      // Set lookingFor for both viewer and target to matching preference
+      await viewerUser.update({ lookingFor: 'long_term' });
+      await targetUser.update({ lookingFor: 'relationship' }); // maps to 'long_term'
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      const data = res.body.data;
+      // 1 common interest / max(2, 2) = 50%
+      // Looking for matches = 100%
+      // Combined: round(0.7 * 50 + 0.3 * 100) = round(35 + 30) = 65%
+      expect(data.profileMatchPercentage).toBe(65);
+      expect(data.vibeScore).toBe(65);
+      expect(data.commonInterestsCount).toBe(1);
+    });
+
+    it('should compute 100% profileMatchPercentage when viewing self', async () => {
+      const res = await request(app)
+        .get(`/api/v1/users/${viewerUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.profileMatchPercentage).toBe(100);
+      expect(res.body.data.vibeScore).toBe(100);
+      expect(res.body.data.conversationId).toBeNull();
+    });
+
+    it('should return 0% profileMatchPercentage when there are no shared interests and no matching preferences', async () => {
+      // Remove all interests from target user
+      await UserInterest.destroy({ where: { userId: targetUser.id } });
+      await viewerUser.update({ lookingFor: 'casual' });
+      await targetUser.update({ lookingFor: 'long_term' });
+
+      const res = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.sharedInterests).toEqual([]);
+      expect(res.body.data.commonInterestsCount).toBe(0);
+      expect(res.body.data.profileMatchPercentage).toBe(0);
+      expect(res.body.data.vibeScore).toBe(0);
+    });
+  });
+
+  describe('19. Direct Conversation Navigation Support (conversationId)', () => {
+    it('should return a non-null conversationId for other user profile and allow opening direct chat', async () => {
+      const profileRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(profileRes.status).toBe(200);
+      expect(profileRes.body.success).toBe(true);
+      const convId = profileRes.body.data.conversationId;
+      expect(typeof convId).toBe('string');
+      expect(convId).toMatch(/^[0-9a-fA-F-]{36}$/);
+
+      // Verify the returned conversationId can be queried immediately via chat messages endpoint
+      const chatRes = await request(app)
+        .get(`/api/v1/chats/${convId}/messages`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(chatRes.status).toBe(200);
+      expect(chatRes.body.success).toBe(true);
+      expect(chatRes.body.data.conversationId).toBe(convId);
+      expect(Array.isArray(chatRes.body.data.messages)).toBe(true);
+    });
+
+    it('should return the same conversationId on subsequent profile views', async () => {
+      const firstRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(firstRes.status).toBe(200);
+      expect(firstRes.body.success).toBe(true);
+
+      const secondRes = await request(app)
+        .get(`/api/v1/users/${targetUser.id}/profile`)
+        .set('Authorization', `Bearer ${viewerToken}`);
+
+      expect(secondRes.status).toBe(200);
+      expect(secondRes.body.success).toBe(true);
+
+      expect(firstRes.body.data.conversationId).toBe(secondRes.body.data.conversationId);
+    });
+  });
 });
+
 

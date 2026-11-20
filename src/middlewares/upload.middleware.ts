@@ -1,6 +1,7 @@
 import multer from 'multer';
 import { Request, Response, NextFunction } from 'express';
 import { sendError } from '../utils/response';
+import { ensureAudioMessageContent, ensureImageMessageContent, isAudioChatFile } from '../utils/chatMediaKind';
 import { env } from '../config/env';
 
 // Store in memory for immediate processing and memory cleanup (biometric privacy)
@@ -79,13 +80,13 @@ export const handleUploadSelfie = (req: Request, res: Response, next: NextFuncti
 };
 
 /**
- * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP, up to 5 images)
+ * Middleware for gallery profile photo uploads (Max 5MB each, JPEG/PNG/WebP)
  */
 export const uploadPhoto = multer({
   storage,
   limits: {
     fileSize: 5 * 1024 * 1024, // 5 MB per photo
-    files: 5,
+    files: 30,
   },
   fileFilter: (_req, file, cb) => {
     if (allowedMimeTypes.includes(file.mimetype.toLowerCase())) {
@@ -98,11 +99,11 @@ export const uploadPhoto = multer({
 
 export const handleUploadPhoto = (req: Request, res: Response, next: NextFunction) => {
   const upload = uploadPhoto.fields([
-    { name: 'photos', maxCount: 5 },
-    { name: 'images', maxCount: 5 },
-    { name: 'photo', maxCount: 5 },
-    { name: 'image', maxCount: 5 },
-    { name: 'files', maxCount: 5 },
+    { name: 'photos', maxCount: 30 },
+    { name: 'images', maxCount: 30 },
+    { name: 'photo', maxCount: 30 },
+    { name: 'image', maxCount: 30 },
+    { name: 'files', maxCount: 30 },
   ]);
 
   upload(req, res, (err: any) => {
@@ -119,7 +120,7 @@ export const handleUploadPhoto = (req: Request, res: Response, next: NextFunctio
         if (err.code === 'LIMIT_UNEXPECTED_FILE' || err.code === 'LIMIT_FILE_COUNT') {
           return sendError(
             res,
-            'Maximum 5 photos allowed. Please upload between 3 and 5 images.',
+            'Too many photos in one request.',
             400,
             'MAX_PHOTOS_EXCEEDED'
           );
@@ -431,4 +432,251 @@ export const handleUploadQuickMomentMedia = (
   });
 };
 
+/**
+ * Universal media upload middleware for direct S3 file uploads
+ * Max 50MB, supports images (jpeg, png, webp, gif, avif, heic), audio (mp3, m4a, wav, aac, ogg, webm), video (mp4, quicktime, mov, webm), pdf
+ */
+const allowedUniversalMediaMimeTypes = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+  'image/heic',
+  'image/heif',
+  'audio/mpeg',
+  'audio/mp3',
+  'audio/mp4',
+  'audio/m4a',
+  'audio/x-m4a',
+  'audio/wav',
+  'audio/x-wav',
+  'audio/aac',
+  'audio/ogg',
+  'audio/webm',
+  'audio/caf',
+  'audio/x-caf',
+  'audio/3gpp',
+  'audio/3gp',
+  'audio/amr',
+  'audio/flac',
+  'audio/opus',
+  'video/mp4',
+  'video/quicktime',
+  'video/webm',
+  'video/x-m4v',
+  'video/mpeg',
+  'application/pdf',
+  'application/octet-stream',
+];
 
+export const uploadUniversalMedia = multer({
+  storage,
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50 MB
+    files: 10,
+  },
+  fileFilter: (_req, file, cb) => {
+    const mime = file.mimetype.toLowerCase();
+    const isAllowed = allowedUniversalMediaMimeTypes.includes(mime);
+    const hasAllowedExt = /\.(jpe?g|png|webp|gif|avif|heic|heif|mp3|m4a|wav|aac|ogg|webm|caf|3gp|amr|flac|opus|mp4|mov|pdf)$/i.test(
+      file.originalname
+    );
+
+    if (isAllowed || hasAllowedExt) {
+      cb(null, true);
+    } else {
+      cb(
+        new Error(
+          `Unsupported file format (${file.mimetype}). Please upload an image, audio, or video file.`
+        )
+      );
+    }
+  },
+});
+
+export const handleUploadUniversalMedia = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const upload = uploadUniversalMedia.any();
+
+  upload(req, res, (err: any) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return sendError(
+            res,
+            'File size exceeds 50MB limit. Please upload a smaller file.',
+            400,
+            'FILE_TOO_LARGE'
+          );
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return sendError(
+            res,
+            'Maximum 10 files allowed per upload.',
+            400,
+            'LIMIT_FILE_COUNT'
+          );
+        }
+        return sendError(res, err.message, 400, err.code);
+      }
+      return sendError(res, err.message || 'Media upload error', 400, 'UPLOAD_ERROR');
+    }
+
+    // Populate req.file and structured map on req.files for compatibility
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      req.file = req.files[0];
+      const filesObj: Record<string, Express.Multer.File[]> = {};
+      for (const f of req.files) {
+        const field = f.fieldname || 'file';
+        if (!filesObj[field]) {
+          filesObj[field] = [];
+        }
+        filesObj[field].push(f);
+      }
+      // Attach named field lookup onto req.files array for dual access
+      Object.assign(req.files, filesObj);
+    } else if (req.files && typeof req.files === 'object' && !Array.isArray(req.files)) {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const key of Object.keys(filesObj)) {
+        if (filesObj[key]?.length > 0) {
+          req.file = filesObj[key][0];
+          break;
+        }
+      }
+    }
+
+    return next();
+  });
+};
+
+/**
+ * Middleware for direct chat message media attachments (images, photos, voice notes).
+ * Automatically parses multipart form-data, auto-detects messageType from file mime,
+ * and sets placeholder content to pass schema validation.
+ */
+export const handleUploadChatMedia = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  handleUploadUniversalMedia(req, res, (err: any) => {
+    if (err) {
+      return next(err);
+    }
+
+    const attachedFiles: Express.Multer.File[] = [];
+    if (Array.isArray(req.files) && req.files.length > 0) {
+      attachedFiles.push(...req.files);
+    } else if (req.files && typeof req.files === 'object') {
+      const filesObj = req.files as Record<string, Express.Multer.File[]>;
+      for (const list of Object.values(filesObj)) {
+        if (Array.isArray(list)) {
+          attachedFiles.push(...list);
+        }
+      }
+    }
+    if (attachedFiles.length === 0 && req.file) {
+      attachedFiles.push(req.file);
+    }
+
+    // Auto-detect message type and normalize fields if direct file is attached
+    if (attachedFiles.length > 0) {
+      req.file = attachedFiles[0];
+      const hasAudioFile = attachedFiles.some((f) => isAudioChatFile(f, req.body?.messageType || req.body?.type));
+
+      const hasImageFile = attachedFiles.some((f) => {
+        const mime = (f.mimetype || '').toLowerCase();
+        const origName = (f.originalname || '').toLowerCase();
+        const field = (f.fieldname || '').toLowerCase();
+        return (
+          mime.startsWith('image/') ||
+          ['image', 'images', 'photo', 'photos', 'picture', 'pictures'].includes(field) ||
+          /\.(jpe?g|png|webp|gif|avif|heic|heif)$/i.test(origName)
+        );
+      });
+
+      if (req.body.messageType === 'voice') req.body.messageType = 'audio';
+      if (req.body.type === 'voice') req.body.type = 'audio';
+
+      if (!req.body.messageType && !req.body.type) {
+        if (hasAudioFile && !hasImageFile) {
+          req.body.messageType = 'audio';
+        } else if (hasImageFile) {
+          req.body.messageType = 'image';
+        } else if (hasAudioFile) {
+          req.body.messageType = 'audio';
+        }
+      }
+
+      if (!req.body.content || !String(req.body.content).trim()) {
+        req.body.content = '__FILE_ATTACHMENT__';
+      }
+    }
+
+    if (req.body.messageType === 'voice') req.body.messageType = 'audio';
+    if (req.body.type === 'voice') req.body.type = 'audio';
+
+    // Parse JSON strings from multipart fields
+    if (typeof req.body.metadata === 'string') {
+      try {
+        req.body.metadata = JSON.parse(req.body.metadata);
+      } catch {}
+    }
+
+    ensureAudioMessageContent(req.body);
+    ensureImageMessageContent(req.body);
+
+    for (const key of [
+      'images',
+      'photos',
+      'attachments',
+      'medias',
+      'media',
+      'imageUrls',
+      'photoUrls',
+      'mediaUrls',
+      'urls',
+    ]) {
+      if (typeof req.body[key] === 'string') {
+        const trimmed = req.body[key].trim();
+        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+          try {
+            req.body[key] = JSON.parse(trimmed);
+          } catch {}
+        }
+      }
+    }
+
+    ensureImageMessageContent(req.body);
+
+    if (req.body.duration && !isNaN(Number(req.body.duration))) {
+      req.body.duration = Number(req.body.duration);
+    } else if (req.body.durationMs && !isNaN(Number(req.body.durationMs))) {
+      req.body.duration = Math.round(Number(req.body.durationMs) / 1000);
+    } else if (req.body.metadata?.duration && !isNaN(Number(req.body.metadata.duration))) {
+      req.body.duration = Number(req.body.metadata.duration);
+    }
+
+    if (typeof req.body.recipientIds === 'string') {
+      try {
+        req.body.recipientIds = JSON.parse(req.body.recipientIds);
+      } catch {
+        if (req.body.recipientIds.includes(',')) {
+          req.body.recipientIds = req.body.recipientIds
+            .split(',')
+            .map((id: string) => id.trim())
+            .filter(Boolean);
+        } else if (req.body.recipientIds.trim()) {
+          req.body.recipientIds = [req.body.recipientIds.trim()];
+        }
+      }
+    }
+
+    return next();
+  });
+};

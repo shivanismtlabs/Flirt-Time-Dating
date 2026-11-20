@@ -1,6 +1,9 @@
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
-import { User } from '../models/user.model';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from '../models/user.model';
+import { UserDevice } from '../models/userDevice.model';
+import { NotificationSetting } from '../models/notificationSetting.model';
+import { notificationService } from '../services/notification.service';
 import { sendSuccess, sendError } from '../utils/response';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import {
@@ -19,8 +22,11 @@ import {
 import { s3Service, formatMediaUrl, formatThumbnailUrl, extractS3Key } from '../services/s3.service';
 import { calculateAge } from '../services/discovery.service';
 import { otpService } from '../services/otp.service';
+import { clientProofFromBody } from '../services/firebasePhone.service';
 import { normalizeEmail } from '../utils/normalization';
 import { combineAndNormalizePhone, normalizePhone } from '../utils/phone';
+import { freeTierLimitService } from '../services/freeTierLimit.service';
+import { resolveCurrentStep } from '../utils/onboardingStep';
 
 /**
  * Controller to update authenticated user's profile (Introduce Yourself onboarding)
@@ -34,7 +40,20 @@ export const updateProfile = async (req: AuthenticatedRequest, res: Response) =>
       return sendError(res, 'Authentication token missing or invalid', 401);
     }
 
-    const updatedProfile = await updateUserProfile(userId, req.body);
+    const rawBody = req.body || {};
+    const nestedProfile =
+      typeof rawBody.profile === 'object' && rawBody.profile !== null
+        ? rawBody.profile
+        : typeof rawBody.user === 'object' && rawBody.user !== null
+          ? rawBody.user
+          : {};
+
+    const payload = {
+      ...nestedProfile,
+      ...rawBody,
+    };
+
+    const updatedProfile = await updateUserProfile(userId, payload);
 
     return sendSuccess(res, 'Profile updated successfully', updatedProfile);
   } catch (error: any) {
@@ -107,9 +126,9 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
 
     const primaryProfilePhoto = primaryPhotoKey
       ? {
-          url: formatMediaUrl(primaryPhotoKey),
-          thumbnailUrl: formatThumbnailUrl(primaryPhotoKey),
-        }
+        url: formatMediaUrl(primaryPhotoKey),
+        thumbnailUrl: formatThumbnailUrl(primaryPhotoKey),
+      }
       : null;
 
     const coverPhotoKey =
@@ -122,9 +141,9 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
 
     const coverPhoto = coverPhotoKey
       ? {
-          url: formatMediaUrl(coverPhotoKey),
-          thumbnailUrl: formatThumbnailUrl(coverPhotoKey),
-        }
+        url: formatMediaUrl(coverPhotoKey),
+        thumbnailUrl: formatThumbnailUrl(coverPhotoKey),
+      }
       : null;
 
     // 2. Display Name, Age, Location and Profile Completion Calculation
@@ -153,28 +172,6 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       })
     );
 
-    // 4. Permanent Moments: Maximum 4 permanent moments ordered by newest first
-    let permanentMoments: any[] = [];
-    try {
-      const myMomentsResult = await momentService.getUserMoments(userId, userId, {
-        page: 1,
-        limit: 4,
-      });
-      const rawMoments = (myMomentsResult?.moments || []).slice(0, 4);
-      permanentMoments = rawMoments.map((m: any) => ({
-        id: m.id,
-        caption: m.caption || '',
-        createdAt: m.createdAt || m.publishedAt,
-        firstImageUrl: m.firstImageUrl || m.imageUrl || null,
-        thumbnailUrl: m.thumbnailUrl || null,
-        imageCount: m.imageCount || m.mediaCount || 1,
-        likeCount: m.likeCount ?? m.likesCount ?? 0,
-        commentCount: m.commentCount ?? m.commentsCount ?? 0,
-        isLiked: !!m.isLiked,
-        hasMultipleImages: (m.imageCount || m.mediaCount || 1) > 1,
-      }));
-    } catch {}
-
     // 5. Voice Intro
     let voiceIntro: any = null;
     if (user.voicePromptUrl) {
@@ -187,51 +184,89 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       };
     }
 
-    // 6. Quick Moments: 24-hr tray summary
-    let quickMomentsSummary: any = {
-      items: [],
-      canAdd: true,
-    };
+    // Moments, tray, and notification settings do not depend on each other.
+    const [permanentMoments, quickMomentsSummary, userNotifySettings] = await Promise.all([
+      (async (): Promise<any[]> => {
+        try {
+          const myMomentsResult = await momentService.getUserMoments(userId, userId, {
+            page: 1,
+            limit: 4,
+          });
+          const rawMoments = (myMomentsResult?.moments || []).slice(0, 4);
+          return rawMoments.map((m: any) => ({
+            id: m.id,
+            caption: m.caption || '',
+            createdAt: m.createdAt || m.publishedAt,
+            firstImageUrl: m.firstImageUrl || m.imageUrl || null,
+            thumbnailUrl: m.thumbnailUrl || null,
+            imageCount: m.imageCount || m.mediaCount || 1,
+            likeCount: m.likeCount ?? m.likesCount ?? 0,
+            commentCount: m.commentCount ?? m.commentsCount ?? 0,
+            isLiked: !!m.isLiked,
+            hasMultipleImages: (m.imageCount || m.mediaCount || 1) > 1,
+          }));
+        } catch {
+          return [];
+        }
+      })(),
+      (async () => {
+        const empty = { items: [] as any[], canAdd: true };
+        try {
+          const { quickMomentService } = await import('../services/quickMoment.service');
+          const trayResult = await quickMomentService.getTray(userId);
 
-    try {
-      const { quickMomentService } = await import('../services/quickMoment.service');
-      const trayResult = await quickMomentService.getTray(userId);
+          const myStories = (trayResult.myStatus?.stories || []).map((s: any) => ({
+            id: s.id,
+            author: {
+              id: user.id,
+              name: displayName,
+              avatar: primaryProfilePhoto?.thumbnailUrl || null,
+              isVerified: !!user.isFaceVerified,
+            },
+            mediaThumbnail: s.thumbnailUrl || s.imageUrl,
+            createdAt: s.createdAt,
+            expiresAt: s.expiresAt || null,
+            isViewed: true,
+            isSelf: true,
+          }));
 
-      const myStories = (trayResult.myStatus?.stories || []).map((s: any) => ({
-        id: s.id,
-        author: {
-          id: user.id,
-          name: displayName,
-          avatar: primaryProfilePhoto?.thumbnailUrl || null,
-          isVerified: !!user.isFaceVerified,
-        },
-        mediaThumbnail: s.thumbnailUrl || s.imageUrl,
-        createdAt: s.createdAt,
-        expiresAt: s.expiresAt || null,
-        isViewed: true,
-        isSelf: true,
-      }));
+          const otherMomentsList = trayResult.otherUsers || (trayResult as any).tray || [];
+          const otherItems = otherMomentsList.map((t: any) => ({
+            id: t.firstMomentId || t.userId,
+            author: {
+              id: t.userId,
+              name: t.name,
+              avatar: t.avatar,
+              isVerified: !!t.isVerified,
+            },
+            mediaThumbnail: t.preview?.thumbnailUrl || t.preview?.imageUrl || null,
+            createdAt: t.preview?.createdAt || null,
+            isViewed: !t.hasUnread,
+            isSelf: false,
+          }));
 
-      const otherMomentsList = trayResult.otherUsers || (trayResult as any).tray || [];
-      const otherItems = otherMomentsList.map((t: any) => ({
-        id: t.firstMomentId || t.userId,
-        author: {
-          id: t.userId,
-          name: t.name,
-          avatar: t.avatar,
-          isVerified: !!t.isVerified,
-        },
-        mediaThumbnail: t.preview?.thumbnailUrl || t.preview?.imageUrl || null,
-        createdAt: t.preview?.createdAt || null,
-        isViewed: !t.hasUnread,
-        isSelf: false,
-      }));
-
-      quickMomentsSummary = {
-        items: [...myStories, ...otherItems],
-        canAdd: true,
-      };
-    } catch {}
+          return {
+            items: [...myStories, ...otherItems],
+            canAdd: true,
+          };
+        } catch {
+          return empty;
+        }
+      })(),
+      (async () => {
+        let settings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
+        try {
+          const settingRecord = await NotificationSetting.findOne({ where: { userId } });
+          if (settingRecord) {
+            settings = {
+              ...settings,
+              ...settingRecord.toResponseJSON(),
+            };
+          }
+        } catch { }
+        return settings;
+      })(),
+    ]);
 
     // 7. Structured Profile Object (only requested fields, no redundant data)
     const moreAboutMe = formatMoreAboutMe(user);
@@ -252,6 +287,10 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       bio: user.about || null,
       location,
       city: user.city || null,
+      state: location.state || null,
+      country: location.country || null,
+      county: location.county || null,
+      fullLocation: location.fullLocation || user.city || null,
       latitude: user.latitude ?? null,
       longitude: user.longitude ?? null,
       profilePhoto: primaryProfilePhoto,
@@ -264,6 +303,11 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       interests: formattedInterests,
       isVerified: !!user.isFaceVerified,
       completionPercentage,
+      // Subscription & Wallet fields
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       // More about me direct fields
       drinking: user.drinking || null,
       education: user.education || null,
@@ -280,12 +324,23 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       relationship: user.relationship || null,
       children: user.children || null,
       moreAboutMe,
+      notify_settings: userNotifySettings,
+      notificationSettings: userNotifySettings,
+      currentStep: resolveCurrentStep(user.onboardingStep, {
+        basicInfo: !!(user.fullName && user.dateOfBirth && user.gender),
+        photos: formattedPhotos.length >= 1 || !!user.profilePicture,
+        gesture: !!user.isFaceVerified,
+      }),
     };
 
     // 8. Clean response payload with no internal or redundant data
     const profileResponse = {
       id: user.id,
       username: user.username,
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
       profilePhoto: primaryProfilePhoto,
       profilePicture: primaryPhotoKey ? formatMediaUrl(primaryPhotoKey) : null,
       coverPhoto,
@@ -293,11 +348,20 @@ export const getProfile = async (req: AuthenticatedRequest, res: Response) => {
       coverPhotoUrl: coverPhotoKey ? formatMediaUrl(coverPhotoKey) : null,
       profile: profileData,
       location,
+      city: user.city || null,
+      state: location.state || null,
+      country: location.country || null,
+      county: location.county || null,
+      fullLocation: location.fullLocation || user.city || null,
+      latitude: user.latitude ?? null,
+      longitude: user.longitude ?? null,
       moreAboutMe,
       interests: formattedInterests,
       moments: permanentMoments,
       voiceIntro,
       quickMoments: quickMomentsSummary,
+      notify_settings: user.notificationSettings || DEFAULT_NOTIFY_SETTINGS,
+      notificationSettings: user.notificationSettings || DEFAULT_NOTIFY_SETTINGS,
     };
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -328,6 +392,21 @@ export const getOtherUserProfileHandler = async (req: AuthenticatedRequest, res:
     }
 
     const profileData = await getOtherUserProfile(viewerUserId, targetUserId);
+
+    if (viewerUserId !== targetUserId) {
+      // Asynchronously dispatch profile visit notification without blocking profile response
+      const viewerUser = req.user as any;
+      const viewerName =
+        viewerUser?.firstName || viewerUser?.nickName || viewerUser?.username || 'Someone';
+      notificationService
+        .sendProfileVisitNotification(targetUserId, {
+          visitorId: viewerUserId,
+          visitorName: viewerName,
+        })
+        .catch((err) => {
+          console.warn('[Profile Visit Notification Warn]:', err.message);
+        });
+    }
 
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.setHeader('Pragma', 'no-cache');
@@ -411,13 +490,16 @@ export const reportUserHandler = async (req: AuthenticatedRequest, res: Response
     }
 
     const targetUserId = req.params.userId as string;
-    const { reason, description } = req.body;
+    const { reason, description, conversationId, momentId, targetType } = req.body;
 
     const result = await moderationService.reportUser(
       reporterId,
       targetUserId,
       reason,
-      description
+      description,
+      conversationId,
+      momentId,
+      targetType
     );
 
     return sendSuccess(res, 'Report submitted successfully', result);
@@ -745,7 +827,7 @@ export const uploadCoverPhotoHandler = async (req: AuthenticatedRequest, res: Re
     await user.save();
 
     if (oldCover && oldCover !== s3Key) {
-      s3Service.deleteObject(oldCover).catch(() => {});
+      s3Service.deleteObject(oldCover).catch(() => { });
     }
 
     const coverUrl = formatMediaUrl(s3Key);
@@ -975,6 +1057,7 @@ export const requestProfilePhoneOtpHandler = async (req: AuthenticatedRequest, r
     const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
       purpose: 'profile_phone_change',
       userId,
+      clientVerification: clientProofFromBody(req.body),
     });
 
     if (result.error) {
@@ -1045,6 +1128,7 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
       const result = await otpService.resendPhoneOtp(verificationId, {
         purpose: 'profile_phone_change',
         userId,
+        clientVerification: clientProofFromBody(req.body),
       });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
@@ -1082,6 +1166,7 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
       const result = await otpService.requestPhoneOtp(cc, cleanPhone, {
         purpose: 'profile_phone_change',
         userId,
+        clientVerification: clientProofFromBody(req.body),
       });
       if (result.error) {
         return sendError(res, result.error, result.statusCode);
@@ -1099,3 +1184,201 @@ export const resendProfilePhoneOtpHandler = async (req: AuthenticatedRequest, re
     return sendError(res, error.message || 'Error resending phone OTP', 500);
   }
 };
+
+/**
+ * Get User Limits & Free Tier Quotas
+ * GET /api/v1/users/limits (and /api/v1/discovery/limits)
+ */
+export const getUserLimitsHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rawParam = req.params?.userId;
+    const currentUserId = (typeof rawParam === 'string' ? rawParam : undefined) || req.user?.id;
+    if (!currentUserId) {
+      return sendError(res, 'Authentication token missing or invalid', 401, 'UNAUTHORIZED');
+    }
+
+    const limits = await freeTierLimitService.getUserLimits(currentUserId);
+    return sendSuccess(res, 'User limits fetched successfully', limits, 200);
+  } catch (error: any) {
+    console.error('[Get User Limits Controller Error]:', error);
+    return sendError(res, error.message || 'Error fetching user limits', 500, 'INTERNAL_SERVER_ERROR');
+  }
+};
+
+/**
+ * Delete Account API
+ * DELETE /api/v1/users/account (and aliases /api/v1/users/me, /api/v1/auth/delete-account)
+ * Permanently removes user account, deactivates device push tokens, and cascade deletes associated data.
+ */
+export const deleteAccountHandler = async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const user = await User.findByPk(userId);
+    if (!user) {
+      return sendError(res, 'User not found', 404);
+    }
+
+    // 1. Immediately deactivate all registered devices for push notifications
+    await UserDevice.update({ isActive: false }, { where: { userId } });
+
+    // 2. Permanently delete user record (foreign keys with CASCADE clean up related records)
+    await user.destroy();
+
+    return sendSuccess(res, 'Account deleted successfully', { deleted: true });
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error deleting account', 500);
+  }
+};
+
+/**
+ * Controller to get user's notification preferences
+ * GET /api/v1/users/notification-settings
+ */
+export const getNotificationSettingsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const [setting] = await NotificationSetting.findOrCreate({
+      where: { userId },
+      defaults: {
+        userId,
+        newMessages: true,
+        newMatches: true,
+        likeComments: true,
+        profileVisits: true,
+        datingTips: false,
+        pushNotifications: true,
+      },
+    });
+
+    const responseData = setting.toResponseJSON();
+
+    return sendSuccess(res, 'Notification settings fetched successfully', responseData);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error fetching notification settings', 500);
+  }
+};
+
+/**
+ * Controller to update user's notification preferences
+ * PATCH /api/v1/users/notification-settings (and PUT /api/v1/users/notification-settings)
+ */
+export const updateNotificationSettingsHandler = async (
+  req: AuthenticatedRequest,
+  res: Response
+) => {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return sendError(res, 'Authentication token missing or invalid', 401);
+    }
+
+    const [setting] = await NotificationSetting.findOrCreate({
+      where: { userId },
+      defaults: {
+        userId,
+        newMessages: true,
+        newMatches: true,
+        likeComments: true,
+        profileVisits: true,
+        datingTips: false,
+        pushNotifications: true,
+      },
+    });
+
+    const incoming =
+      req.body?.notify_settings ||
+      req.body?.notificationSettings ||
+      req.body ||
+      {};
+
+    // 1. New Messages
+    if (incoming.new_messages !== undefined) {
+      setting.newMessages = Boolean(incoming.new_messages);
+    } else if (incoming.new_message !== undefined) {
+      setting.newMessages = Boolean(incoming.new_message);
+    } else if (incoming.newMessages !== undefined) {
+      setting.newMessages = Boolean(incoming.newMessages);
+    }
+
+    // 2. New Matches
+    if (incoming.new_matches !== undefined) {
+      setting.newMatches = Boolean(incoming.new_matches);
+    } else if (incoming.newMatches !== undefined) {
+      setting.newMatches = Boolean(incoming.newMatches);
+    }
+
+    // 3. Likes & comments (not for calls)
+    if (incoming.like_comments !== undefined) {
+      setting.likeComments = Boolean(incoming.like_comments);
+    } else if (incoming.likes_comments_calls !== undefined) {
+      setting.likeComments = Boolean(incoming.likes_comments_calls);
+    } else if (incoming.likeComments !== undefined) {
+      setting.likeComments = Boolean(incoming.likeComments);
+    }
+
+    // 4. Profile visits
+    if (incoming.profile_visits !== undefined) {
+      setting.profileVisits = Boolean(incoming.profile_visits);
+    } else if (incoming.profile_visit !== undefined) {
+      setting.profileVisits = Boolean(incoming.profile_visit);
+    } else if (incoming.profileVisits !== undefined) {
+      setting.profileVisits = Boolean(incoming.profileVisits);
+    }
+
+    // 5. Dating tips
+    if (incoming.dating_tips !== undefined) {
+      setting.datingTips = Boolean(incoming.dating_tips);
+    } else if (incoming.new_tips_available !== undefined) {
+      setting.datingTips = Boolean(incoming.new_tips_available);
+    } else if (incoming.datingTips !== undefined) {
+      setting.datingTips = Boolean(incoming.datingTips);
+    }
+
+    // 6. Global Push notifications switch
+    if (incoming.push_notifications !== undefined) {
+      setting.pushNotifications = Boolean(incoming.push_notifications);
+    } else if (incoming.push !== undefined) {
+      setting.pushNotifications = Boolean(incoming.push);
+    } else if (incoming.pushNotifications !== undefined) {
+      setting.pushNotifications = Boolean(incoming.pushNotifications);
+    }
+
+    await setting.save();
+
+    const responseData = setting.toResponseJSON();
+
+    // Also update legacy user.notificationSettings column for complete backward compatibility
+    try {
+      const user = await User.findByPk(userId);
+      if (user) {
+        user.notificationSettings = {
+          ...(user.notificationSettings || DEFAULT_NOTIFY_SETTINGS),
+          new_message: setting.newMessages,
+          new_matches: setting.newMatches,
+          likes_comments_calls: setting.likeComments,
+          profile_visit: setting.profileVisits,
+          new_tips_available: setting.datingTips,
+          push: setting.pushNotifications,
+        };
+        await user.save();
+      }
+    } catch { }
+
+    return sendSuccess(res, 'Notification settings updated successfully', responseData);
+  } catch (error: any) {
+    return sendError(res, error.message || 'Error updating notification settings', 500);
+  }
+};
+
+

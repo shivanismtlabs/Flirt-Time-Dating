@@ -76,12 +76,12 @@ export const recordDiscoveryAction = async (req: AuthenticatedRequest, res: Resp
     );
 
     let message = 'Action recorded successfully';
-    if (result.isMatched) {
+    if (result.action === 'nope') {
+      message = 'Nope saved successfully';
+    } else if (result.isMatched) {
       message = "It's a match!";
     } else if (result.action === 'like') {
       message = 'Like saved successfully';
-    } else if (result.action === 'nope') {
-      message = 'Nope saved successfully';
     } else if (result.action === 'super_like') {
       message = 'Super Like saved successfully';
     }

@@ -90,3 +90,20 @@ export const deepLinkResolutionLimiter = createRateLimiter({
   message: 'Too many link lookups. Please try again in a moment.',
   keyPrefix: 'dl_resolve',
 });
+
+// Signup username lookups (e.g. 30 checks per minute per IP to slow enumeration)
+export const usernameAvailabilityLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 30,
+  message: 'Too many username checks. Please try again in a moment.',
+  keyPrefix: 'username_availability',
+});
+
+// Report submission limiter (e.g. 10 reports per minute per IP to prevent abuse and spam)
+export const reportLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 10,
+  message: 'Too many reports submitted. Please try again later.',
+  keyPrefix: 'report_submit',
+});
+

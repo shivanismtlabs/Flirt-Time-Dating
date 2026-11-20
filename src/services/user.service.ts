@@ -1,13 +1,19 @@
-import { User } from '../models/user.model';
+import { Op, fn, col, where as sqlWhere } from 'sequelize';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from '../models/user.model';
 import { UserPhoto } from '../models/userPhoto.model';
 import { formatMediaUrl, formatThumbnailUrl } from './s3.service';
 import { calculateAge } from './discovery.service';
+import { calculateProfileMatchPercentage } from '../utils/compatibility';
 
 export interface LocationDTO {
   city: string | null;
   state: string | null;
+  country: string | null;
+  county: string | null;
   name?: string | null;
   label?: string | null;
+  fullLocation?: string | null;
+  formattedLocation?: string | null;
   latitude?: number | null;
   longitude?: number | null;
 }
@@ -41,6 +47,7 @@ export interface UpdateProfileInput {
   fullName?: string;
   firstName?: string | null;
   lastName?: string | null;
+  username?: string;
   nickName?: string;
   dateOfBirth?: string;
   gender?: string;
@@ -50,16 +57,29 @@ export interface UpdateProfileInput {
     | {
         city?: string | null;
         state?: string | null;
+        country?: string | null;
+        county?: string | null;
         name?: string | null;
         label?: string | null;
+        fullLocation?: string | null;
+        formattedLocation?: string | null;
         address?: string | null;
-        latitude?: number | null;
-        longitude?: number | null;
+        latitude?: number | string | null;
+        longitude?: number | string | null;
+        longitutute?: number | string | null;
+        lat?: number | string | null;
+        lng?: number | string | null;
       }
     | null;
   city?: string | null;
-  latitude?: number | null;
-  longitude?: number | null;
+  state?: string | null;
+  country?: string | null;
+  county?: string | null;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
+  longitutute?: number | string | null;
+  lat?: number | string | null;
+  lng?: number | string | null;
   drinking?: string | null;
   education?: string | null;
   height?: string | null;
@@ -95,6 +115,8 @@ export interface UpdateProfileInput {
     relationship?: string | null;
     children?: string | null;
   };
+  notify_settings?: Partial<NotificationSettings> | null;
+  notificationSettings?: Partial<NotificationSettings> | null;
 }
 
 export class ServiceError extends Error {
@@ -147,7 +169,7 @@ export const formatMoreAboutMe = (user: {
     { key: 'living', label: 'Living', icon: '🏠', value: living },
     { key: 'relationship', label: 'Relationship', icon: '👩‍❤️‍👨', value: relationship },
     { key: 'children', label: 'Children', icon: '👶', value: children },
-  ];
+  ].filter((item) => item.value != null && item.value.trim() !== '');
 
   return {
     drinking,
@@ -163,6 +185,34 @@ export const formatMoreAboutMe = (user: {
     relationship,
     children,
     items,
+  };
+};
+
+export interface UsernameAvailabilityDTO {
+  username: string;
+  available: boolean;
+}
+
+/**
+ * Signup username check. Matches the 3–50 character rule used by registration
+ * and reports a name as taken when any account already uses it, ignoring case.
+ * Does not return the matching account.
+ */
+export const checkUsernameAvailability = async (
+  username: string
+): Promise<UsernameAvailabilityDTO> => {
+  const cleanUsername = String(username ?? '').trim();
+  if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+    throw new ServiceError('Username must be between 3 and 50 characters', 400);
+  }
+
+  const takenCount = await User.count({
+    where: sqlWhere(fn('LOWER', col('username')), cleanUsername.toLowerCase()),
+  });
+
+  return {
+    username: cleanUsername,
+    available: takenCount === 0,
   };
 };
 
@@ -216,11 +266,48 @@ export const updateUserProfile = async (
       user.fullName = `${user.firstName} ${user.lastName}`;
     }
   }
+  // Handle Username update (with unique check and validation)
+  const incomingUsername =
+    data.username !== undefined
+      ? data.username
+      : (data as any).userName !== undefined
+      ? (data as any).userName
+      : (data as any).user_name;
+
+  if (incomingUsername !== undefined && incomingUsername !== null) {
+    const cleanUsername = String(incomingUsername).trim();
+    if (cleanUsername.length < 3 || cleanUsername.length > 50) {
+      throw new ServiceError('Username must be between 3 and 50 characters', 400);
+    }
+    const existingUser = await User.findOne({
+      where: {
+        username: cleanUsername,
+        id: { [Op.ne]: userId },
+      },
+    });
+    if (existingUser) {
+      throw new ServiceError('Username is already taken', 400);
+    }
+    user.username = cleanUsername;
+    // When nickName is not explicitly provided in the request payload, sync nickName to username
+    if (data.nickName === undefined && (data as any).nickname === undefined) {
+      user.nickName = cleanUsername;
+    }
+  }
+
+  // Handle NickName update (backward compatibility)
   if (data.nickName !== undefined) {
     user.nickName = data.nickName.trim();
   }
 
-  // Handle Location / City / Coordinates
+  const parseCoord = (val: any): number | null | undefined => {
+    if (val === undefined) return undefined;
+    if (val === null || val === '') return null;
+    const num = Number(val);
+    return isNaN(num) ? null : num;
+  };
+
+  // Handle Location / City / State / Country / County / Coordinates
   if (data.location !== undefined) {
     if (typeof data.location === 'string') {
       user.city = data.location.trim() || null;
@@ -228,92 +315,188 @@ export const updateUserProfile = async (
       const loc = data.location;
       if (loc.name && loc.name.trim()) {
         user.city = loc.name.trim();
-      } else if (loc.city && loc.city.trim()) {
-        user.city = loc.state && loc.state.trim()
-          ? `${loc.city.trim()}, ${loc.state.trim()}`
-          : loc.city.trim();
-      } else if (loc.label && loc.label.trim()) {
-        user.city = loc.label.trim();
-      } else if (loc.address && loc.address.trim()) {
-        user.city = loc.address.trim();
+      } else if (loc.fullLocation && loc.fullLocation.trim()) {
+        user.city = loc.fullLocation.trim();
+      } else {
+        const parts: string[] = [];
+        if (loc.city && loc.city.trim()) parts.push(loc.city.trim());
+        if (loc.county && loc.county.trim()) parts.push(loc.county.trim());
+        if (loc.state && loc.state.trim()) parts.push(loc.state.trim());
+        if (loc.country && loc.country.trim()) parts.push(loc.country.trim());
+
+        if (parts.length > 0) {
+          user.city = parts.join(', ');
+        } else if (loc.label && loc.label.trim()) {
+          user.city = loc.label.trim();
+        } else if (loc.address && loc.address.trim()) {
+          user.city = loc.address.trim();
+        }
       }
-      if (loc.latitude !== undefined) {
-        user.latitude = loc.latitude;
+      const locLat = parseCoord(loc.latitude ?? (loc as any).lat);
+      if (locLat !== undefined) {
+        user.latitude = locLat;
       }
-      if (loc.longitude !== undefined) {
-        user.longitude = loc.longitude;
+      const locLng = parseCoord(loc.longitude ?? (loc as any).longitutute ?? (loc as any).lng);
+      if (locLng !== undefined) {
+        user.longitude = locLng;
       }
     } else if (data.location === null) {
       user.city = null;
     }
   }
 
-  if (data.city !== undefined) {
-    user.city = data.city ? data.city.trim() : null;
+  // Handle direct root fields if location object was not provided
+  if (data.location === undefined) {
+    if (
+      data.city !== undefined ||
+      data.state !== undefined ||
+      data.country !== undefined ||
+      data.county !== undefined
+    ) {
+      const parts: string[] = [];
+      if (data.city && data.city.trim()) parts.push(data.city.trim());
+      if (data.county && data.county.trim()) parts.push(data.county.trim());
+      if (data.state && data.state.trim()) parts.push(data.state.trim());
+      if (data.country && data.country.trim()) parts.push(data.country.trim());
+
+      if (parts.length > 0) {
+        user.city = parts.join(', ');
+      } else if (data.city === null || data.city === '') {
+        user.city = null;
+      }
+    }
   }
-  if (data.latitude !== undefined) {
-    user.latitude = data.latitude;
+
+  // Direct root latitude / longitude (also supports lat / lng / longitutute)
+  const rootLat = parseCoord(data.latitude ?? (data as any).lat);
+  if (rootLat !== undefined) {
+    user.latitude = rootLat;
   }
-  if (data.longitude !== undefined) {
-    user.longitude = data.longitude;
+  const rootLng = parseCoord(data.longitude ?? (data as any).longitutute ?? (data as any).lng);
+  if (rootLng !== undefined) {
+    user.longitude = rootLng;
   }
 
   if (data.about !== undefined) {
     user.about = data.about ? data.about.trim() : null;
   }
 
-  // 4. Update More About Me fields (direct or from data.moreAboutMe)
+  // 4. Update More About Me fields from the request body, nested moreAboutMe, or items[].
   const moreSource = data.moreAboutMe || {};
-  if (data.drinking !== undefined || moreSource.drinking !== undefined) {
-    user.drinking = data.drinking !== undefined ? data.drinking : moreSource.drinking || null;
+  const itemValueByKey = new Map<string, string | null>();
+  const rawItems = (moreSource as { items?: unknown }).items;
+  if (Array.isArray(rawItems)) {
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object') continue;
+      const key = typeof (item as { key?: unknown }).key === 'string'
+        ? (item as { key: string }).key.trim()
+        : '';
+      if (!key) continue;
+      const rawValue = (item as { value?: unknown }).value;
+      itemValueByKey.set(key, rawValue == null ? null : String(rawValue));
+    }
   }
-  if (data.education !== undefined || moreSource.education !== undefined) {
-    user.education = data.education !== undefined ? data.education : moreSource.education || null;
-  }
-  if (data.height !== undefined || moreSource.height !== undefined) {
-    user.height = data.height !== undefined ? data.height : moreSource.height || null;
-  }
-  if (data.religion !== undefined || moreSource.religion !== undefined) {
-    user.religion = data.religion !== undefined ? data.religion : moreSource.religion || null;
-  }
-  if (data.sexuality !== undefined || moreSource.sexuality !== undefined) {
-    user.sexuality = data.sexuality !== undefined ? data.sexuality : moreSource.sexuality || null;
-  }
-  if (data.smoking !== undefined || moreSource.smoking !== undefined) {
-    user.smoking = data.smoking !== undefined ? data.smoking : moreSource.smoking || null;
-  }
-  if (data.weight !== undefined || moreSource.weight !== undefined) {
-    user.weight = data.weight !== undefined ? data.weight : moreSource.weight || null;
-  }
-  if (
-    data.eyeColor !== undefined ||
-    data.eyecolor !== undefined ||
-    moreSource.eyeColor !== undefined ||
-    moreSource.eyecolor !== undefined
-  ) {
-    user.eyeColor =
-      data.eyeColor ?? data.eyecolor ?? moreSource.eyeColor ?? moreSource.eyecolor ?? null;
-  }
-  if (
-    data.hairColor !== undefined ||
-    data.haircolor !== undefined ||
-    moreSource.hairColor !== undefined ||
-    moreSource.haircolor !== undefined
-  ) {
-    user.hairColor =
-      data.hairColor ?? data.haircolor ?? moreSource.hairColor ?? moreSource.haircolor ?? null;
-  }
-  if (data.living !== undefined || moreSource.living !== undefined) {
-    user.living = data.living !== undefined ? data.living : moreSource.living || null;
-  }
-  if (data.relationship !== undefined || moreSource.relationship !== undefined) {
-    user.relationship = data.relationship !== undefined ? data.relationship : moreSource.relationship || null;
-  }
-  if (data.children !== undefined || moreSource.children !== undefined) {
-    user.children = data.children !== undefined ? data.children : moreSource.children || null;
-  }
+
+  const blankToNull = (value: unknown): string | null => {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    return trimmed.length > 0 ? trimmed : null;
+  };
+
+  const resolveMore = (
+    direct: string | null | undefined,
+    nested: string | null | undefined,
+    ...keys: string[]
+  ): string | null | undefined => {
+    if (direct !== undefined) return direct;
+    if (nested !== undefined) return nested;
+    for (const key of keys) {
+      if (itemValueByKey.has(key)) return itemValueByKey.get(key);
+    }
+    return undefined;
+  };
+
+  const drinkingValue = resolveMore(data.drinking, moreSource.drinking, 'drinking');
+  if (drinkingValue !== undefined) user.drinking = blankToNull(drinkingValue);
+  const educationValue = resolveMore(data.education, moreSource.education, 'education');
+  if (educationValue !== undefined) user.education = blankToNull(educationValue);
+  const heightValue = resolveMore(data.height, moreSource.height, 'height');
+  if (heightValue !== undefined) user.height = blankToNull(heightValue);
+  const religionValue = resolveMore(data.religion, moreSource.religion, 'religion');
+  if (religionValue !== undefined) user.religion = blankToNull(religionValue);
+  const sexualityValue = resolveMore(data.sexuality, moreSource.sexuality, 'sexuality');
+  if (sexualityValue !== undefined) user.sexuality = blankToNull(sexualityValue);
+  const smokingValue = resolveMore(data.smoking, moreSource.smoking, 'smoking');
+  if (smokingValue !== undefined) user.smoking = blankToNull(smokingValue);
+  const weightValue = resolveMore(data.weight, moreSource.weight, 'weight');
+  if (weightValue !== undefined) user.weight = blankToNull(weightValue);
+  const eyeColorValue = resolveMore(
+    data.eyeColor !== undefined ? data.eyeColor : data.eyecolor,
+    moreSource.eyeColor !== undefined ? moreSource.eyeColor : moreSource.eyecolor,
+    'eyeColor',
+    'eyecolor'
+  );
+  if (eyeColorValue !== undefined) user.eyeColor = blankToNull(eyeColorValue);
+  const hairColorValue = resolveMore(
+    data.hairColor !== undefined ? data.hairColor : data.haircolor,
+    moreSource.hairColor !== undefined ? moreSource.hairColor : moreSource.haircolor,
+    'hairColor',
+    'haircolor'
+  );
+  if (hairColorValue !== undefined) user.hairColor = blankToNull(hairColorValue);
+  const livingValue = resolveMore(data.living, moreSource.living, 'living');
+  if (livingValue !== undefined) user.living = blankToNull(livingValue);
+  const relationshipValue = resolveMore(data.relationship, moreSource.relationship, 'relationship');
+  if (relationshipValue !== undefined) user.relationship = blankToNull(relationshipValue);
+  const childrenValue = resolveMore(data.children, moreSource.children, 'children');
+  if (childrenValue !== undefined) user.children = blankToNull(childrenValue);
   if (data.coverPicture !== undefined || data.coverPhoto !== undefined) {
     user.coverPicture = data.coverPicture !== undefined ? (data.coverPicture ?? null) : (data.coverPhoto ?? null);
+  }
+
+  const incomingNotifySettings = data.notify_settings || data.notificationSettings;
+  if (incomingNotifySettings && typeof incomingNotifySettings === 'object') {
+    const existingSettings = user.notificationSettings || DEFAULT_NOTIFY_SETTINGS;
+    user.notificationSettings = {
+      ...existingSettings,
+      ...incomingNotifySettings,
+    };
+
+    try {
+      const { NotificationSetting } = await import('../models/notificationSetting.model');
+      const [setting] = await NotificationSetting.findOrCreate({
+        where: { userId },
+        defaults: {
+          userId,
+          newMessages: true,
+          newMatches: true,
+          likeComments: true,
+          profileVisits: true,
+          datingTips: false,
+          pushNotifications: true,
+        },
+      });
+
+      const inc = incomingNotifySettings as any;
+      if (inc.new_messages !== undefined) setting.newMessages = Boolean(inc.new_messages);
+      else if (inc.new_message !== undefined) setting.newMessages = Boolean(inc.new_message);
+
+      if (inc.new_matches !== undefined) setting.newMatches = Boolean(inc.new_matches);
+
+      if (inc.like_comments !== undefined) setting.likeComments = Boolean(inc.like_comments);
+      else if (inc.likes_comments_calls !== undefined) setting.likeComments = Boolean(inc.likes_comments_calls);
+
+      if (inc.profile_visits !== undefined) setting.profileVisits = Boolean(inc.profile_visits);
+      else if (inc.profile_visit !== undefined) setting.profileVisits = Boolean(inc.profile_visit);
+
+      if (inc.dating_tips !== undefined) setting.datingTips = Boolean(inc.dating_tips);
+      else if (inc.new_tips_available !== undefined) setting.datingTips = Boolean(inc.new_tips_available);
+
+      if (inc.push_notifications !== undefined) setting.pushNotifications = Boolean(inc.push_notifications);
+      else if (inc.push !== undefined) setting.pushNotifications = Boolean(inc.push);
+
+      await setting.save();
+    } catch {}
   }
 
   const incomingPhoto = data.profilePicture ?? data.profilePhoto ?? (data as any).imageKey;
@@ -350,11 +533,32 @@ export const updateUserProfile = async (
     }
   }
 
-  user.isProfileComplete = true;
+  const basicInfoReady = !!(user.fullName && user.dateOfBirth && user.gender);
+  const hasProfilePhoto = !!user.profilePicture;
 
-  await user.save();
+  if (user.isFaceVerified) {
+    user.onboardingStep = 'completed';
+    user.isProfileComplete = true;
+  } else if (basicInfoReady && user.onboardingStep !== 'completed') {
+    const stored = user.onboardingStep;
+    // Name / DOB / gender save opens the profile photo screen.
+    // A gesture pointer with no photo is the previous flow; send them to photos.
+    if (!stored || stored === 'basicInfo' || (stored === 'gesture' && !hasProfilePhoto)) {
+      user.onboardingStep = 'photos';
+    }
+  }
+
+  try {
+    await user.save();
+  } catch (err: any) {
+    if (err.name === 'SequelizeUniqueConstraintError') {
+      throw new ServiceError('Username is already taken', 400);
+    }
+    throw err;
+  }
 
   const moreAboutMe = formatMoreAboutMe(user);
+  const userLocation = parseLocation(user.city, user.latitude, user.longitude);
 
   return {
     id: user.id,
@@ -369,8 +573,12 @@ export const updateUserProfile = async (
     age: calculateAge(user.dateOfBirth),
     gender: user.gender,
     about: user.about,
-    location: parseLocation(user.city, user.latitude, user.longitude),
+    location: userLocation,
     city: user.city || null,
+    state: userLocation.state || null,
+    country: userLocation.country || null,
+    county: userLocation.county || null,
+    fullLocation: userLocation.fullLocation || user.city || null,
     latitude: user.latitude ?? null,
     longitude: user.longitude ?? null,
     drinking: user.drinking,
@@ -397,6 +605,12 @@ export const updateUserProfile = async (
       : null,
     moreAboutMe,
     isProfileComplete: user.isProfileComplete,
+    currentStep: user.onboardingStep || null,
+    isVerified: !!user.isFaceVerified,
+    isSubscribed: !!user.isSubscribed,
+    subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
+    coins: typeof user.coins === 'number' ? user.coins : 0,
     role: user.role,
     isActive: user.isActive,
     createdAt: user.createdAt,
@@ -414,11 +628,15 @@ export interface OtherUserProfilePhotoDTO {
 }
 
 export interface OtherUserProfileResponse {
+  id?: string;
   userId: string;
   username: string;
   fullName: string;
   age: number | null;
   isVerified: boolean;
+  isSubscribed?: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   profilePhoto: string | null;
   profileThumbnail?: string | null;
   photos: OtherUserProfilePhotoDTO[];
@@ -427,6 +645,7 @@ export interface OtherUserProfileResponse {
     thumbnailUrl: string;
   } | null;
   city: string;
+  fullLocation: string;
   distanceKm: number | null;
   bio: string | null;
   moreAboutMe?: MoreAboutMeDTO;
@@ -472,10 +691,14 @@ export interface OtherUserProfileResponse {
     icon: string | null;
   }>;
   sharedInterests: string[];
+  commonInterestsCount: number;
+  profileMatchPercentage: number;
   action: 'like' | 'nope' | 'super_like' | null;
   myAction: 'like' | 'nope' | 'super_like' | null;
   isMatched: boolean;
   canConnect: boolean;
+  canChat: boolean;
+  conversationId?: string | null;
 }
 
 /**
@@ -531,7 +754,9 @@ export const getOtherUserProfile = async (
       {
         model: UserPhoto,
         as: 'photos',
-        where: { status: 'approved' },
+        where: {
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
+        },
         required: false,
       },
     ],
@@ -562,22 +787,45 @@ export const getOtherUserProfile = async (
     throw new ServiceError('Authenticated user not found', 404);
   }
 
-  // 4. Derive shared interests & vibe score
+  // 4. Derive shared interests, vibe score & profile match percentage
   const targetInterests = (targetUser.interests || []) as any[];
   const viewerInterests = (viewerUser.interests || []) as any[];
-  const viewerInterestNames = new Set(
-    viewerInterests.map((i: any) => i.name.toLowerCase())
-  );
 
-  const sharedInterests = targetInterests
-    .filter((i: any) => viewerInterestNames.has(i.name.toLowerCase()))
-    .map((i: any) => i.name);
+  // Match shared interests using canonical interest IDs, with fallback to display names
+  const viewerInterestIdSet = new Set<string>();
+  const viewerInterestNames = new Set<string>();
+  for (const i of viewerInterests) {
+    if (i.id) viewerInterestIdSet.add(i.id);
+    if (i.name) viewerInterestNames.add(i.name.toLowerCase());
+  }
 
-  const vibeScore = calculateVibeScore(
-    sharedInterests.length,
-    targetUser.isFaceVerified,
-    targetUser.isProfileComplete
-  );
+  const sharedNamesSet = new Set<string>();
+  for (const interest of targetInterests) {
+    if (
+      (interest.id && viewerInterestIdSet.has(interest.id)) ||
+      (interest.name && viewerInterestNames.has(interest.name.toLowerCase()))
+    ) {
+      sharedNamesSet.add(interest.name);
+    }
+  }
+  const sharedInterests = Array.from(sharedNamesSet);
+  const commonInterestsCount = sharedInterests.length;
+
+  const viewerInterestIds = viewerInterests.map((i: any) => i.id);
+  const candidateInterestIds = targetInterests.map((i: any) => i.id);
+
+  const profileMatchPercentage =
+    viewerUserId === targetUserId
+      ? 100
+      : calculateProfileMatchPercentage({
+          viewerInterestIds,
+          candidateInterestIds,
+          viewerLookingFor: viewerUser.lookingFor,
+          candidateLookingFor: targetUser.lookingFor,
+        });
+
+  // Assign profileMatchPercentage to vibeScore for mobile app compatibility
+  const vibeScore = profileMatchPercentage;
 
   let vibeExplanation: { text: string; sharedInterests: string[] } | null = null;
   if (sharedInterests.length > 0) {
@@ -704,7 +952,7 @@ export const getOtherUserProfile = async (
 
   if (moments.length === 0 && rawPhotos.length > 0) {
     moments = rawPhotos
-      .filter((p) => !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
+      .filter((p) => p.status === 'approved' && !p.isPrimary && p.imageUrl !== targetUser.profilePicture)
       .map((p) => ({
         id: p.id,
         momentId: p.id,
@@ -725,7 +973,7 @@ export const getOtherUserProfile = async (
   }
 
   // 9. Existing actions & match state
-  const [existingSwipe, existingMatch, existingRequest] = await Promise.all([
+  const [existingSwipe, existingMatch, existingRequest, existingConv] = await Promise.all([
     SwipeAction.findOne({
       where: {
         userId: viewerUserId,
@@ -748,6 +996,23 @@ export const getOtherUserProfile = async (
         targetUserId,
       },
     }),
+    (async () => {
+      if (!viewerUserId || !targetUserId || viewerUserId === targetUserId) {
+        return null;
+      }
+      try {
+        const { chatService } = await import('./chat.service');
+        const { conversation } = await chatService.getOrCreateOneToOneConversation(
+          viewerUserId,
+          targetUserId,
+          { unhideForUser: viewerUserId }
+        );
+        return conversation;
+      } catch (err: any) {
+        console.warn('[GetOtherUserProfile] Warning: Could not find or create conversation:', err?.message || err);
+        return null;
+      }
+    })(),
   ]);
 
   let action: 'like' | 'nope' | 'super_like' | null = existingSwipe
@@ -770,12 +1035,18 @@ export const getOtherUserProfile = async (
     targetUser.nickName ||
     targetUser.username;
 
+  const otherLocation = parseLocation(targetUser.city, targetUser.latitude, targetUser.longitude);
+
   return {
+    id: targetUser.id,
     userId: targetUser.id,
     username: targetUser.username,
     fullName,
     age: calculateAge(targetUser.dateOfBirth),
     isVerified: !!targetUser.isFaceVerified,
+    isSubscribed: !!targetUser.isSubscribed,
+    subscriptionExpiresAt: targetUser.subscriptionExpiresAt || null,
+    activeSubscriptionPlanId: targetUser.activeSubscriptionPlanId || null,
     profilePhoto: primaryPhoto ? formatMediaUrl(primaryPhoto, photoVersion) : null,
     profileThumbnail: primaryPhoto ? formatThumbnailUrl(primaryPhoto, photoVersion) : null,
     photos: formattedPhotos,
@@ -786,6 +1057,7 @@ export const getOtherUserProfile = async (
         }
       : null,
     city: targetUser.city || 'Mumbai',
+    fullLocation: otherLocation.fullLocation || (targetUser.city ? targetUser.city.trim() : null) || 'Mumbai',
     distanceKm,
     bio: targetUser.about || null,
     moreAboutMe: formatMoreAboutMe(targetUser),
@@ -799,10 +1071,14 @@ export const getOtherUserProfile = async (
       icon: i.icon || null,
     })),
     sharedInterests,
+    commonInterestsCount,
+    profileMatchPercentage,
     action,
     myAction,
     isMatched,
     canConnect,
+    canChat: true,
+    conversationId: existingConv?.id || null,
   };
 };
 
@@ -839,7 +1115,7 @@ export const getOtherUserPhotos = async (
         model: UserPhoto,
         as: 'photos',
         where: {
-          [Op.or]: [{ status: 'approved' }, { status: null }],
+          [Op.or]: [{ status: 'approved' }, { status: 'pending' }, { status: null }],
         },
         required: false,
       },
@@ -911,14 +1187,14 @@ export const getOtherUserPhotos = async (
 
 /**
  * Calculates profile completion percentage dynamically from real saved user data:
- * - Basic details (Full Name, Date of Birth, Gender): 20%
- * - Primary profile photo: 20%
+ * - Basic details (Full Name, Date of Birth, Gender): 25%
+ * - Primary profile photo: 25%
  * - Bio / About me: 15%
  * - Selected interests (at least 1): 15%
  * - Location (City): 10%
- * - Preferences (lookingFor or genderPreference): 10%
  * - Voice intro prompt: 10%
  * Total = 100%
+ * Gender preference and dating preference are not part of this score.
  */
 export const calculateProfileCompletion = (
   user: {
@@ -928,8 +1204,6 @@ export const calculateProfileCompletion = (
     profilePicture?: string | null;
     about?: string | null;
     city?: string | null;
-    lookingFor?: string | null;
-    genderPreference?: string | null;
     voicePromptUrl?: string | null;
   },
   interestCount = 0,
@@ -937,14 +1211,14 @@ export const calculateProfileCompletion = (
 ): number => {
   let score = 0;
 
-  // 1. Required basic details (20%)
+  // 1. Required basic details (25%)
   if (user.fullName && user.dateOfBirth && user.gender) {
-    score += 20;
+    score += 25;
   }
 
-  // 2. Primary Profile Photo (20%)
+  // 2. Primary Profile Photo (25%)
   if (user.profilePicture || photoCount > 0) {
-    score += 20;
+    score += 25;
   }
 
   // 3. Bio / About me (15%)
@@ -962,12 +1236,7 @@ export const calculateProfileCompletion = (
     score += 10;
   }
 
-  // 6. Preferences (10%)
-  if (user.lookingFor || user.genderPreference) {
-    score += 10;
-  }
-
-  // 7. Voice Intro (10%)
+  // 6. Voice Intro (10%)
   if (user.voicePromptUrl) {
     score += 10;
   }
@@ -975,36 +1244,71 @@ export const calculateProfileCompletion = (
   return Math.min(100, Math.max(0, score));
 };
 
+
 /**
- * Parses city string (e.g. "Indore, Madhya Pradesh" or "Indore") into structured city & state
+ * Splits a user-entered location string into city, county, state, and country.
+ * The formatted location stays exactly what the user saved. A state or country
+ * is included only when it is part of that string.
  */
 export const parseLocation = (
   cityString?: string | null,
   latitude?: number | null,
   longitude?: number | null
 ): LocationDTO => {
+  const latitudeValue = latitude ?? null;
+  const longitudeValue = longitude ?? null;
+
+  const emptyLocation = (): LocationDTO => ({
+    city: null,
+    state: null,
+    country: null,
+    county: null,
+    name: null,
+    label: null,
+    fullLocation: null,
+    formattedLocation: null,
+    latitude: latitudeValue,
+    longitude: longitudeValue,
+  });
+
   if (!cityString || !cityString.trim()) {
-    return {
-      city: null,
-      state: null,
-      name: null,
-      label: null,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-    };
+    return emptyLocation();
   }
+
   const trimmed = cityString.trim();
-  const parts = trimmed.split(',').map((p) => p.trim());
-  const city = parts[0] || null;
-  const state = parts.length >= 2 ? parts.slice(1).join(', ') : null;
+  const parts = trimmed.split(',').map((part) => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return emptyLocation();
+  }
+
+  const city = parts[0];
+  const rest = parts.slice(1);
+  let county: string | null = null;
+  const countyIndex = rest.findIndex((part) => part.toLowerCase().includes('county'));
+  if (countyIndex !== -1) {
+    county = rest[countyIndex];
+    rest.splice(countyIndex, 1);
+  }
+
+  let state: string | null = null;
+  let country: string | null = null;
+  if (rest.length >= 2) {
+    country = rest[rest.length - 1];
+    state = rest.slice(0, rest.length - 1).join(', ');
+  } else if (rest.length === 1) {
+    state = rest[0];
+  }
+
   return {
     city,
     state,
+    country,
+    county,
     name: trimmed,
     label: trimmed,
-    latitude: latitude ?? null,
-    longitude: longitude ?? null,
+    fullLocation: trimmed,
+    formattedLocation: trimmed,
+    latitude: latitudeValue,
+    longitude: longitudeValue,
   };
 };
-
-

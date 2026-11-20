@@ -9,6 +9,8 @@ export interface UserDeviceAttributes {
   deviceToken: string;
   platform: DevicePlatform;
   deviceId?: string | null;
+  /** iOS PushKit token. Required for CallKit when the app is locked or killed. */
+  voipToken?: string | null;
   isActive: boolean;
   lastUsedAt?: Date | null;
   createdAt?: Date;
@@ -16,7 +18,10 @@ export interface UserDeviceAttributes {
 }
 
 export interface UserDeviceCreationAttributes
-  extends Optional<UserDeviceAttributes, 'id' | 'deviceId' | 'isActive' | 'lastUsedAt' | 'createdAt' | 'updatedAt'> {}
+  extends Optional<
+    UserDeviceAttributes,
+    'id' | 'deviceId' | 'voipToken' | 'isActive' | 'lastUsedAt' | 'createdAt' | 'updatedAt'
+  > {}
 
 export class UserDevice
   extends Model<UserDeviceAttributes, UserDeviceCreationAttributes>
@@ -27,6 +32,7 @@ export class UserDevice
   declare deviceToken: string;
   declare platform: DevicePlatform;
   declare deviceId: string | null;
+  declare voipToken: string | null;
   declare isActive: boolean;
   declare lastUsedAt: Date | null;
 
@@ -67,6 +73,10 @@ UserDevice.init(
       type: DataTypes.STRING(255),
       allowNull: true,
     },
+    voipToken: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     isActive: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
@@ -88,6 +98,10 @@ UserDevice.init(
       },
       {
         fields: ['userId', 'isActive'],
+      },
+      {
+        fields: ['voipToken'],
+        name: 'user_devices_voip_token',
       },
     ],
   }

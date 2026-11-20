@@ -162,6 +162,7 @@ describe('Profile Photo Upload API (POST /api/v1/onboarding/profile-photo)', () 
       expect(res.body.data.photoId).toBeDefined();
       expect(res.body.data.profilePhoto).toContain('photos/');
       expect(res.body.data.isPrimary).toBe(true);
+      expect(res.body.data.currentStep).toBe('gesture');
 
       // Verify in DB
       const photoInDb = await UserPhoto.findByPk(res.body.data.photoId);
@@ -177,6 +178,8 @@ describe('Profile Photo Upload API (POST /api/v1/onboarding/profile-photo)', () 
       expect(updatedUser?.fullName).toBe('Meera Patel');
       expect(updatedUser?.dateOfBirth).toBe('1998-05-15');
       expect(updatedUser?.gender).toBe('female');
+      expect(updatedUser?.onboardingStep).toBe('gesture');
+      expect(updatedUser?.isProfileComplete).toBe(false);
     });
 
     it('should upload gallery PNG image and successfully replace existing primary photo', async () => {

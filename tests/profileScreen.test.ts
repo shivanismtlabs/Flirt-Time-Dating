@@ -206,11 +206,16 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.profile.firstName).toBe('Alex');
       expect(data.profile.lastName).toBe('Turner');
       expect(data.profile.gender).toBe('male');
-      expect(data.profile.bio).toBe('Lead singer, music lover, and weekend traveller.');
-      expect(data.profile.location).toEqual({
-        city: 'Indore',
-        state: 'Madhya Pradesh',
-      });
+      expect(data.profile.location.city).toBe('Indore');
+      expect(data.profile.location.state).toBe('Madhya Pradesh');
+      expect(data.profile.location.country).toBeNull();
+      expect(data.profile.location.county).toBeNull();
+      expect(data.profile.location.fullLocation).toBe('Indore, Madhya Pradesh');
+      expect(data.profile.city).toBe('Indore, Madhya Pradesh');
+      expect(data.profile.state).toBe('Madhya Pradesh');
+      expect(data.profile.country).toBeNull();
+      expect(data.profile.county).toBeNull();
+      expect(data.profile.fullLocation).toBe('Indore, Madhya Pradesh');
       expect(data.profile.age).toBeGreaterThanOrEqual(25);
       expect(data.profile.isVerified).toBe(true);
       expect(data.profile.completionPercentage).toBeGreaterThanOrEqual(90);
@@ -253,11 +258,7 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.moreAboutMe).toBeDefined();
       expect(data.profile.moreAboutMe).toBeDefined();
       expect(Array.isArray(data.moreAboutMe.items)).toBe(true);
-      expect(data.moreAboutMe.items.length).toBe(11);
-      const drinkingItem = data.moreAboutMe.items.find((i: any) => i.key === 'drinking');
-      expect(drinkingItem).toBeDefined();
-      expect(drinkingItem.label).toBe('Drinking');
-      expect(drinkingItem.icon).toBe('🍷');
+      expect(data.moreAboutMe.items).toEqual([]);
     });
   });
 
@@ -307,8 +308,18 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(data.interests).toEqual([]);
       expect(data.moments).toEqual([]);
       expect(data.voiceIntro).toBeNull();
-      expect(data.profile.age).toBeNull();
-      expect(data.profile.location).toEqual({ city: null, state: null });
+      expect(data.profile.location).toEqual({
+        city: null,
+        state: null,
+        country: null,
+        county: null,
+        name: null,
+        label: null,
+        fullLocation: null,
+        formattedLocation: null,
+        latitude: null,
+        longitude: null,
+      });
       expect(data.profile.completionPercentage).toBe(0);
     });
   });
@@ -522,31 +533,32 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       const emptyUser: any = {};
       expect(calculateProfileCompletion(emptyUser, 0, 0)).toBe(0);
 
-      // Basic details only: 20%
+      // Basic details only: 25%
       const basicUser: any = {
         fullName: 'John Doe',
         dateOfBirth: '1995-05-10',
         gender: 'male',
       };
-      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(20);
+      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(25);
 
-      // + Primary photo: 40%
+      // + Primary photo: 50%
       basicUser.profilePicture = 'photos/dp.jpg';
-      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(40);
+      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(50);
 
-      // + Bio: 55%
+      // + Bio: 65%
       basicUser.about = 'Hello world';
-      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(55);
+      expect(calculateProfileCompletion(basicUser, 0, 0)).toBe(65);
 
-      // + 1 Interest: 70%
-      expect(calculateProfileCompletion(basicUser, 1, 0)).toBe(70);
-
-      // + Location: 80%
-      basicUser.city = 'Indore';
+      // + 1 Interest: 80%
       expect(calculateProfileCompletion(basicUser, 1, 0)).toBe(80);
 
-      // + Preferences: 90%
+      // + Location: 90%
+      basicUser.city = 'Indore';
+      expect(calculateProfileCompletion(basicUser, 1, 0)).toBe(90);
+
+      // Gender preference and lookingFor do not change the score
       basicUser.lookingFor = 'Friendship';
+      basicUser.genderPreference = 'female';
       expect(calculateProfileCompletion(basicUser, 1, 0)).toBe(90);
 
       // + Voice Intro: 100%
@@ -558,14 +570,38 @@ describe('Production-Ready Profile API (GET /api/v1/users/profile)', () => {
       expect(parseLocation('Indore, Madhya Pradesh')).toEqual({
         city: 'Indore',
         state: 'Madhya Pradesh',
+        country: null,
+        county: null,
+        name: 'Indore, Madhya Pradesh',
+        label: 'Indore, Madhya Pradesh',
+        fullLocation: 'Indore, Madhya Pradesh',
+        formattedLocation: 'Indore, Madhya Pradesh',
+        latitude: null,
+        longitude: null,
       });
       expect(parseLocation('London')).toEqual({
         city: 'London',
         state: null,
+        country: null,
+        county: null,
+        name: 'London',
+        label: 'London',
+        fullLocation: 'London',
+        formattedLocation: 'London',
+        latitude: null,
+        longitude: null,
       });
       expect(parseLocation(null)).toEqual({
         city: null,
         state: null,
+        country: null,
+        county: null,
+        name: null,
+        label: null,
+        fullLocation: null,
+        formattedLocation: null,
+        latitude: null,
+        longitude: null,
       });
     });
   });

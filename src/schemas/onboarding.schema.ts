@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CLIENT_ONBOARDING_STEPS } from '../utils/onboardingStep';
 
 export const updatePreferencesSchema = z.object({
   body: z.object({
@@ -59,4 +60,14 @@ export const updateInterestsSchema = z.object({
         path: ['interestIds'],
       }
     ),
+});
+
+export const updateOnboardingStepSchema = z.object({
+  body: z.object({
+    step: z.enum(CLIENT_ONBOARDING_STEPS, {
+      required_error: 'step is required',
+      invalid_type_error:
+        'Invalid onboarding step. Allowed: basicInfo, photos, gesture, completed',
+    }),
+  }),
 });

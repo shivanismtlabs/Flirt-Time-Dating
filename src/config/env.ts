@@ -14,6 +14,8 @@ export const env = {
   DB_PASSWORD: process.env.DB_PASSWORD || 'postgres',
   DB_LOGGING: process.env.DB_LOGGING === 'true',
   DB_SSL: process.env.DB_SSL === 'true',
+  DB_POOL_MAX: parseInt(process.env.DB_POOL_MAX || '20', 10),
+  DB_STATEMENT_TIMEOUT_MS: parseInt(process.env.DB_STATEMENT_TIMEOUT_MS || '20000', 10),
 
   JWT_SECRET: process.env.JWT_SECRET || 'super_secret_jwt_key_flirttime_2026_change_in_production',
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN || '7d',
@@ -45,8 +47,10 @@ export const env = {
   FIREBASE_CLIENT_EMAIL: process.env.FIREBASE_CLIENT_EMAIL || '',
   FIREBASE_PRIVATE_KEY: process.env.FIREBASE_PRIVATE_KEY ? process.env.FIREBASE_PRIVATE_KEY.replace(/\\n/g, '\n') : '',
   FIREBASE_SERVICE_ACCOUNT_PATH: process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '',
+  FIREBASE_WEB_API_KEY: process.env.FIREBASE_WEB_API_KEY || process.env.FIREBASE_API_KEY || '',
 
   GOOGLE_PACKAGE_NAME: process.env.GOOGLE_PACKAGE_NAME || process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID || '',
   GOOGLE_SERVICE_ACCOUNT_EMAIL:
     process.env.GOOGLE_PLAY_CLIENT_EMAIL ||
     process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL ||
@@ -84,6 +88,37 @@ export const env = {
   DEEP_LINK_BASE_URL: process.env.DEEP_LINK_BASE_URL || (process.env.APP_DOMAIN ? `https://${process.env.APP_DOMAIN}` : 'https://flirttimeapi.walit.in'),
   IOS_APP_STORE_ID: process.env.IOS_APP_STORE_ID || 'id6741234567',
   ANDROID_PACKAGE_NAME: process.env.ANDROID_PACKAGE_NAME || 'com.app.flirttime',
+
+  // Real-Time Socket.IO Infrastructure Configuration
+  SOCKET_PATH: process.env.SOCKET_PATH || '/socket.io',
+  SOCKET_CORS_ORIGIN: process.env.SOCKET_CORS_ORIGIN || process.env.CORS_ORIGIN || '*',
+  SOCKET_PING_TIMEOUT_MS: parseInt(process.env.SOCKET_PING_TIMEOUT_MS || '20000', 10),
+  SOCKET_PING_INTERVAL_MS: parseInt(process.env.SOCKET_PING_INTERVAL_MS || '25000', 10),
+  SOCKET_CONNECT_TIMEOUT_MS: parseInt(process.env.SOCKET_CONNECT_TIMEOUT_MS || '10000', 10),
+  SOCKET_MAX_HTTP_BUFFER_SIZE: parseInt(process.env.SOCKET_MAX_HTTP_BUFFER_SIZE || '1048576', 10), // 1MB
+  SOCKET_MAX_CONNECTIONS_PER_USER: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_USER || '5', 10),
+  SOCKET_MAX_CONNECTIONS_PER_IP: parseInt(process.env.SOCKET_MAX_CONNECTIONS_PER_IP || '50', 10),
+  SOCKET_PER_MESSAGE_DEFLATE: process.env.SOCKET_PER_MESSAGE_DEFLATE === 'true',
+
+  // Apple PushKit VoIP — rings CallKit when the app is backgrounded, locked, or killed.
+  // Topic must be the bundle id plus `.voip`. Key material falls back to the Apple IAP key.
+  APNS_ENABLED: process.env.APNS_ENABLED === 'true' || process.env.APNS_ENABLED === '1',
+  APNS_KEY_ID: (process.env.APNS_KEY_ID || '').trim(),
+  APNS_TEAM_ID: (process.env.APNS_TEAM_ID || '').trim(),
+  APNS_PRIVATE_KEY: (process.env.APNS_PRIVATE_KEY || '')
+    .replace(/^["']|["']$/g, '')
+    .replace(/\\n/g, '\n'),
+  APNS_VOIP_TOPIC: (process.env.APNS_VOIP_TOPIC || '').trim(),
+  APNS_PRODUCTION: process.env.APNS_PRODUCTION !== 'false' && process.env.APNS_PRODUCTION !== '0',
+
+  // Agora RTC Video Calling Configuration
+  AGORA_APP_ID: process.env.AGORA_APP_ID || '',
+  AGORA_APP_CERTIFICATE: process.env.AGORA_APP_CERTIFICATE || '',
+  AGORA_TOKEN_EXPIRATION_SECONDS: parseInt(process.env.AGORA_TOKEN_EXPIRATION_SECONDS || '3600', 10),
+  AGORA_RINGING_EXPIRATION_SECONDS: parseInt(process.env.AGORA_RINGING_EXPIRATION_SECONDS || '60', 10),
+
+  // Chat Configuration
+  CHAT_MAX_BULK_RECIPIENTS: parseInt(process.env.CHAT_MAX_BULK_RECIPIENTS || '50', 10),
 };
 
 

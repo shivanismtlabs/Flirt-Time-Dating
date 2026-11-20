@@ -622,7 +622,8 @@ describe('Discovery Filters & Search APIs', () => {
       expect(returnedIds).not.toContain(alex.id);
       expect(returnedIds).not.toContain(rahul.id);
 
-      expect(res.body.data.totalCount).toBe(profiles.length);
+      expect(res.body.data.pagination.total).toBe(profiles.length);
+      expect(res.body.data.totalCount).toBeUndefined();
     });
 
     it('should filter by Non-binary gender correctly', async () => {
@@ -766,7 +767,7 @@ describe('Discovery Filters & Search APIs', () => {
       expect(returnedIds).not.toContain(priya.id); // inactive 2h ago
     });
 
-    it('should support match count query (countOnly: true) returning accurate totalCount and empty profiles', async () => {
+    it('should support match count query (countOnly: true) returning accurate total in pagination and empty profiles', async () => {
       const res = await request(app)
         .post('/api/v1/discovery/search')
         .set('Authorization', `Bearer ${authToken}`)
@@ -781,8 +782,8 @@ describe('Discovery Filters & Search APIs', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.profiles).toEqual([]);
       // Meera & Ananya match
-      expect(res.body.data.totalCount).toBe(2);
       expect(res.body.data.pagination.total).toBe(2);
+      expect(res.body.data.totalCount).toBeUndefined();
     });
 
     it('should return empty list and zero count when no profile matches strict filters', async () => {
@@ -798,7 +799,8 @@ describe('Discovery Filters & Search APIs', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data.profiles).toEqual([]);
-      expect(res.body.data.totalCount).toBe(0);
+      expect(res.body.data.pagination.total).toBe(0);
+      expect(res.body.data.totalCount).toBeUndefined();
       expect(res.body.data.pagination.hasMore).toBe(false);
     });
 
@@ -835,7 +837,7 @@ describe('Discovery Filters & Search APIs', () => {
       expect(resPage2.body.data.pagination.hasMore).toBe(false);
     });
 
-    it('should enforce public DTO hygiene: never expose passwords, tokens, or raw models', async () => {
+    it('should enforce public DTO hygiene: never expose passwords, tokens, or raw models, and include location & match metrics', async () => {
       const res = await request(app)
         .post('/api/v1/discovery/search')
         .set('Authorization', `Bearer ${authToken}`)
@@ -853,6 +855,12 @@ describe('Discovery Filters & Search APIs', () => {
       expect(profile.username).toBeDefined();
       expect(profile.age).toBeDefined();
       expect(profile.isVerified).toBeDefined();
+      expect(profile.location).toBeDefined();
+      expect(profile.interests).toBeInstanceOf(Array);
+      expect(profile.sharedInterests).toBeInstanceOf(Array);
+      expect(profile.commonInterestsCount).toBe(profile.sharedInterests.length);
+      expect(typeof profile.profileMatchPercentage).toBe('number');
+      expect(typeof profile.totalMoments).toBe('number');
 
       // Ensure no private or raw fields exposed
       expect(profile.password).toBeUndefined();
@@ -862,6 +870,21 @@ describe('Discovery Filters & Search APIs', () => {
       expect(profile.latitude).toBeUndefined(); // precise coordinate protected
       expect(profile.longitude).toBeUndefined(); // precise coordinate protected
       expect(profile._previousDataValues).toBeUndefined();
+      expect(res.body.data.totalCount).toBeUndefined();
+    });
+
+    it('should support GET /api/v1/discovery/search with query parameters', async () => {
+      const res = await request(app)
+        .get('/api/v1/discovery/search?genders=women&verifiedOnly=true')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.profiles.length).toBeGreaterThan(0);
+      for (const p of res.body.data.profiles) {
+        expect(p.isVerified).toBe(true);
+        expect(p.commonInterestsCount).toBe(p.sharedInterests.length);
+      }
     });
   });
 });

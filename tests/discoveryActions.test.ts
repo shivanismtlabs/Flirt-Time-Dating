@@ -370,6 +370,41 @@ describe('Common Swipe Action API (POST /api/v1/discovery/actions)', () => {
       const totalMatches = await Match.count();
       expect(totalMatches).toBe(1);
     });
+
+    it('should put a rematch back on the matches list after a nope', async () => {
+      await request(app)
+        .post('/api/v1/discovery/actions')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ targetUserId: userB.id, action: 'like' });
+      await request(app)
+        .post('/api/v1/discovery/actions')
+        .set('Authorization', `Bearer ${tokenB}`)
+        .send({ targetUserId: userA.id, action: 'like' });
+
+      await request(app)
+        .post('/api/v1/discovery/actions')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ targetUserId: userB.id, action: 'nope' });
+
+      const hidden = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenA}`);
+      expect(hidden.body.data.items).toHaveLength(0);
+
+      await request(app)
+        .post('/api/v1/discovery/actions')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({ targetUserId: userB.id, action: 'like' });
+
+      const shown = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenA}`);
+
+      expect(shown.status).toBe(200);
+      expect(shown.body.data.items).toHaveLength(1);
+      expect(shown.body.data.items[0].user.id).toBe(userB.id);
+      expect(shown.body.data.items[0].user.name).toBe('Meera');
+    });
   });
 
   describe('6. Blocked User Restrictions', () => {

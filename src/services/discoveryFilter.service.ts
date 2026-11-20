@@ -10,9 +10,13 @@ import {
   UserDiscoveryPreference,
   UserDevice,
   UserPhoto,
+  Match,
 } from '../models';
 import { formatThumbnailUrl } from './s3.service';
-import { calculateAge, calculateDistanceKm, calculateVibeScore, resolveDisplayName } from './discovery.service';
+import { calculateAge, calculateDistanceKm, resolveDisplayName } from './discovery.service';
+import { momentService } from './moment.service';
+import { parseLocation } from './user.service';
+import { calculateProfileMatchPercentage } from '../utils/compatibility';
 
 export const SUPPORTED_GENDERS = [
   { id: 'women', label: 'Women' },
@@ -125,21 +129,21 @@ export interface PublicProfileCardDTO {
   name: string;
   username: string;
   age: number | null;
-  gender: string | null;
-  city: string;
+  about: string | null;
+  profilePhotoUrl: string | null;
+  location: string | null;
   distanceKm: number | null;
   isVerified: boolean;
   isOnline: boolean;
-  profilePhotoUrl: string | null;
-  about: string | null;
-  lookingFor: string | null;
   interests: Array<{
     id: string;
     name: string;
     icon: string | null;
   }>;
   sharedInterests: string[];
-  vibeScore: number | null;
+  commonInterestsCount: number;
+  profileMatchPercentage: number;
+  totalMoments: number;
 }
 
 export interface DiscoverySearchResultDTO {
@@ -151,7 +155,6 @@ export interface DiscoverySearchResultDTO {
     hasMore: boolean;
     nextCursor: string | null;
   };
-  totalCount: number;
   appliedFilters: {
     genders: string[];
     ageMin: number;
@@ -433,11 +436,17 @@ export class DiscoveryFilterService {
     }
 
     // 3. Exclude self, already swiped, blocked, and reported users
-    const excludedUserIds = await this.getExcludedUserIds(userId);
+    const hardExcludedIds = await this.getHardExcludedUserIds(userId);
+    const existingSwipes = await SwipeAction.findAll({
+      where: { userId },
+      attributes: ['targetUserId'],
+    });
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    const unswipedExcludedIds = Array.from(new Set([...hardExcludedIds, ...swipedUserIds]));
 
     // 4. Build SQL where clauses
     const where: any = {
-      id: { [Op.notIn]: excludedUserIds },
+      id: { [Op.notIn]: unswipedExcludedIds },
       isActive: true,
     };
 
@@ -569,18 +578,36 @@ export class DiscoveryFilterService {
           hasMore: false,
           nextCursor: null,
         },
-        totalCount: count,
         appliedFilters: effectiveFilters,
       };
     }
 
+    // Check unswiped cards count
+    const unswipedCount = await User.count({
+      where,
+      include: includeClause,
+      distinct: true,
+    });
+
+    if (unswipedCount === 0) {
+      // Once all cards are swiped, reload and show all cards again, including those marked "Not Interested" or "Nope", to avoid a blank screen
+      where.id = { [Op.notIn]: hardExcludedIds };
+      await SwipeAction.destroy({
+        where: {
+          userId,
+          action: 'nope',
+        },
+      });
+    }
+
     // 6. Execute query
-    const { count: total, rows: targetUsers } = await User.findAndCountAll({
+    let effectiveOffset = offset;
+    let { count: total, rows: targetUsers } = await User.findAndCountAll({
       where,
       include: includeClause,
       distinct: true,
       limit,
-      offset,
+      offset: effectiveOffset,
       order: [
         ['isFaceVerified', 'DESC'],
         ['createdAt', 'DESC'],
@@ -588,13 +615,33 @@ export class DiscoveryFilterService {
       ],
     });
 
-    // 7. For the returned users, fetch complete active interests & primary photos
+    // If offset went beyond available cards on reload, fall back to page 1
+    if (targetUsers.length === 0 && total > 0 && effectiveOffset > 0) {
+      effectiveOffset = 0;
+      const fallback = await User.findAndCountAll({
+        where,
+        include: includeClause,
+        distinct: true,
+        limit,
+        offset: 0,
+        order: [
+          ['isFaceVerified', 'DESC'],
+          ['createdAt', 'DESC'],
+          ['id', 'ASC'],
+        ],
+      });
+      targetUsers = fallback.rows;
+      total = fallback.count;
+    }
+
+    // 7. For the returned users, batch fetch active interests, primary photos, and eligible moment counts
     const targetUserIds = targetUsers.map((u) => u.id);
     const allUserInterestsMap = new Map<string, Array<{ id: string; name: string; icon: string | null }>>();
     const primaryPhotosMap = new Map<string, string>();
+    let momentCountsMap = new Map<string, number>();
 
     if (targetUserIds.length > 0) {
-      const [fullUsersWithInterests, photos] = await Promise.all([
+      const [fullUsersWithInterests, photos, momentCounts] = await Promise.all([
         User.findAll({
           where: { id: { [Op.in]: targetUserIds } },
           include: [
@@ -614,7 +661,10 @@ export class DiscoveryFilterService {
           },
           order: [['isPrimary', 'DESC'], ['displayOrder', 'ASC']],
         }),
+        momentService.getEligibleMomentCountsByUserIds(userId, targetUserIds),
       ]);
+
+      momentCountsMap = momentCounts;
 
       for (const u of fullUsersWithInterests) {
         const mapped = ((u.interests || []) as Interest[]).map((i) => ({
@@ -632,18 +682,49 @@ export class DiscoveryFilterService {
       }
     }
 
-    // Current user's interest names for shared vibe calculation
-    const currentUserInterests = (currentUser.interests || []) as Interest[];
-    const currentUserInterestNames = new Set(currentUserInterests.map((i) => i.name.toLowerCase()));
+    // Current user's canonical interest IDs for precise matching
+    const currentUserInterests = ((currentUser.interests || []) as Interest[]).filter(
+      (i) => i.isActive !== false
+    );
+    const currentUserInterestMap = new Map<string, string>();
+    for (const i of currentUserInterests) {
+      if (i.id) {
+        currentUserInterestMap.set(i.id, i.name);
+      }
+    }
+    const currentUserInterestIds = Array.from(currentUserInterestMap.keys());
 
-    // 8. Map to clean public profile card DTOs
+    // 8. Map to clean public profile card DTOs adhering to Global API Response Standard
     const profiles: PublicProfileCardDTO[] = [];
 
     for (const targetUser of targetUsers) {
       const userInterests = allUserInterestsMap.get(targetUser.id) || [];
-      const sharedInterests = userInterests
-        .filter((i) => currentUserInterestNames.has(i.name.toLowerCase()))
-        .map((i) => i.name);
+      const candidateInterestIds = userInterests.map((i) => i.id);
+
+      // Match shared interests strictly using canonical interest IDs, not display names
+      const sharedNamesSet = new Set<string>();
+      for (const interest of userInterests) {
+        if (currentUserInterestMap.has(interest.id)) {
+          sharedNamesSet.add(interest.name);
+        }
+      }
+      const sharedInterests = Array.from(sharedNamesSet);
+      const commonInterestsCount = sharedInterests.length;
+
+      // Calculate profileMatchPercentage using documented consistent algorithm
+      const profileMatchPercentage = calculateProfileMatchPercentage({
+        viewerInterestIds: currentUserInterestIds,
+        candidateInterestIds,
+        viewerLookingFor: currentUser.lookingFor,
+        candidateLookingFor: targetUser.lookingFor,
+      });
+
+      // Actual count of eligible moments
+      const totalMoments = momentCountsMap.get(targetUser.id) || 0;
+
+      // Location resolution: one complete location field with full available location (city, state, country)
+      const parsedLoc = parseLocation(targetUser.city, targetUser.latitude, targetUser.longitude);
+      const location = parsedLoc.fullLocation || (targetUser.city ? targetUser.city.trim() : null);
 
       // Distance calculation
       let distanceKm = calculateDistanceKm(
@@ -671,32 +752,26 @@ export class DiscoveryFilterService {
       const isOnline =
         targetUser.lastActiveAt != null && targetUser.lastActiveAt >= onlineCutoff;
 
-      // Profile photo resolution
-      const rawPhoto = targetUser.profilePicture || primaryPhotosMap.get(targetUser.id) || null;
-      const profilePhotoUrl = rawPhoto ? formatThumbnailUrl(rawPhoto) : null;
-
-      const vibeScore = calculateVibeScore(
-        sharedInterests.length,
-        targetUser.isFaceVerified,
-        targetUser.isProfileComplete
-      );
+      // Profile photo resolution: clean formatted thumbnail URL without malformation
+      const rawPhoto = (targetUser.profilePicture || primaryPhotosMap.get(targetUser.id) || '').trim();
+      const profilePhotoUrl = rawPhoto.length > 0 ? formatThumbnailUrl(rawPhoto) : null;
 
       profiles.push({
         id: targetUser.id,
         name: resolveDisplayName(targetUser),
         username: targetUser.username,
         age: calculateAge(targetUser.dateOfBirth),
-        gender: targetUser.gender || null,
-        city: targetUser.city || 'Mumbai',
+        about: targetUser.about || null,
+        profilePhotoUrl,
+        location,
         distanceKm,
         isVerified: !!targetUser.isFaceVerified,
         isOnline,
-        profilePhotoUrl,
-        about: targetUser.about || null,
-        lookingFor: targetUser.lookingFor || null,
         interests: userInterests,
         sharedInterests,
-        vibeScore,
+        commonInterestsCount,
+        profileMatchPercentage,
+        totalMoments,
       });
     }
 
@@ -712,20 +787,16 @@ export class DiscoveryFilterService {
         hasMore,
         nextCursor,
       },
-      totalCount: total,
       appliedFilters: effectiveFilters,
     };
   }
 
   /**
-   * Retrieves excluded user IDs for discovery: self, already swiped, blocked, and non-dismissed reported
+   * Retrieves base hard-excluded user IDs: self, blocked in either direction,
+   * non-dismissed user-level reports, and active mutual matches.
    */
-  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
-    const [existingSwipes, blocks, reports] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUserId },
-        attributes: ['targetUserId'],
-      }),
+  public async getHardExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [blocks, reports, matches] = await Promise.all([
       UserBlock.findAll({
         where: {
           [Op.or]: [
@@ -742,19 +813,47 @@ export class DiscoveryFilterService {
         },
         attributes: ['targetUserId'],
       }),
+      Match.findAll({
+        where: {
+          [Op.or]: [
+            { user1Id: currentUserId },
+            { user2Id: currentUserId },
+          ],
+          isActive: true,
+        },
+        attributes: ['user1Id', 'user2Id'],
+      }),
     ]);
 
-    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
     const blockedUserIds = blocks.map((b) =>
       b.userId === currentUserId ? b.blockedUserId : b.userId
     );
     const reportedUserIds = reports
       .map((r) => r.targetUserId)
       .filter((id): id is string => Boolean(id));
+    const matchedUserIds = matches.map((m) =>
+      m.user1Id === currentUserId ? m.user2Id : m.user1Id
+    );
 
     return Array.from(
-      new Set([currentUserId, ...swipedUserIds, ...blockedUserIds, ...reportedUserIds])
+      new Set([currentUserId, ...blockedUserIds, ...reportedUserIds, ...matchedUserIds])
     );
+  }
+
+  /**
+   * Retrieves excluded user IDs for discovery: self, already swiped, blocked, and non-dismissed reported
+   */
+  public async getExcludedUserIds(currentUserId: string): Promise<string[]> {
+    const [hardExcluded, existingSwipes] = await Promise.all([
+      this.getHardExcludedUserIds(currentUserId),
+      SwipeAction.findAll({
+        where: { userId: currentUserId },
+        attributes: ['targetUserId'],
+      }),
+    ]);
+
+    const swipedUserIds = existingSwipes.map((s) => s.targetUserId);
+    return Array.from(new Set([...hardExcluded, ...swipedUserIds]));
   }
 
   /**

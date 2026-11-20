@@ -70,6 +70,76 @@ describe('Email OTP Verification Controller (POST /api/v1/auth/email/verify-otp)
       expect(createdUser).not.toBeNull();
       expect(createdUser?.email).toBe('john.doe@example.com');
     });
+
+    it('should successfully verify and login test user manoj.kkb@gmail.com with OTP 555555', async () => {
+      const record = await EmailVerification.create({
+        email: 'manoj.kkb@gmail.com',
+        otpHash: await hashPassword('987654'),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        attempts: 0,
+        maxAttempts: 3,
+        isConsumed: false,
+        isVerified: false,
+      });
+
+      const res = await request(app)
+        .post('/api/v1/auth/email/verify-otp')
+        .send({
+          verificationId: record.id,
+          otp: '555555',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.email).toBe('manoj.kkb@gmail.com');
+      expect(res.body.data.token).toBeDefined();
+
+      // Ensure other user cannot use 555555 as bypass
+      const otherRecord = await EmailVerification.create({
+        email: 'other.regular@example.com',
+        otpHash: await hashPassword('123456'),
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000),
+        attempts: 0,
+        maxAttempts: 3,
+        isConsumed: false,
+        isVerified: false,
+      });
+
+      const otherRes = await request(app)
+        .post('/api/v1/auth/email/verify-otp')
+        .send({
+          verificationId: otherRecord.id,
+          otp: '555555',
+        });
+
+      expect(otherRes.status).toBe(401);
+      expect(otherRes.body.success).toBe(false);
+    });
+
+    it('should allow login for test user manoj.kkb@gmail.com with password 555555', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'manoj.kkb@gmail.com',
+          password: '555555',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.user.email).toBe('manoj.kkb@gmail.com');
+      expect(res.body.data.token).toBeDefined();
+
+      // Ensure wrong password fails
+      const badPassRes = await request(app)
+        .post('/api/v1/auth/login')
+        .send({
+          email: 'manoj.kkb@gmail.com',
+          password: 'wrongpassword',
+        });
+
+      expect(badPassRes.status).toBe(401);
+      expect(badPassRes.body.success).toBe(false);
+    });
   });
 
   // Test 2: Incorrect OTP

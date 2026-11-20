@@ -1,5 +1,5 @@
 import { sequelize } from '../config/database';
-import { User } from './user.model';
+import { User, DEFAULT_NOTIFY_SETTINGS, NotificationSettings } from './user.model';
 import { PhoneVerification } from './phoneVerification.model';
 import { EmailVerification } from './emailVerification.model';
 import { UserIdentity } from './userIdentity.model';
@@ -14,14 +14,17 @@ import { UserReport } from './userReport.model';
 import { Moment } from './moment.model';
 import { MomentMedia } from './momentMedia.model';
 import { MomentReaction } from './momentReaction.model';
+import { MomentCommentLike } from './momentCommentLike.model';
 import { Conversation } from './conversation.model';
 import { ChatMessage } from './chatMessage.model';
+import { ConversationPin } from './conversationPin.model';
 import { ConnectionRequest } from './connectionRequest.model';
 import { UserDevice } from './userDevice.model';
 import { Notification } from './notification.model';
 import { QuickMoment } from './quickMoment.model';
 import { QuickMomentReaction } from './quickMomentReaction.model';
 import { QuickMomentView } from './quickMomentView.model';
+import { QuickMomentReply } from './quickMomentReply.model';
 import {
   MomentGift,
   MOMENT_GIFTS_CATALOG,
@@ -37,6 +40,12 @@ import { CoinTransaction } from './coinTransaction.model';
 import { UserSubscription } from './userSubscription.model';
 import { SubscriptionEventLog } from './subscriptionEventLog.model';
 import { UserDiscoveryPreference } from './userDiscoveryPreference.model';
+import { NotificationOutbox } from './notificationOutbox.model';
+import { NotificationSetting } from './notificationSetting.model';
+import { VideoCall } from './videoCall.model';
+import { ConversationUserState } from './conversationUserState.model';
+import { ChatMessagePin } from './chatMessagePin.model';
+import { ChatMessageReaction } from './chatMessageReaction.model';
 
 // Define associations
 User.hasOne(UserDiscoveryPreference, {
@@ -47,6 +56,20 @@ User.hasOne(UserDiscoveryPreference, {
 });
 
 UserDiscoveryPreference.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+User.hasOne(NotificationSetting, {
+  foreignKey: 'userId',
+  as: 'notificationSetting',
+  onDelete: 'CASCADE',
+  onUpdate: 'CASCADE',
+});
+
+NotificationSetting.belongsTo(User, {
   foreignKey: 'userId',
   as: 'user',
   onDelete: 'CASCADE',
@@ -234,6 +257,18 @@ UserReport.belongsTo(Moment, {
   as: 'moment',
 });
 
+// Conversation <-> UserReport associations
+Conversation.hasMany(UserReport, {
+  foreignKey: 'conversationId',
+  as: 'reports',
+  onDelete: 'SET NULL',
+});
+
+UserReport.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
 // User <-> Moment
 User.hasMany(Moment, {
   foreignKey: 'userId',
@@ -350,6 +385,108 @@ ChatMessage.belongsTo(Conversation, {
   as: 'conversation',
 });
 
+// ConversationPin associations
+User.hasMany(ConversationPin, {
+  foreignKey: 'userId',
+  as: 'pinnedConversations',
+  onDelete: 'CASCADE',
+});
+
+ConversationPin.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+Conversation.hasMany(ConversationPin, {
+  foreignKey: 'conversationId',
+  as: 'pins',
+  onDelete: 'CASCADE',
+});
+
+ConversationPin.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+// ChatMessagePin associations
+User.hasMany(ChatMessagePin, {
+  foreignKey: 'userId',
+  as: 'pinnedChatMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(ChatMessagePin, {
+  foreignKey: 'pinnedBy',
+  as: 'authoredMessagePins',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(User, {
+  foreignKey: 'pinnedBy',
+  as: 'pinner',
+});
+
+Conversation.hasMany(ChatMessagePin, {
+  foreignKey: 'conversationId',
+  as: 'pinnedMessages',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+ChatMessage.hasMany(ChatMessagePin, {
+  foreignKey: 'messageId',
+  as: 'pins',
+  onDelete: 'CASCADE',
+});
+
+ChatMessagePin.belongsTo(ChatMessage, {
+  foreignKey: 'messageId',
+  as: 'message',
+});
+
+// ChatMessageReaction associations
+ChatMessage.hasMany(ChatMessageReaction, {
+  foreignKey: 'messageId',
+  as: 'reactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(ChatMessage, {
+  foreignKey: 'messageId',
+  as: 'message',
+});
+
+Conversation.hasMany(ChatMessageReaction, {
+  foreignKey: 'conversationId',
+  as: 'messageReactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+User.hasMany(ChatMessageReaction, {
+  foreignKey: 'userId',
+  as: 'chatMessageReactions',
+  onDelete: 'CASCADE',
+});
+
+ChatMessageReaction.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
 User.hasMany(ChatMessage, {
   foreignKey: 'senderId',
   as: 'sentMessages',
@@ -370,6 +507,29 @@ User.hasMany(ChatMessage, {
 ChatMessage.belongsTo(User, {
   foreignKey: 'recipientId',
   as: 'recipient',
+});
+
+// ChatMessage (Comment) <-> MomentCommentLike associations
+ChatMessage.hasMany(MomentCommentLike, {
+  foreignKey: 'commentId',
+  as: 'commentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(ChatMessage, {
+  foreignKey: 'commentId',
+  as: 'comment',
+});
+
+User.hasMany(MomentCommentLike, {
+  foreignKey: 'userId',
+  as: 'momentCommentLikes',
+  onDelete: 'CASCADE',
+});
+
+MomentCommentLike.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
 });
 
 // User <-> ConnectionRequest
@@ -468,6 +628,23 @@ QuickMomentView.belongsTo(QuickMoment, {
 QuickMomentView.belongsTo(User, {
   foreignKey: 'userId',
   as: 'viewer',
+});
+
+// QuickMoment <-> QuickMomentReply associations
+QuickMoment.hasMany(QuickMomentReply, {
+  foreignKey: 'quickMomentId',
+  as: 'replies',
+  onDelete: 'CASCADE',
+});
+
+QuickMomentReply.belongsTo(QuickMoment, {
+  foreignKey: 'quickMomentId',
+  as: 'quickMoment',
+});
+
+QuickMomentReply.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
 });
 
 // User <-> DeepLink associations
@@ -579,6 +756,91 @@ UserSubscription.belongsTo(SubscriptionPlan, {
   as: 'plan',
 });
 
+// User <-> NotificationOutbox associations
+User.hasMany(NotificationOutbox, {
+  foreignKey: 'recipientId',
+  as: 'notificationOutbox',
+  onDelete: 'CASCADE',
+});
+
+NotificationOutbox.belongsTo(User, {
+  foreignKey: 'recipientId',
+  as: 'recipient',
+});
+
+// User <-> VideoCall associations
+User.hasMany(VideoCall, {
+  foreignKey: 'callerId',
+  as: 'initiatedVideoCalls',
+  onDelete: 'CASCADE',
+});
+
+User.hasMany(VideoCall, {
+  foreignKey: 'calleeId',
+  as: 'receivedVideoCalls',
+  onDelete: 'CASCADE',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'callerId',
+  as: 'caller',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'calleeId',
+  as: 'callee',
+});
+
+VideoCall.belongsTo(User, {
+  foreignKey: 'endedBy',
+  as: 'terminator',
+});
+
+Conversation.hasMany(VideoCall, {
+  foreignKey: 'conversationId',
+  as: 'videoCalls',
+  onDelete: 'SET NULL',
+});
+
+VideoCall.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+// Conversation <-> ConversationUserState associations
+Conversation.hasMany(ConversationUserState, {
+  foreignKey: 'conversationId',
+  as: 'userStates',
+  onDelete: 'CASCADE',
+});
+
+ConversationUserState.belongsTo(Conversation, {
+  foreignKey: 'conversationId',
+  as: 'conversation',
+});
+
+User.hasMany(ConversationUserState, {
+  foreignKey: 'userId',
+  as: 'conversationStates',
+  onDelete: 'CASCADE',
+});
+
+ConversationUserState.belongsTo(User, {
+  foreignKey: 'userId',
+  as: 'user',
+});
+
+User.hasMany(Conversation, {
+  foreignKey: 'deletedForEveryoneBy',
+  as: 'globallyDeletedConversations',
+  onDelete: 'SET NULL',
+});
+
+Conversation.belongsTo(User, {
+  foreignKey: 'deletedForEveryoneBy',
+  as: 'globalDeleter',
+});
+
 export {
   sequelize,
   User,
@@ -598,12 +860,14 @@ export {
   MomentReaction,
   Conversation,
   ChatMessage,
+  ConversationPin,
   ConnectionRequest,
   UserDevice,
   Notification,
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  QuickMomentReply,
   MomentGift,
   MOMENT_GIFTS_CATALOG,
   GiftCatalogItem,
@@ -617,6 +881,15 @@ export {
   UserSubscription,
   SubscriptionEventLog,
   UserDiscoveryPreference,
+  MomentCommentLike,
+  NotificationOutbox,
+  NotificationSetting,
+  VideoCall,
+  ConversationUserState,
+  ChatMessagePin,
+  ChatMessageReaction,
+  DEFAULT_NOTIFY_SETTINGS,
+  NotificationSettings,
 };
 
 export const initDb = async (force = false): Promise<void> => {
@@ -690,6 +963,10 @@ export const initDb = async (force = false): Promise<void> => {
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'isProfileComplete') THEN
                 ALTER TABLE "users" ADD COLUMN "isProfileComplete" BOOLEAN DEFAULT false;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'onboardingStep') THEN
+                ALTER TABLE "users" ADD COLUMN "onboardingStep" VARCHAR(40);
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'isFaceVerified') THEN
@@ -785,11 +1062,36 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'coins') THEN
-                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;
+                ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;
+              ELSE
+                ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;
               END IF;
 
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'lastActiveAt') THEN
                 ALTER TABLE "users" ADD COLUMN "lastActiveAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'notification_settings') THEN
+                ALTER TABLE "users" ADD COLUMN "notification_settings" JSONB DEFAULT '{"new_message":true,"new_matches":true,"likes_comments_calls":true,"profile_visit":true,"new_tips_available":false,"push":true,"email":false,"app_updates":true,"promotions":false,"discounts":false}'::jsonb;
+              END IF;
+            END IF;
+
+            IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'notification_settings') THEN
+              CREATE TABLE IF NOT EXISTS "notification_settings" (
+                "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                "userId" UUID NOT NULL UNIQUE REFERENCES "users" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+                "new_messages" BOOLEAN NOT NULL DEFAULT true,
+                "new_matches" BOOLEAN NOT NULL DEFAULT true,
+                "like_comments" BOOLEAN NOT NULL DEFAULT true,
+                "profile_visits" BOOLEAN NOT NULL DEFAULT true,
+                "dating_tips" BOOLEAN NOT NULL DEFAULT false,
+                "push_notifications" BOOLEAN NOT NULL DEFAULT true,
+                "createdAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                "updatedAt" TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+              );
+            ELSE
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'notification_settings' AND column_name = 'dating_tips') THEN
+                ALTER TABLE "notification_settings" ADD COLUMN "dating_tips" BOOLEAN DEFAULT false;
               END IF;
             END IF;
 
@@ -831,6 +1133,9 @@ export const initDb = async (force = false): Promise<void> => {
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'momentId') THEN
                 ALTER TABLE "user_reports" ADD COLUMN "momentId" UUID;
               END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'user_reports' AND column_name = 'conversationId') THEN
+                ALTER TABLE "user_reports" ADD COLUMN "conversationId" UUID;
+              END IF;
             END IF;
 
             IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'connection_requests') THEN
@@ -839,6 +1144,33 @@ export const initDb = async (force = false): Promise<void> => {
               END IF;
               IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'connection_requests' AND column_name = 'momentId') THEN
                 ALTER TABLE "connection_requests" ADD COLUMN "momentId" UUID;
+              END IF;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'conversations') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'isDeletedForEveryone') THEN
+                ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT false;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'deletedForEveryoneAt') THEN
+                ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'conversations' AND column_name = 'deletedForEveryoneBy') THEN
+                ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" UUID;
+              END IF;
+            END IF;
+
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'chat_messages') THEN
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'isDelivered') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT false;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'deliveredAt') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'readAt') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "readAt" TIMESTAMP WITH TIME ZONE;
+              END IF;
+              IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'chat_messages' AND column_name = 'clientMessageId') THEN
+                ALTER TABLE "chat_messages" ADD COLUMN "clientMessageId" VARCHAR(80);
               END IF;
             END IF;
 
@@ -938,6 +1270,7 @@ export const initDb = async (force = false): Promise<void> => {
         try {
           await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "targetType" VARCHAR(20) DEFAULT \'user\';');
           await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "momentId" UUID;');
+          await sequelize.query('ALTER TABLE "user_reports" ADD COLUMN IF NOT EXISTS "conversationId" UUID;');
         } catch (_urColErr) {
           // Safe to ignore if user_reports does not exist yet
         }
@@ -959,14 +1292,40 @@ export const initDb = async (force = false): Promise<void> => {
         try {
           await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "userId" UUID;');
           await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "purpose" VARCHAR(50) DEFAULT \'auth\';');
+          await sequelize.query('ALTER TABLE "phone_verifications" ADD COLUMN IF NOT EXISTS "providerSession" TEXT;');
         } catch (_pvColErr) {
           // Safe to ignore if phone_verifications does not exist yet
         }
 
         try {
+          await sequelize.query('ALTER TABLE "user_devices" ADD COLUMN IF NOT EXISTS "voipToken" TEXT;');
+          await sequelize.query('CREATE INDEX IF NOT EXISTS "user_devices_voip_token" ON "user_devices" ("voipToken");');
+        } catch (_voipColErr) {
+          // Safe to ignore if user_devices does not exist yet
+        }
+
+        try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "lastActiveAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "onboardingStep" VARCHAR(40);');
         } catch (_laColErr) {
           // Safe to ignore if users does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "isDeletedForEveryone" BOOLEAN DEFAULT false;');
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneBy" UUID;');
+        } catch (_convColErr) {
+          // Safe to ignore if conversations does not exist yet
+        }
+
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "isDelivered" BOOLEAN DEFAULT false;');
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "deliveredAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP WITH TIME ZONE;');
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "clientMessageId" VARCHAR(80);');
+        } catch (_msgColErr) {
+          // Safe to ignore if chat_messages does not exist yet
         }
 
         // Ensure quick_moments and moment_gifts tables exist immediately on all environments
@@ -974,7 +1333,11 @@ export const initDb = async (force = false): Promise<void> => {
           await QuickMoment.sync();
           await QuickMomentReaction.sync();
           await QuickMomentView.sync();
+          await QuickMomentReply.sync();
           await MomentGift.sync();
+          await MomentCommentLike.sync();
+          const { markQuickMomentTablesReady } = await import('../services/quickMoment.service');
+          markQuickMomentTablesReady();
         } catch (_qmSyncErr: any) {
           console.warn('⚠️ Could not sync quick_moments / moment_gifts tables:', _qmSyncErr.message);
         }
@@ -985,6 +1348,9 @@ export const initDb = async (force = false): Promise<void> => {
 
     try {
       if (sequelize.getDialect() === 'sqlite') {
+        try {
+          await sequelize.query('PRAGMA busy_timeout = 10000;');
+        } catch (_) {}
         if (isForce) {
           try {
             await sequelize.query('PRAGMA foreign_keys = OFF;');
@@ -1004,6 +1370,30 @@ export const initDb = async (force = false): Promise<void> => {
         } catch (_) {}
         try {
           await sequelize.query('ALTER TABLE "users" ADD COLUMN "lastActiveAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "users" ADD COLUMN "onboardingStep" VARCHAR(40);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" VARCHAR(36);');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT 0;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+        } catch (_) {}
+        try {
+          await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "clientMessageId" VARCHAR(80);');
         } catch (_) {}
       } else {
         await sequelize.sync({ force: isForce, alter: !isForce && process.env.NODE_ENV === 'development' });
@@ -1033,10 +1423,18 @@ export const initDb = async (force = false): Promise<void> => {
       }
     }
 
+    await ensureChatTables();
     await ensureCoinPackageTables();
     await ensureSubscriptionTables();
     await ensureCoinPurchaseTables();
     await UserDiscoveryPreference.sync();
+    await MomentCommentLike.sync();
+    await NotificationSetting.sync();
+    await ConversationPin.sync();
+    await VideoCall.sync();
+    await ConversationUserState.sync();
+    await ChatMessagePin.sync();
+    await ChatMessageReaction.sync();
 
     // Seed initial interests catalog
     await seedDefaultInterests();
@@ -1131,11 +1529,12 @@ export const ensureMomentGiftTables = async (): Promise<void> => {
   try {
     if (sequelize.getDialect() === 'postgres') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "coins" INTEGER DEFAULT 0;');
+        await sequelize.query('ALTER TABLE "users" ALTER COLUMN "coins" SET DEFAULT 0;');
       } catch (_e) {}
     } else if (sequelize.getDialect() === 'sqlite') {
       try {
-        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 500;');
+        await sequelize.query('ALTER TABLE "users" ADD COLUMN "coins" INTEGER DEFAULT 0;');
       } catch (_e) {}
     }
     await MomentGift.sync();
@@ -1202,8 +1601,95 @@ export const ensureCoinPurchaseTables = async (): Promise<void> => {
   try {
     await CoinPurchase.sync();
     await CoinTransaction.sync();
+    await NotificationOutbox.sync();
   } catch (err: any) {
-    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction tables:', err.message);
+    console.warn('⚠️ Could not sync CoinPurchase / CoinTransaction / NotificationOutbox tables:', err.message);
+  }
+};
+
+/**
+ * Ensures conversations, chat_messages, conversation_user_states, and chat_message_pins
+ * have all required columns, indexes, and tables across all database environments (PostgreSQL and SQLite)
+ */
+export const ensureChatTables = async (): Promise<void> => {
+  try {
+    if (sequelize.getDialect() === 'postgres') {
+      // 1. Conversations columns
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "isDeletedForEveryone" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN IF NOT EXISTS "deletedForEveryoneBy" UUID REFERENCES "users"("id") ON DELETE SET NULL;');
+      } catch (_convErr: any) {
+        console.warn('⚠️ Could not alter conversations columns:', _convErr.message);
+      }
+
+      // 2. Chat messages columns
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "isDelivered" BOOLEAN DEFAULT false;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "deliveredAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "readAt" TIMESTAMP WITH TIME ZONE;');
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN IF NOT EXISTS "clientMessageId" VARCHAR(80);');
+        // Backfill existing read messages so receipts are consistent
+        await sequelize.query(`
+          UPDATE "chat_messages"
+          SET "isDelivered" = true,
+              "deliveredAt" = COALESCE("deliveredAt", "createdAt"),
+              "readAt" = COALESCE("readAt", "createdAt")
+          WHERE "isRead" = true AND ("isDelivered" = false OR "isDelivered" IS NULL);
+        `);
+      } catch (_msgErr: any) {
+        console.warn('⚠️ Could not alter chat_messages columns:', _msgErr.message);
+      }
+
+      // 3. Receipt index
+      try {
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_recipient_deliv" ON "chat_messages" ("recipientId", "isDelivered");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_type" ON "chat_messages" ("messageType");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_client_id" ON "chat_messages" ("conversationId", "senderId", "clientMessageId");');
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_chat_messages_conv_created" ON "chat_messages" ("conversationId", "createdAt" DESC);');
+        await sequelize.query(`CREATE INDEX IF NOT EXISTS "idx_chat_messages_moment_reply_id" ON "chat_messages" (substring(metadata from '"momentId":"([0-9a-fA-F-]{36})"')) WHERE "messageType" = 'moment_reply';`);
+        await sequelize.query('CREATE INDEX IF NOT EXISTS "idx_moments_status_published" ON "moments" ("status", "publishedAt" DESC);');
+      } catch (_idxErr: any) {}
+
+      // 4. Video calls callType
+      try {
+        await sequelize.query('ALTER TABLE "video_calls" ADD COLUMN IF NOT EXISTS "callType" VARCHAR(20) DEFAULT \'video\';');
+      } catch (_vcErr: any) {}
+    } else if (sequelize.getDialect() === 'sqlite') {
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "isDeletedForEveryone" BOOLEAN DEFAULT 0;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "conversations" ADD COLUMN "deletedForEveryoneBy" VARCHAR(36);');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "isDelivered" BOOLEAN DEFAULT 0;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "deliveredAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "readAt" DATETIME;');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "chat_messages" ADD COLUMN "clientMessageId" VARCHAR(80);');
+      } catch (_e) {}
+      try {
+        await sequelize.query('ALTER TABLE "video_calls" ADD COLUMN "callType" VARCHAR(20) DEFAULT \'video\';');
+      } catch (_e) {}
+    }
+
+    // Ensure dependent tables exist
+    await ConversationUserState.sync();
+    await ConversationPin.sync();
+    await ChatMessagePin.sync();
+    await ChatMessageReaction.sync();
+    await VideoCall.sync();
+  } catch (err: any) {
+    console.warn('⚠️ Could not sync chat tables:', err.message);
   }
 };
 

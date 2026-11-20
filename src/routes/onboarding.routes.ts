@@ -11,6 +11,7 @@ import {
   updateGenderPreferenceSchema,
   updateReligionSchema,
   updateInterestsSchema,
+  updateOnboardingStepSchema,
 } from '../schemas/onboarding.schema';
 import {
   getPreferences,
@@ -30,6 +31,7 @@ import {
   getAudio,
   deleteAudio,
   getProgress,
+  saveCurrentStep,
 } from '../controllers/onboarding.controller';
 
 const router = Router();
@@ -66,6 +68,10 @@ router.patch('/photos/:photoId/primary', setPrimaryPhoto);
 router.post('/audio', handleUploadAudio, uploadAudio);
 router.get('/audio', getAudio);
 router.delete('/audio', deleteAudio);
+
+// Screen the user is on. Saved so a killed app reopens on the same step.
+router.put('/step', validate(updateOnboardingStepSchema), saveCurrentStep);
+router.patch('/step', validate(updateOnboardingStepSchema), saveCurrentStep);
 
 // Onboarding Progress & Completion
 router.get('/progress', getProgress);

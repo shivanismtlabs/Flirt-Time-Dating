@@ -1,7 +1,7 @@
 import { Model, DataTypes, Optional } from 'sequelize';
 import { sequelize } from '../config/database';
 
-export type ReportTargetType = 'user' | 'moment';
+export type ReportTargetType = 'user' | 'moment' | 'chat';
 
 export type ReportReason =
   | 'fake_profile'
@@ -23,6 +23,7 @@ export interface UserReportAttributes {
   targetUserId: string;
   targetType?: ReportTargetType;
   momentId?: string | null;
+  conversationId?: string | null;
   reason: ReportReason;
   description?: string | null;
   status: ReportStatus;
@@ -33,7 +34,7 @@ export interface UserReportAttributes {
 export interface UserReportCreationAttributes
   extends Optional<
     UserReportAttributes,
-    'id' | 'targetType' | 'momentId' | 'description' | 'status'
+    'id' | 'targetType' | 'momentId' | 'conversationId' | 'description' | 'status'
   > {}
 
 export class UserReport
@@ -44,6 +45,7 @@ export class UserReport
   declare public targetUserId: string;
   declare public targetType: ReportTargetType;
   declare public momentId: string | null;
+  declare public conversationId: string | null;
   declare public reason: ReportReason;
   declare public description: string | null;
   declare public status: ReportStatus;
@@ -52,6 +54,7 @@ export class UserReport
   declare public readonly updatedAt: Date;
 
   declare public moment?: any;
+  declare public conversation?: any;
   declare public reporter?: any;
   declare public targetUser?: any;
 }
@@ -98,6 +101,16 @@ UserReport.init(
       onDelete: 'CASCADE',
       onUpdate: 'CASCADE',
     },
+    conversationId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      references: {
+        model: 'conversations',
+        key: 'id',
+      },
+      onDelete: 'SET NULL',
+      onUpdate: 'CASCADE',
+    },
     reason: {
       type: DataTypes.STRING(50),
       allowNull: false,
@@ -132,6 +145,14 @@ UserReport.init(
       {
         fields: ['reporterId', 'momentId'],
         name: 'idx_user_reports_reporter_moment',
+      },
+      {
+        fields: ['conversationId'],
+        name: 'idx_user_reports_conversation_id',
+      },
+      {
+        fields: ['reporterId', 'conversationId'],
+        name: 'idx_user_reports_reporter_conversation',
       },
     ],
   }

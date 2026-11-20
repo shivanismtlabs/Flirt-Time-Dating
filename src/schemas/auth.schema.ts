@@ -36,6 +36,30 @@ export const requestPhoneOtpSchema = z.object({
           message: 'Invalid phone number format (must contain 4-15 digits)',
         }
       ),
+    recaptchaToken: z.string().trim().min(1).optional(),
+    playIntegrityToken: z.string().trim().min(1).optional(),
+    iosReceipt: z.string().trim().min(1).optional(),
+    iosSecret: z.string().trim().min(1).optional(),
+    iosBundleId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+      .optional(),
+  }),
+});
+
+export const verifyIosClientSchema = z.object({
+  body: z.object({
+    apnsToken: z
+      .string({ required_error: 'apnsToken is required' })
+      .trim()
+      .min(1, 'apnsToken cannot be empty'),
+    isSandbox: z.boolean().optional(),
+    iosBundleId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+      .optional(),
   }),
 });
 
@@ -65,6 +89,15 @@ export const resendPhoneOtpSchema = z.object({
     verificationId: z
       .string({ required_error: 'verificationId is required' })
       .min(1, 'verificationId cannot be empty'),
+    recaptchaToken: z.string().trim().min(1).optional(),
+    playIntegrityToken: z.string().trim().min(1).optional(),
+    iosReceipt: z.string().trim().min(1).optional(),
+    iosSecret: z.string().trim().min(1).optional(),
+    iosBundleId: z
+      .string()
+      .trim()
+      .regex(/^[A-Za-z0-9][A-Za-z0-9.-]{1,200}$/, 'Invalid iOS bundle id')
+      .optional(),
   }),
 });
 
@@ -117,5 +150,55 @@ export const firebaseAuthSchema = z.object({
       .min(1, 'idToken cannot be empty'),
   }),
 });
+
+export const googleAuthSchema = z.object({
+  body: z.object({
+    idToken: z
+      .string({ required_error: 'idToken is required' })
+      .trim()
+      .min(1, 'idToken cannot be empty'),
+    serverAuthCode: z.string().trim().optional(),
+    user: z
+      .object({
+        name: z.string().trim().optional(),
+        email: z.string().trim().email().optional(),
+        photo: z.string().trim().optional(),
+      })
+      .optional(),
+  }),
+});
+
+export const deleteAccountSchema = z.object({
+  body: z
+    .object({
+      reason: z.string().trim().max(500, 'Reason cannot exceed 500 characters').optional(),
+      feedback: z.string().trim().max(1000, 'Feedback cannot exceed 1000 characters').optional(),
+    })
+    .optional(),
+});
+
+export const checkUsernameAvailabilitySchema = z.object({
+  query: z.object({
+    username: z
+      .string({ required_error: 'username is required' })
+      .trim()
+      .min(3, 'Username must be at least 3 characters')
+      .max(50, 'Username must not exceed 50 characters'),
+  }),
+});
+
+export const logoutSchema = z.object({
+  body: z
+    .object({
+      deviceToken: z.string().trim().optional(),
+      fcmToken: z.string().trim().optional(),
+      allDevices: z.boolean().optional(),
+    })
+    .optional()
+    .default({}),
+});
+
+export type LogoutInput = z.infer<typeof logoutSchema>;
+
 
 

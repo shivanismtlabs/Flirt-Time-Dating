@@ -5,10 +5,12 @@ import {
   getInteractionsHandler,
   getInteractionCountsHandler,
   markInteractionReadHandler,
+  sendComplimentHandler,
 } from '../controllers/interaction.controller';
 import {
   getInteractionsSchema,
   markInteractionReadSchema,
+  sendComplimentSchema,
 } from '../schemas/interaction.schema';
 
 const router = Router();
@@ -29,4 +31,17 @@ router.post(
   markInteractionReadHandler
 );
 
+// 4. POST /api/v1/interactions/compliments & /api/v1/interactions/compliment
+router.post(
+  '/compliments',
+  validate(sendComplimentSchema),
+  sendComplimentHandler
+);
+router.post(
+  '/compliment',
+  validate(sendComplimentSchema),
+  sendComplimentHandler
+);
+
 export default router;
+

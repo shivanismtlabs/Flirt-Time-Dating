@@ -17,17 +17,24 @@ import coinPackageRoutes from './coinPackage.routes';
 import subscriptionRoutes from './subscription.routes';
 import coinRoutes from './coin.routes';
 import walletRoutes from './wallet.routes';
+import chatRoutes from './chat.routes';
+import videoCallRoutes from './videoCall.routes';
 import { authenticate } from '../middlewares/auth.middleware';
-import { handleUploadSelfie } from '../middlewares/upload.middleware';
+import { handleUploadSelfie, handleUploadChatMedia } from '../middlewares/upload.middleware';
 import {
   uploadFaceVerification,
   getGestureVerificationInfo,
 } from '../controllers/faceVerification.controller';
-
 import { getMomentGiftsCatalogHandler } from '../controllers/moment.controller';
 import { getProfile, updateProfile } from '../controllers/user.controller';
 import { updateProfileSchema } from '../schemas/user.schema';
 import { validate } from '../middlewares/validate.middleware';
+import { sendComplimentHandler } from '../controllers/interaction.controller';
+import { sendComplimentSchema } from '../schemas/interaction.schema';
+import { searchUsersHandler } from '../controllers/userSearch.controller';
+import { userSearchSchema } from '../schemas/userSearch.schema';
+import { sendMultiMessageHandler, syncDeliveredMessagesHandler, forwardMessagesHandler } from '../controllers/chat.controller';
+import { sendMultiMessageSchema, syncDeliveredMessagesSchema, forwardMessagesSchema } from '../schemas/chat.schema';
 
 const router = Router();
 
@@ -44,11 +51,36 @@ router.use('/notifications', notificationRoutes);
 router.use('/interactions', interactionRoutes);
 router.use('/devices', deviceRoutes);
 router.use('/media', mediaRoutes);
+router.use('/uploads', mediaRoutes);
+router.use('/upload', mediaRoutes);
+router.use('/images', mediaRoutes);
+router.use('/image', mediaRoutes);
+router.use('/photos', mediaRoutes);
+router.use('/photo', mediaRoutes);
 router.use('/deep-links', deepLinkRoutes);
 router.use('/coin-packages', coinPackageRoutes);
 router.use('/subscriptions', subscriptionRoutes);
 router.use('/coins', coinRoutes);
 router.use('/wallet', walletRoutes);
+router.use('/chat', chatRoutes);
+router.use('/chats', chatRoutes);
+router.use('/chat/conversations', chatRoutes);
+router.post('/chat/messages', authenticate, handleUploadChatMedia, validate(sendMultiMessageSchema), sendMultiMessageHandler);
+router.post('/chat/messages/forward', authenticate, validate(forwardMessagesSchema), forwardMessagesHandler);
+router.all(
+  ['/chat/delivered/sync', '/chat/delivery/sync'],
+  authenticate,
+  validate(syncDeliveredMessagesSchema),
+  syncDeliveredMessagesHandler
+);
+router.use('/calls', videoCallRoutes);
+router.use('/call', videoCallRoutes);
+router.use('/calls/video', videoCallRoutes);
+router.use('/call/video', videoCallRoutes);
+router.use('/video-call', videoCallRoutes);
+router.use('/video-calls', videoCallRoutes);
+router.use('/videocall', videoCallRoutes);
+router.use('/videocalls', videoCallRoutes);
 
 // General Gifts Catalog API: /api/v1/gifts
 router.get('/gifts', authenticate, getMomentGiftsCatalogHandler);
@@ -61,7 +93,16 @@ router.post('/gesture', authenticate, handleUploadSelfie, uploadFaceVerification
 
 // Direct Profile aliases: /api/v1/profile, /api/profile
 router.get('/profile', authenticate, getProfile);
+router.post('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.patch('/profile', authenticate, validate(updateProfileSchema), updateProfile);
 router.put('/profile', authenticate, validate(updateProfileSchema), updateProfile);
+
+// Direct Compliments aliases: /api/v1/compliments, /api/v1/compliment
+router.post('/compliments', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+router.post('/compliment', authenticate, validate(sendComplimentSchema), sendComplimentHandler);
+
+// Direct Search aliases: /api/v1/search, /api/search
+router.get('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
+router.post('/search', authenticate, validate(userSearchSchema), searchUsersHandler);
 
 export default router;

@@ -5,7 +5,7 @@ import { generateToken } from '../src/utils/jwt';
 import { s3Service } from '../src/services/s3.service';
 import { createBlankImage } from './helpers/imageFixtures';
 
-describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', () => {
+describe('User Profile & Gallery Photos Upload & Edit API', () => {
   let user: User;
   let authToken: string;
 
@@ -47,7 +47,7 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
     });
   });
 
-  describe('1. Minimum and Maximum Image Validation on Upload (POST)', () => {
+  describe('1. Photo upload count', () => {
     it('should reject request with 400 when no photos are provided', async () => {
       const res = await request(app)
         .post('/api/v1/onboarding/photos')
@@ -56,10 +56,10 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
 
       expect(res.status).toBe(400);
       expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 3 photos/i);
+      expect(res.body.message).toMatch(/at least one photo/i);
     });
 
-    it('should reject request with 400 when only 1 photo is provided', async () => {
+    it('should succeed when only 1 photo is provided', async () => {
       const p1 = await createBlankImage(100, 100);
 
       const res = await request(app)
@@ -67,12 +67,12 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
         .set('Authorization', `Bearer ${authToken}`)
         .attach('photos', p1, 'photo1.jpg');
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 3 photos/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(1);
     });
 
-    it('should reject request with 400 when only 2 photos are provided', async () => {
+    it('should succeed when only 2 photos are provided', async () => {
       const p1 = await createBlankImage(100, 100);
       const p2 = await createBlankImage(100, 100);
 
@@ -82,12 +82,12 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
         .attach('photos', p1, 'photo1.jpg')
         .attach('photos', p2, 'photo2.jpg');
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 3 photos/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(2);
     });
 
-    it('should reject request with 400 when 6 photos are provided', async () => {
+    it('should succeed when 6 photos are provided', async () => {
       const images = await Promise.all(Array.from({ length: 6 }, () => createBlankImage(100, 100)));
 
       const req = request(app)
@@ -99,9 +99,9 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
       }
 
       const res = await req;
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/maximum 5/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(6);
     });
 
     it('should succeed with 201 when exactly 3 photos are uploaded', async () => {
@@ -211,7 +211,7 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
       expect(res.body.data.totalPhotos).toBe(4);
     });
 
-    it('should reject editing photos to fewer than 3 photos with 400', async () => {
+    it('should allow editing photos down to fewer than 3 photos', async () => {
       const images = await Promise.all(Array.from({ length: 2 }, () => createBlankImage(100, 100)));
 
       const res = await request(app)
@@ -220,9 +220,9 @@ describe('User Profile & Gallery Photos Upload & Edit API (Min 3 and Max 5)', ()
         .attach('photos', images[0], 'n1.jpg')
         .attach('photos', images[1], 'n2.jpg');
 
-      expect(res.status).toBe(400);
-      expect(res.body.success).toBe(false);
-      expect(res.body.message).toMatch(/at least 3 photos/i);
+      expect(res.status).toBe(201);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.photos).toHaveLength(2);
     });
   });
 

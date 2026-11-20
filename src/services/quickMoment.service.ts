@@ -1,8 +1,9 @@
-import { Op } from 'sequelize';
+import { Op, UniqueConstraintError } from 'sequelize';
 import {
   QuickMoment,
   QuickMomentReaction,
   QuickMomentView,
+  QuickMomentReply,
   User,
   Notification,
   UserBlock,
@@ -63,6 +64,7 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
 
   const counts: Record<string, number> = {};
   for (const r of reactions) {
+    if (!r || !r.emoji) continue;
     counts[r.emoji] = (counts[r.emoji] || 0) + 1;
   }
 
@@ -70,8 +72,12 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
     .map(([emoji, count]) => ({ emoji, count }))
     .sort((a, b) => b.count - a.count);
 
+  if (breakdown.length === 0) {
+    return { badgeText: null, topEmojis: [], total: 0, breakdown: [] };
+  }
+
   const topEmojis = breakdown.slice(0, 2).map((b) => b.emoji);
-  const total = reactions.length;
+  const total = breakdown.reduce((acc, curr) => acc + curr.count, 0);
 
   // e.g. "😍 5" or "😍🔥 3"
   const emojiPrefix = topEmojis.join('');
@@ -80,21 +86,137 @@ function buildReactionBadge(reactions: { emoji: string }[]): {
   return { badgeText, topEmojis, total, breakdown };
 }
 
+function parseNotificationData(data: unknown): Record<string, any> | null {
+  if (!data) return null;
+  if (typeof data === 'string') {
+    try {
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+  if (typeof data === 'object') return data as Record<string, any>;
+  return null;
+}
+
+function mapQuickMomentReaction(r: any) {
+  return {
+    id: r.id,
+    emoji: r.emoji,
+    reaction: r.emoji,
+    userId: r.userId,
+    createdAt: r.createdAt,
+    timeAgo: r.createdAt ? formatTimeAgo(r.createdAt, false) : null,
+    user: r.user
+      ? {
+          id: r.user.id,
+          name: r.user.fullName || r.user.nickName || 'User',
+          avatar: r.user.profilePicture
+            ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt)
+            : null,
+          city: r.user.city,
+          isVerified: !!r.user.isFaceVerified,
+          isSubscribed: !!r.user.isSubscribed,
+        }
+      : null,
+  };
+}
+
 let quickMomentTablesReady = false;
+let quickMomentSyncRetryAt = 0;
+
+export function markQuickMomentTablesReady(): void {
+  quickMomentTablesReady = true;
+}
 
 export async function ensureQuickMomentTables(): Promise<void> {
-  if (quickMomentTablesReady) return;
+  if (quickMomentTablesReady || Date.now() < quickMomentSyncRetryAt) return;
   try {
     await QuickMoment.sync();
     await QuickMomentReaction.sync();
     await QuickMomentView.sync();
+    await QuickMomentReply.sync();
     quickMomentTablesReady = true;
   } catch (err: any) {
+    quickMomentSyncRetryAt = Date.now() + 60_000;
     console.warn('[QuickMoment Schema Warning]:', err.message);
   }
 }
 
 export class QuickMomentService {
+  /**
+   * Persists the in-app row and sends the FCM push.
+   * Direct Notification.create only wrote the row, so the device never received a push.
+   */
+  private async dispatchQuickMomentNotification(
+    recipientId: string,
+    senderId: string,
+    momentId: string,
+    input: {
+      type: 'moment_reaction' | 'moment_reply';
+      title: string;
+      body: string;
+      emoji?: string;
+      replyText?: string;
+      replaceExisting?: boolean;
+    }
+  ): Promise<void> {
+    if (!recipientId || recipientId === senderId) return;
+
+    try {
+      if (input.replaceExisting) {
+        await Notification.destroy({
+          where: {
+            recipientId,
+            senderId,
+            entityId: momentId,
+            type: { [Op.in]: ['moment_reaction', 'quick_moment_reaction'] },
+          },
+        });
+      }
+
+      const { notificationService } = await import('./notification.service');
+      await notificationService.dispatchNotification(recipientId, {
+        type: input.type,
+        title: input.title,
+        body: input.body,
+        senderId,
+        entityId: momentId,
+        navigation: { type: 'quick_moment', targetId: momentId },
+        data: {
+          quickMomentId: momentId,
+          momentId,
+          user_id: senderId,
+          notify_type: input.type,
+          ...(input.emoji ? { emoji: input.emoji } : {}),
+          ...(input.replyText ? { replyText: input.replyText } : {}),
+        },
+      });
+    } catch (notifErr: any) {
+      console.warn('[Quick Moment Notif Warning]:', notifErr.message);
+    }
+  }
+
+  private async notifyQuickMomentReaction(
+    recipientId: string,
+    senderId: string,
+    momentId: string,
+    emoji: string
+  ): Promise<void> {
+    const reactor = await User.findByPk(senderId, {
+      attributes: ['id', 'fullName', 'nickName'],
+    });
+    const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
+
+    await this.dispatchQuickMomentNotification(recipientId, senderId, momentId, {
+      type: 'moment_reaction',
+      title: 'New Quick Moment Reaction',
+      body: `${reactorName} reacted ${emoji} to your quick moment`,
+      emoji,
+      replaceExisting: true,
+    });
+  }
+
   /**
    * 1. GET TRAY: Horizontal Stories Bar (Screen / Image 1)
    * Returns authenticated user's own status bubble ("Add new" or their active stories badge)
@@ -104,7 +226,8 @@ export class QuickMomentService {
     await ensureQuickMomentTables();
     const now = new Date();
 
-    // Fetch all active, non-expired quick moments
+    // Moments and their reactions/views are loaded apart so Sequelize does not
+    // build one giant join of every story × reaction × view.
     const activeMoments = await QuickMoment.findAll({
       where: {
         status: 'active',
@@ -114,21 +237,73 @@ export class QuickMomentService {
         {
           model: User,
           as: 'author',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
-        },
-        {
-          model: QuickMomentReaction,
-          as: 'reactions',
-          attributes: ['id', 'emoji', 'userId'],
-        },
-        {
-          model: QuickMomentView,
-          as: 'views',
-          attributes: ['userId'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city'],
         },
       ],
       order: [['createdAt', 'DESC']],
     });
+
+    const activeIds = activeMoments.map((moment) => moment.id);
+    // Associations set with setDataValue are stored on dataValues only.
+    // `moment.views` stays undefined unless the rows were eager-loaded, so
+    // unread state has to be computed from these maps.
+    const reactionsByMoment = new Map<string, QuickMomentReaction[]>();
+    const viewedMomentIds = new Set<string>();
+    if (activeIds.length > 0) {
+      const [reactions, views] = await Promise.all([
+        QuickMomentReaction.findAll({
+          where: { quickMomentId: { [Op.in]: activeIds } },
+          attributes: ['id', 'quickMomentId', 'emoji', 'userId', 'createdAt'],
+          include: [
+            {
+              model: User,
+              as: 'user',
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+            },
+          ],
+        }),
+        QuickMomentView.findAll({
+          where: {
+            quickMomentId: { [Op.in]: activeIds },
+            userId: viewerUserId,
+          },
+          attributes: ['quickMomentId', 'userId'],
+        }),
+      ]);
+
+      for (const reaction of reactions) {
+        const list = reactionsByMoment.get(reaction.quickMomentId) || [];
+        list.push(reaction);
+        reactionsByMoment.set(reaction.quickMomentId, list);
+      }
+      for (const view of views) {
+        const qmId =
+          (view as any).quickMomentId ||
+          (view as any).getDataValue?.('quickMomentId') ||
+          (view as any).dataValues?.quickMomentId;
+        if (qmId) {
+          viewedMomentIds.add(String(qmId).toLowerCase());
+        }
+      }
+      for (const moment of activeMoments) {
+        const target = moment as unknown as {
+          setDataValue(key: string, value: unknown): void;
+          reactions?: any[];
+          views?: any[];
+        };
+        const mReactions = reactionsByMoment.get(moment.id) || [];
+        target.setDataValue('reactions', mReactions);
+        target.reactions = mReactions;
+
+        const isViewed = viewedMomentIds.has(String(moment.id).toLowerCase());
+        const viewsList = isViewed ? [{ userId: viewerUserId, quickMomentId: moment.id }] : [];
+        target.setDataValue('views', viewsList);
+        target.views = viewsList;
+      }
+    }
+
+    const reactionsFor = (momentId: string): QuickMomentReaction[] =>
+      reactionsByMoment.get(momentId) || [];
 
     // 1. Group own stories
     const myMoments = activeMoments.filter((m) => m.userId === viewerUserId);
@@ -147,7 +322,7 @@ export class QuickMomentService {
     };
 
     if (myMoments.length > 0) {
-      const allMyReactions = myMoments.flatMap((m) => m.reactions || []);
+      const allMyReactions = myMoments.flatMap((m) => reactionsFor(m.id));
       const reactionSummary = buildReactionBadge(allMyReactions);
       const latestStory = myMoments[0];
 
@@ -166,6 +341,8 @@ export class QuickMomentService {
           : null,
         stories: myMoments.map((m) => {
           const cleanKey = m.mediaUrl ? extractS3Key(m.mediaUrl) : null;
+          const storyReactions = reactionsFor(m.id);
+          const storySummary = buildReactionBadge(storyReactions);
           return {
             id: m.id,
             type: m.type,
@@ -175,6 +352,15 @@ export class QuickMomentService {
             mediaUrl: m.mediaUrl ? formatMediaUrl(m.mediaUrl) : null,
             text: m.text,
             createdAt: m.createdAt,
+            reactionsCount: storySummary.total,
+            totalReactions: storySummary.total,
+            topEmojis: storySummary.topEmojis,
+            badgeText: storySummary.badgeText,
+            reactionsBreakdown: storySummary.breakdown,
+            viewsCount: Math.max(m.viewsCount || 0, m.views ? m.views.length : 0),
+            repliesCount: m.repliesCount || 0,
+            reactions: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
+            reactors: storyReactions.map((r: any) => mapQuickMomentReaction(r)),
           };
         }),
       };
@@ -192,6 +378,7 @@ export class QuickMomentService {
           reporterId: viewerUserId,
           status: { [Op.ne]: 'dismissed' },
         },
+        attributes: ['targetUserId', 'momentId', 'targetType'],
       }),
     ]);
 
@@ -200,13 +387,22 @@ export class QuickMomentService {
       if (b.userId === viewerUserId) excludedUserIds.add(b.blockedUserId);
       if (b.blockedUserId === viewerUserId) excludedUserIds.add(b.userId);
     }
+    const reportedMomentIds = new Set<string>();
     for (const r of reports) {
-      if (r.targetUserId) excludedUserIds.add(r.targetUserId);
+      if (!r.momentId && (r.targetType === 'user' || !r.targetType) && r.targetUserId) {
+        excludedUserIds.add(r.targetUserId);
+      }
+      if (r.momentId) {
+        reportedMomentIds.add(r.momentId);
+      }
     }
 
     // 2. Group other users' stories
     const otherMoments = activeMoments.filter(
-      (m) => m.userId !== viewerUserId && !excludedUserIds.has(m.userId)
+      (m) =>
+        m.userId !== viewerUserId &&
+        !excludedUserIds.has(m.userId) &&
+        !reportedMomentIds.has(m.id)
     );
     const userGroups = new Map<string, typeof otherMoments>();
 
@@ -226,11 +422,9 @@ export class QuickMomentService {
       if (!author) continue;
 
       const latest = moments[0];
-      const hasUnread = moments.some(
-        (m) => !(m.views || []).some((v: any) => v.userId === viewerUserId)
-      );
+      const hasUnread = moments.some((m) => !viewedMomentIds.has(String(m.id).toLowerCase()));
 
-      const allReactions = moments.flatMap((m) => m.reactions || []);
+      const allReactions = moments.flatMap((m) => reactionsFor(m.id));
       const reactionSummary = buildReactionBadge(allReactions);
 
       const latestCleanKey = latest.mediaUrl ? extractS3Key(latest.mediaUrl) : null;
@@ -242,6 +436,7 @@ export class QuickMomentService {
         mediaUrl: latest.mediaUrl ? formatMediaUrl(latest.mediaUrl) : null,
         text: latest.text ? (latest.text.length > 30 ? `${latest.text.slice(0, 30)}...` : latest.text) : null,
         backgroundColor: latest.backgroundColor,
+        createdAt: latest.createdAt,
       };
 
       otherUsers.push({
@@ -249,8 +444,11 @@ export class QuickMomentService {
         name: author.fullName || author.nickName || 'User',
         avatar: author.profilePicture ? formatThumbnailUrl(author.profilePicture) : null,
         isVerified: !!author.isFaceVerified,
+        isSubscribed: !!author.isSubscribed,
         hasUnread,
         totalStories: moments.length,
+        totalMoments: moments.length,
+        unreadCount: moments.filter((m) => !viewedMomentIds.has(String(m.id).toLowerCase())).length,
         latestTimeAgo: formatTimeAgo(latest.createdAt, true),
         preview,
         badge: reactionSummary.badgeText
@@ -268,7 +466,9 @@ export class QuickMomentService {
     otherUsers.sort((a, b) => {
       if (a.hasUnread && !b.hasUnread) return -1;
       if (!a.hasUnread && b.hasUnread) return 1;
-      return 0;
+      const timeA = a.preview?.createdAt ? new Date(a.preview.createdAt).getTime() : 0;
+      const timeB = b.preview?.createdAt ? new Date(b.preview.createdAt).getTime() : 0;
+      return timeB - timeA;
     });
 
     return {
@@ -296,7 +496,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'author',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed'],
         },
         {
           model: QuickMomentReaction,
@@ -305,7 +505,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'user',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
             },
           ],
         },
@@ -316,7 +516,7 @@ export class QuickMomentService {
             {
               model: User,
               as: 'viewer',
-              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'updatedAt'],
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'updatedAt'],
             },
           ],
         },
@@ -334,13 +534,16 @@ export class QuickMomentService {
       const reactions = m.reactions || [];
       const reactionSummary = buildReactionBadge(reactions);
 
+      const actualRepliesCount = m.repliesCount || 0;
+      const actualViewsCount = Math.max(m.viewsCount || 0, m.views ? m.views.length : 0);
+
       // Badge format: "😍🔥 3 · 💬 2 replies" matching Image 2
       let badgeParts: string[] = [];
       if (reactionSummary.badgeText) {
         badgeParts.push(reactionSummary.badgeText);
       }
-      if (m.repliesCount > 0) {
-        badgeParts.push(`💬 ${m.repliesCount} ${m.repliesCount === 1 ? 'reply' : 'replies'}`);
+      if (actualRepliesCount > 0) {
+        badgeParts.push(`💬 ${actualRepliesCount} ${actualRepliesCount === 1 ? 'reply' : 'replies'}`);
       }
       const badgeText = badgeParts.length > 0 ? badgeParts.join(' · ') : null;
 
@@ -363,29 +566,21 @@ export class QuickMomentService {
         expiresAt: m.expiresAt,
         badgeText,
         reactionsCount: reactionSummary.total,
+        totalReactions: reactionSummary.total,
         topEmojis: reactionSummary.topEmojis,
         reactionsBreakdown: reactionSummary.breakdown,
-        repliesCount: m.repliesCount,
-        viewsCount: m.viewsCount || (m.views ? m.views.length : 0),
+        repliesCount: actualRepliesCount,
+        viewsCount: actualViewsCount,
+        totalViews: actualViewsCount,
         isMine: true,
-        reactors: reactions.map((r: any) => ({
-          id: r.id,
-          emoji: r.emoji,
-          createdAt: r.createdAt,
-          timeAgo: formatTimeAgo(r.createdAt, false),
-          user: {
-            id: r.user?.id,
-            name: r.user?.fullName || r.user?.nickName || 'User',
-            avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
-            city: r.user?.city,
-            isVerified: !!r.user?.isFaceVerified,
-          },
-        })),
+        reactions: reactions.map((r: any) => mapQuickMomentReaction(r)),
+        reactors: reactions.map((r: any) => mapQuickMomentReaction(r)),
         viewers: (m.views || []).map((v: any) => ({
           userId: v.viewer?.id,
           name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
           avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
           isVerified: !!v.viewer?.isFaceVerified,
+          isSubscribed: !!v.viewer?.isSubscribed,
           viewedAt: v.createdAt,
         })),
       };
@@ -398,7 +593,9 @@ export class QuickMomentService {
         avatar: viewer?.profilePicture ? formatThumbnailUrl(viewer.profilePicture) : null,
       },
       totalStories: slides.length,
+      totalMoments: slides.length,
       stories: slides,
+      slides: slides,
     };
   }
 
@@ -413,7 +610,7 @@ export class QuickMomentService {
     const now = new Date();
 
     const targetUser = await User.findByPk(targetUserId, {
-      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city'],
+      attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city'],
     });
 
     if (!targetUser) {
@@ -438,7 +635,11 @@ export class QuickMomentService {
           reporterId: viewerUserId,
           targetUserId,
           status: { [Op.ne]: 'dismissed' },
-        },
+          [Op.or]: [
+            { targetType: 'user' },
+            { momentId: null },
+          ],
+        } as any,
       });
       if (isReported) {
         return {
@@ -460,7 +661,14 @@ export class QuickMomentService {
         {
           model: QuickMomentReaction,
           as: 'reactions',
-          attributes: ['id', 'emoji', 'userId'],
+          attributes: ['id', 'emoji', 'userId', 'createdAt'],
+          include: [
+            {
+              model: User,
+              as: 'user',
+              attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+            },
+          ],
         },
         {
           model: QuickMomentView,
@@ -480,6 +688,8 @@ export class QuickMomentService {
       );
       const isViewed = (m.views || []).some((v: any) => v.userId === viewerUserId);
       const reactionSummary = buildReactionBadge(m.reactions || []);
+      const actualRepliesCount = m.repliesCount || 0;
+      const actualViewsCount = Math.max(m.viewsCount || 0, m.views ? m.views.length : 0);
 
       return {
         id: m.id,
@@ -500,12 +710,46 @@ export class QuickMomentService {
         expiresAt: m.expiresAt,
         isViewed,
         myReaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
+        viewerReaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
+        reaction: viewerReactionRecord ? viewerReactionRecord.emoji : null,
         availableEmojis: ALLOWED_EMOJIS,
         replyPlaceholder: `Reply to ${authorDisplayName}...`,
         reactionsCount: reactionSummary.total,
+        totalReactions: reactionSummary.total,
+        topEmojis: reactionSummary.topEmojis,
+        reactionsBreakdown: reactionSummary.breakdown,
         badgeText: reactionSummary.badgeText,
+        repliesCount: actualRepliesCount,
+        viewsCount: actualViewsCount,
+        totalViews: actualViewsCount,
+        reactions: (m.reactions || []).map((r: any) => {
+          const isOwnerView = viewerUserId === targetUserId;
+          const row = mapQuickMomentReaction(r);
+          return {
+            ...row,
+            isMine: r.userId === viewerUserId,
+            user: isOwnerView ? row.user : null,
+            userId: isOwnerView ? r.userId : undefined,
+          };
+        }),
+        reactors: viewerUserId === targetUserId
+          ? (m.reactions || []).map((r: any) => mapQuickMomentReaction(r))
+          : viewerReactionRecord
+            ? [
+                {
+                  emoji: viewerReactionRecord.emoji,
+                  reaction: viewerReactionRecord.emoji,
+                  isMine: true,
+                  userId: viewerUserId,
+                },
+              ]
+            : [],
       };
     });
+
+    if (viewerUserId !== targetUserId) {
+      await this.keepAuthorInViewerChat(viewerUserId, targetUserId);
+    }
 
     return {
       author: {
@@ -515,10 +759,26 @@ export class QuickMomentService {
         avatar: targetUser.profilePicture ? formatThumbnailUrl(targetUser.profilePicture) : null,
         city: targetUser.city,
         isVerified: !!targetUser.isFaceVerified,
+        isSubscribed: !!targetUser.isSubscribed,
       },
       totalStories: slides.length,
+      totalMoments: slides.length,
       stories: slides,
+      slides: slides,
     };
+  }
+
+  /**
+   * The chat screen opens a quick moment from a conversation row. Watching it
+   * must not drop that person from the viewer's chat list.
+   */
+  private async keepAuthorInViewerChat(viewerUserId: string, authorUserId: string): Promise<void> {
+    try {
+      const { chatService } = await import('./chat.service');
+      await chatService.keepChatVisibleAfterQuickMomentView(viewerUserId, authorUserId);
+    } catch {
+      // Chat list sync must not fail the story response.
+    }
   }
 
   /**
@@ -576,7 +836,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'user',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -595,6 +855,7 @@ export class QuickMomentService {
         avatar: r.user?.profilePicture ? formatThumbnailUrl(r.user.profilePicture, r.user.updatedAt) : null,
         city: r.user?.city,
         isVerified: !!r.user?.isFaceVerified,
+        isSubscribed: !!r.user?.isSubscribed,
       },
     }));
 
@@ -658,8 +919,8 @@ export class QuickMomentService {
               where: {
                 recipientId: moment.userId,
                 senderId: viewerUserId,
-                type: 'moment_reaction',
                 entityId: momentId,
+                type: { [Op.in]: ['moment_reaction', 'quick_moment_reaction'] },
               },
             });
           } catch (notifErr: any) {
@@ -672,51 +933,8 @@ export class QuickMomentService {
         await existingReaction.save();
         action = 'updated';
 
-        // Update existing notification or create if not present without duplicating
         if (moment.userId !== viewerUserId) {
-          try {
-            const reactor = await User.findByPk(viewerUserId, {
-              attributes: ['id', 'fullName', 'nickName'],
-            });
-            const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
-
-            const existingNotif = await Notification.findOne({
-              where: {
-                recipientId: moment.userId,
-                senderId: viewerUserId,
-                type: 'moment_reaction',
-                entityId: momentId,
-              },
-            });
-
-            if (existingNotif) {
-              existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
-              existingNotif.data = {
-                quickMomentId: momentId,
-                emoji,
-                navigation: { type: 'quick_moment', targetId: momentId },
-              };
-              existingNotif.isRead = false;
-              await existingNotif.save();
-            } else {
-              await Notification.create({
-                recipientId: moment.userId,
-                senderId: viewerUserId,
-                type: 'moment_reaction',
-                title: 'New Quick Moment Reaction',
-                body: `${reactorName} reacted ${emoji} to your quick moment`,
-                entityId: momentId,
-                data: {
-                  quickMomentId: momentId,
-                  emoji,
-                  navigation: { type: 'quick_moment', targetId: momentId },
-                },
-                isRead: false,
-              });
-            }
-          } catch (notifErr: any) {
-            console.warn('[Quick Moment Notif Update Warning]:', notifErr.message);
-          }
+          await this.notifyQuickMomentReaction(moment.userId, viewerUserId, momentId, emoji);
         }
       }
     } else {
@@ -728,70 +946,54 @@ export class QuickMomentService {
       });
       action = 'added';
 
-      // Send in-app notification to story author if not self (reuse/upsert to avoid duplicates)
       if (moment.userId !== viewerUserId) {
-        try {
-          const reactor = await User.findByPk(viewerUserId, {
-            attributes: ['id', 'fullName', 'nickName'],
-          });
-          const reactorName = reactor?.fullName || reactor?.nickName || 'Someone';
-
-          const existingNotif = await Notification.findOne({
-            where: {
-              recipientId: moment.userId,
-              senderId: viewerUserId,
-              type: 'moment_reaction',
-              entityId: momentId,
-            },
-          });
-
-          if (existingNotif) {
-            existingNotif.body = `${reactorName} reacted ${emoji} to your quick moment`;
-            existingNotif.data = {
-              quickMomentId: momentId,
-              emoji,
-              navigation: { type: 'quick_moment', targetId: momentId },
-            };
-            existingNotif.isRead = false;
-            await existingNotif.save();
-          } else {
-            await Notification.create({
-              recipientId: moment.userId,
-              senderId: viewerUserId,
-              type: 'moment_reaction',
-              title: 'New Quick Moment Reaction',
-              body: `${reactorName} reacted ${emoji} to your quick moment`,
-              entityId: momentId,
-              data: {
-                quickMomentId: momentId,
-                emoji,
-                navigation: { type: 'quick_moment', targetId: momentId },
-              },
-              isRead: false,
-            });
-          }
-        } catch (notifErr: any) {
-          console.warn('[Quick Moment Notif Warning]:', notifErr.message);
-        }
+        await this.notifyQuickMomentReaction(moment.userId, viewerUserId, momentId, emoji);
       }
     }
 
-    // Return updated reaction metrics
+    // Return updated reaction metrics with the people who reacted, so the
+    // owner's open story can show the emoji without a second request.
     const allReactions = await QuickMomentReaction.findAll({
       where: { quickMomentId: momentId },
-      attributes: ['emoji'],
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+        },
+      ],
     });
 
     const reactionSummary = buildReactionBadge(allReactions);
+    const reactions = allReactions.map((r) => mapQuickMomentReaction(r));
 
-    return {
+    const result = {
       action,
+      momentId,
       myReaction: currentEmoji,
       totalReactions: reactionSummary.total,
+      reactionsCount: reactionSummary.total,
       topEmojis: reactionSummary.topEmojis,
       badgeText: reactionSummary.badgeText,
       breakdown: reactionSummary.breakdown,
+      reactions,
+      reactors: reactions,
     };
+
+    try {
+      const { getSocketServer } = await import('../realtime/socket.server');
+      const { getUserRoomName } = await import('../realtime/socket.lifecycle');
+      const io = getSocketServer();
+      io.to(getUserRoomName(moment.userId)).emit('quick_moment:reaction' as any, result);
+      io.to(getUserRoomName(viewerUserId)).emit('quick_moment:reaction' as any, {
+        ...result,
+        myReaction: currentEmoji,
+      });
+    } catch {
+      // Socket server is optional in tests.
+    }
+
+    return result;
   }
 
   /**
@@ -816,38 +1018,250 @@ export class QuickMomentService {
       throw new QuickMomentServiceError('This quick moment has expired', 410, 'MOMENT_EXPIRED');
     }
 
-    // Increment repliesCount
-    await moment.increment('repliesCount', { by: 1 });
+    await QuickMomentReply.create({
+      quickMomentId: momentId,
+      userId: viewerUserId,
+      message,
+    });
+
+    const repliesCount = await QuickMomentReply.count({
+      where: { quickMomentId: momentId },
+    });
+
+    moment.repliesCount = repliesCount;
+    await moment.save();
 
     const sender = await User.findByPk(viewerUserId, {
       attributes: ['id', 'fullName', 'nickName'],
     });
     const senderName = sender?.fullName || sender?.nickName || 'Someone';
 
-    // Notify author
+    // Notify author in-app and with a push. Each reply is its own event.
     if (moment.userId !== viewerUserId) {
-      try {
-        await Notification.create({
-          recipientId: moment.userId,
-          senderId: viewerUserId,
-          type: 'moment_reply',
-          title: 'Reply to your Quick Moment',
-          body: `${senderName}: "${message.slice(0, 80)}"`,
-          data: {
-            quickMomentId: momentId,
-            replyText: message,
-          },
-        });
-      } catch (err: any) {
-        console.warn('[Quick Moment Reply Notif Warning]:', err.message);
-      }
+      await this.dispatchQuickMomentNotification(moment.userId, viewerUserId, momentId, {
+        type: 'moment_reply',
+        title: 'Reply to your Quick Moment',
+        body: `${senderName}: "${message.slice(0, 80)}"`,
+        replyText: message,
+      });
     }
 
     return {
       momentId,
       repliedToUserId: moment.userId,
       message,
+      repliesCount,
+      totalReplies: repliesCount,
       sentAt: new Date(),
+    };
+  }
+
+  /**
+   * Older replies were only written onto the in-app notification. Link those
+   * rows into quick_moment_replies so the activity sheet can show the text.
+   */
+  private async backfillRepliesFromNotifications(momentId: string): Promise<void> {
+    const notifications = await Notification.findAll({
+      where: {
+        entityId: momentId,
+        type: { [Op.in]: ['moment_reply', 'quick_moment_reply'] },
+      },
+      order: [['createdAt', 'ASC']],
+    });
+
+    for (const notification of notifications) {
+      const data = parseNotificationData(notification.data);
+      if (!data || String(data.quickMomentId || '') !== momentId) continue;
+
+      const message = typeof data.replyText === 'string' ? data.replyText : '';
+      if (!message || !notification.senderId) continue;
+
+      const linked = await QuickMomentReply.findOne({
+        where: { notificationId: notification.id },
+      });
+      if (linked) continue;
+
+      const orphan = await QuickMomentReply.findOne({
+        where: {
+          quickMomentId: momentId,
+          userId: notification.senderId,
+          message,
+          notificationId: { [Op.is]: null },
+        },
+        order: [['createdAt', 'ASC']],
+      });
+
+      if (orphan) {
+        orphan.notificationId = notification.id;
+        await orphan.save();
+        continue;
+      }
+
+      try {
+        await QuickMomentReply.create({
+          quickMomentId: momentId,
+          userId: notification.senderId,
+          message,
+          notificationId: notification.id,
+          createdAt: notification.createdAt,
+          updatedAt: notification.updatedAt || notification.createdAt,
+        });
+      } catch (err) {
+        if (err instanceof UniqueConstraintError) continue;
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * GET /api/v1/quick-moments/:momentId/replies
+   * Owner activity sheet: replies, viewers, and reactions for one quick moment.
+   */
+  public async getQuickMomentReplies(
+    viewerUserId: string,
+    momentId: string,
+    options: { page?: number; limit?: number } = {}
+  ) {
+    await ensureQuickMomentTables();
+    const moment = await QuickMoment.findByPk(momentId, {
+      attributes: ['id', 'userId', 'repliesCount'],
+    });
+
+    if (!moment) {
+      throw new QuickMomentServiceError('Quick moment not found', 404, 'MOMENT_NOT_FOUND');
+    }
+
+    const viewer = await User.findByPk(viewerUserId, { attributes: ['id', 'role'] });
+    const isOwner = moment.userId === viewerUserId;
+    const isAuthorized = isOwner || viewer?.role === 'admin';
+
+    if (!isAuthorized) {
+      throw new QuickMomentServiceError(
+        'Only the moment owner can view replies',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    await this.backfillRepliesFromNotifications(momentId);
+
+    const page = Math.max(1, options.page || 1);
+    const limit = Math.max(1, Math.min(100, options.limit || 30));
+    const offset = (page - 1) * limit;
+
+    const { count, rows } = await QuickMomentReply.findAndCountAll({
+      where: { quickMomentId: momentId },
+      include: [
+        {
+          model: User,
+          as: 'user',
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
+        },
+      ],
+      order: [['createdAt', 'DESC']],
+      limit,
+      offset,
+    });
+
+    const replies = rows.map((row: any) => ({
+      id: row.id,
+      message: row.message,
+      createdAt: row.createdAt,
+      timeAgo: row.createdAt ? formatTimeAgo(row.createdAt, false) : null,
+      user: row.user
+        ? {
+            id: row.user.id,
+            name: row.user.fullName || row.user.nickName || 'User',
+            avatar: row.user.profilePicture
+              ? formatThumbnailUrl(row.user.profilePicture, row.user.updatedAt)
+              : null,
+            city: row.user.city || null,
+            isVerified: !!row.user.isFaceVerified,
+            isSubscribed: !!row.user.isSubscribed,
+          }
+        : null,
+    }));
+
+    const userAttributes = ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'];
+
+    const [viewRows, reactionRows] = await Promise.all([
+      QuickMomentView.findAll({
+        where: { quickMomentId: momentId },
+        include: [{ model: User, as: 'viewer', attributes: userAttributes }],
+        order: [['createdAt', 'DESC']],
+      }),
+      QuickMomentReaction.findAll({
+        where: { quickMomentId: momentId },
+        include: [{ model: User, as: 'user', attributes: userAttributes }],
+        order: [['createdAt', 'DESC']],
+      }),
+    ]);
+
+    const viewers = viewRows.map((view: any) => ({
+      userId: view.viewer?.id,
+      name: view.viewer?.fullName || view.viewer?.nickName || 'Viewer',
+      avatar: view.viewer?.profilePicture
+        ? formatThumbnailUrl(view.viewer.profilePicture, view.viewer.updatedAt)
+        : null,
+      isVerified: !!view.viewer?.isFaceVerified,
+      isSubscribed: !!view.viewer?.isSubscribed,
+      city: view.viewer?.city || null,
+      viewedAt: view.createdAt,
+      timeAgo: view.createdAt ? formatTimeAgo(view.createdAt, false) : null,
+    }));
+
+    const reactionSummary = buildReactionBadge(reactionRows);
+    const reactors = reactionRows.map((reaction: any) => ({
+      id: reaction.id,
+      emoji: reaction.emoji,
+      createdAt: reaction.createdAt,
+      timeAgo: reaction.createdAt ? formatTimeAgo(reaction.createdAt, false) : null,
+      user: reaction.user
+        ? {
+            id: reaction.user.id,
+            name: reaction.user.fullName || reaction.user.nickName || 'User',
+            avatar: reaction.user.profilePicture
+              ? formatThumbnailUrl(reaction.user.profilePicture, reaction.user.updatedAt)
+              : null,
+            city: reaction.user.city || null,
+            isVerified: !!reaction.user.isFaceVerified,
+            isSubscribed: !!reaction.user.isSubscribed,
+          }
+        : null,
+    }));
+
+    if (moment.repliesCount !== count) {
+      moment.repliesCount = count;
+      await moment.save();
+    }
+
+    return {
+      momentId,
+      total: count,
+      repliesCount: count,
+      totalReplies: count,
+      replies,
+      pagination: {
+        page,
+        limit,
+        total: count,
+        totalPages: Math.ceil(count / limit),
+      },
+      views: {
+        total: viewers.length,
+        totalViews: viewers.length,
+        viewsCount: viewers.length,
+        viewers,
+      },
+      reactions: {
+        total: reactionSummary.total,
+        totalReactions: reactionSummary.total,
+        reactionsCount: reactionSummary.total,
+        topEmojis: reactionSummary.topEmojis,
+        badgeText: reactionSummary.badgeText,
+        breakdown: reactionSummary.breakdown,
+        reactors,
+      },
     };
   }
 
@@ -865,14 +1279,70 @@ export class QuickMomentService {
       defaults: { quickMomentId: momentId, userId: viewerUserId },
     });
 
-    if (created) {
-      await moment.increment('viewsCount', { by: 1 });
+    const totalViews = await QuickMomentView.count({
+      where: { quickMomentId: momentId },
+    });
+
+    if (moment.viewsCount !== totalViews) {
+      moment.viewsCount = totalViews;
+      await moment.save();
+    }
+
+    if (moment.userId !== viewerUserId) {
+      await this.keepAuthorInViewerChat(viewerUserId, moment.userId);
     }
 
     return {
       momentId,
       isViewed: true,
-      viewsCount: moment.viewsCount + (created ? 1 : 0),
+      viewsCount: totalViews,
+      totalViews,
+    };
+  }
+
+  /**
+   * 7b. MARK ALL ACTIVE MOMENTS OF A USER AS VIEWED
+   */
+  public async markUserMomentsViewed(viewerUserId: string, targetUserId: string) {
+    await ensureQuickMomentTables();
+    const now = new Date();
+    const moments = await QuickMoment.findAll({
+      where: {
+        userId: targetUserId,
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'userId', 'viewsCount'],
+    });
+
+    let newlyViewed = 0;
+    for (const moment of moments) {
+      const [, created] = await QuickMomentView.findOrCreate({
+        where: { quickMomentId: moment.id, userId: viewerUserId },
+        defaults: { quickMomentId: moment.id, userId: viewerUserId },
+      });
+      if (created) {
+        newlyViewed++;
+      }
+      const totalViews = await QuickMomentView.count({
+        where: { quickMomentId: moment.id },
+      });
+      if (moment.viewsCount !== totalViews) {
+        moment.viewsCount = totalViews;
+        await moment.save();
+      }
+    }
+
+    if (viewerUserId !== targetUserId && moments.length > 0) {
+      await this.keepAuthorInViewerChat(viewerUserId, targetUserId);
+    }
+
+    return {
+      userId: targetUserId,
+      totalMoments: moments.length,
+      totalStories: moments.length,
+      newlyViewed,
+      hasUnread: false,
     };
   }
 
@@ -895,7 +1365,7 @@ export class QuickMomentService {
         {
           model: User,
           as: 'viewer',
-          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'city', 'updatedAt'],
+          attributes: ['id', 'fullName', 'nickName', 'profilePicture', 'isFaceVerified', 'isSubscribed', 'city', 'updatedAt'],
         },
       ],
       order: [['createdAt', 'DESC']],
@@ -906,14 +1376,21 @@ export class QuickMomentService {
       name: v.viewer?.fullName || v.viewer?.nickName || 'Viewer',
       avatar: v.viewer?.profilePicture ? formatThumbnailUrl(v.viewer.profilePicture, v.viewer.updatedAt) : null,
       isVerified: !!v.viewer?.isFaceVerified,
+      isSubscribed: !!v.viewer?.isSubscribed,
       city: v.viewer?.city,
       viewedAt: v.createdAt,
       timeAgo: formatTimeAgo(v.createdAt, false),
     }));
 
+    if (moment.viewsCount !== viewers.length) {
+      moment.viewsCount = viewers.length;
+      await moment.save();
+    }
+
     return {
       momentId,
       totalViews: viewers.length,
+      viewsCount: viewers.length,
       viewers,
     };
   }
@@ -1089,6 +1566,7 @@ export class QuickMomentService {
         await QuickMoment.sync();
         await QuickMomentReaction.sync();
         await QuickMomentView.sync();
+        await QuickMomentReply.sync();
         quickMomentTablesReady = true;
 
         moment = await QuickMoment.create({
@@ -1151,6 +1629,61 @@ export class QuickMomentService {
     await moment.save();
 
     return { success: true, message: 'Quick moment deleted successfully' };
+  }
+
+  /**
+   * 11. GET USER QUICK MOMENT STATS & METRICS
+   * Calculates overall active counts, total created stories, views, reactions, and replies.
+   */
+  public async getQuickMomentStats(userId: string) {
+    await ensureQuickMomentTables();
+    const now = new Date();
+
+    const activeMoments = await QuickMoment.findAll({
+      where: {
+        userId,
+        status: 'active',
+        expiresAt: { [Op.gt]: now },
+      },
+      attributes: ['id', 'viewsCount', 'repliesCount', 'createdAt', 'expiresAt'],
+    });
+
+    const allUserMoments = await QuickMoment.findAll({
+      where: { userId },
+      attributes: ['id'],
+    });
+    const momentIds = allUserMoments.map((m) => m.id);
+
+    let totalViewsAggregate = 0;
+    let totalReactionsAggregate = 0;
+    let totalRepliesAggregate = 0;
+
+    if (momentIds.length > 0) {
+      const [vCount, rCount, repCount] = await Promise.all([
+        QuickMomentView.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+        QuickMomentReaction.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+        QuickMomentReply.count({ where: { quickMomentId: { [Op.in]: momentIds } } }),
+      ]);
+      totalViewsAggregate = vCount;
+      totalReactionsAggregate = rCount;
+      totalRepliesAggregate = repCount;
+    }
+
+    const activeCount = activeMoments.length;
+    const activeViews = activeMoments.reduce((acc, m) => acc + (m.viewsCount || 0), 0);
+    const activeReplies = activeMoments.reduce((acc, m) => acc + (m.repliesCount || 0), 0);
+
+    return {
+      userId,
+      activeCount,
+      totalActiveStories: activeCount,
+      totalStoriesCreated: allUserMoments.length,
+      totalViews: totalViewsAggregate,
+      totalReactions: totalReactionsAggregate,
+      totalReplies: totalRepliesAggregate,
+      activeViews,
+      activeReplies,
+    };
   }
 }
 

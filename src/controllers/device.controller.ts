@@ -2,6 +2,7 @@ import { Response } from 'express';
 import { AuthenticatedRequest } from '../middlewares/auth.middleware';
 import { sendSuccess, sendError } from '../utils/response';
 import { notificationService } from '../services/notification.service';
+import { readVoipToken } from '../utils/voipToken';
 
 /**
  * Register or update device token
@@ -21,18 +22,26 @@ export const registerDeviceHandler = async (
       req.body.token ||
       req.body.deviceToken ||
       req.body.fcmToken ||
-      req.body.device_token;
+      req.body.device_token ||
+      req.body.fcm_token ||
+      req.body.registrationToken ||
+      req.body.registration_token ||
+      req.body.pushToken ||
+      req.body.push_token;
 
-    const platform = (req.body.platform || 'android').toLowerCase() as
-      | 'ios'
-      | 'android'
-      | 'web';
+    const platform = (
+      req.body.platform ||
+      req.body.deviceType ||
+      req.body.device_type ||
+      'android'
+    ).toLowerCase() as 'ios' | 'android' | 'web';
     const deviceId = req.body.deviceId;
 
     const result = await notificationService.registerDeviceToken(userId, {
       deviceToken: rawToken,
       platform,
       deviceId,
+      voipToken: readVoipToken(req.body),
     });
 
     return sendSuccess(res, 'Device registered successfully', result, 200);
@@ -69,12 +78,14 @@ export const unregisterDeviceHandler = async (
       req.query?.token ||
       req.query?.deviceToken;
 
-    if (!rawToken || typeof rawToken !== 'string' || !rawToken.trim()) {
-      return sendError(res, 'Device token is required to unregister', 400, 'VALIDATION_ERROR');
+    if (rawToken && typeof rawToken === 'string' && rawToken.trim()) {
+      const result = await notificationService.deactivateDeviceToken(rawToken.trim(), userId);
+      return sendSuccess(res, 'Device unregistered successfully', result, 200);
     }
 
-    const result = await notificationService.deactivateDeviceToken(rawToken, userId);
-    return sendSuccess(res, 'Device unregistered successfully', result, 200);
+    // If no specific token was provided (e.g. general logout), deactivate all devices for the user
+    const result = await notificationService.deactivateAllUserDevices(userId);
+    return sendSuccess(res, 'All devices unregistered successfully', result, 200);
   } catch (error: any) {
     console.error('[Device Unregister Error]:', error);
     return sendError(

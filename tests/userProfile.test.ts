@@ -46,7 +46,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
   });
 
   describe('1. Successful Profile Onboarding Flow', () => {
-    it('should allow authenticated user to save profile and mark profile as complete', async () => {
+    it('should save profile and open the profile photo step', async () => {
       const payload = {
         fullName: 'Mike Hussey',
         nickName: 'Mikey',
@@ -71,7 +71,8 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.dateOfBirth).toBe('1996-10-09');
       expect(res.body.data.gender).toBe('male');
       expect(res.body.data.about).toBe(payload.about);
-      expect(res.body.data.isProfileComplete).toBe(true);
+      expect(res.body.data.isProfileComplete).toBe(false);
+      expect(res.body.data.currentStep).toBe('photos');
       expect(res.body.data.location).toBeDefined();
       expect(res.body.data.age).toBeDefined();
       expect(res.body.data.password).toBeUndefined();
@@ -82,7 +83,105 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(updatedDbUser?.nickName).toBe('Mikey');
       expect(updatedDbUser?.dateOfBirth).toBe('1996-10-09');
       expect(updatedDbUser?.gender).toBe('male');
-      expect(updatedDbUser?.isProfileComplete).toBe(true);
+      expect(updatedDbUser?.isProfileComplete).toBe(false);
+      expect(updatedDbUser?.onboardingStep).toBe('photos');
+    });
+
+    it('marks the profile complete when gesture verification is already approved', async () => {
+      testUser.isFaceVerified = true;
+      testUser.onboardingStep = 'gesture';
+      await testUser.save();
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          fullName: 'Mike Hussey',
+          dateOfBirth: '1996-10-09',
+          gender: 'male',
+        });
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.isProfileComplete).toBe(true);
+      expect(res.body.data.currentStep).toBe('completed');
+    });
+
+    it('should update profile with username, location, latitude, longitude and sync nickName', async () => {
+      const payload = {
+        about: 'Def a. SCD kasndklat and you will never get a chance for this one day you are not going anywhere with your life in it you will be a legend and you are',
+        dateOfBirth: '2007-06-07',
+        fullName: 'Madsudan Patel',
+        gender: 'male',
+        username: 'madupatel',
+        location: 'Mumbai, Maharashtra',
+        latitude: 19.076,
+        longitude: 72.8777,
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.username).toBe('madupatel');
+      expect(res.body.data.nickName).toBe('madupatel');
+      expect(res.body.data.fullName).toBe('Madsudan Patel');
+      expect(res.body.data.firstName).toBe('Madsudan');
+      expect(res.body.data.lastName).toBe('Patel');
+      expect(res.body.data.dateOfBirth).toBe('2007-06-07');
+      expect(res.body.data.gender).toBe('male');
+      expect(res.body.data.about).toBe(payload.about);
+      expect(res.body.data.latitude).toBe(19.076);
+      expect(res.body.data.longitude).toBe(72.8777);
+      expect(res.body.data.location.latitude).toBe(19.076);
+      expect(res.body.data.location.longitude).toBe(72.8777);
+
+      // Verify in DB
+      const userInDb = await User.findByPk(testUser.id);
+      expect(userInDb?.username).toBe('madupatel');
+      expect(userInDb?.nickName).toBe('madupatel');
+      expect(userInDb?.latitude).toBe(19.076);
+      expect(userInDb?.longitude).toBe(72.8777);
+    });
+
+    it('should support longitutute alias and string coordinates for latitude and longitude', async () => {
+      const payload = {
+        latitude: '23.0225',
+        longitutute: '72.5714',
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.latitude).toBe(23.0225);
+      expect(res.body.data.longitude).toBe(72.5714);
+    });
+
+    it('should reject username if already taken by another user', async () => {
+      // Create another user with a specific username
+      await User.create({
+        username: 'existing_taken_user',
+        email: 'other_user@example.com',
+        role: 'user',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send({
+          username: 'existing_taken_user',
+        });
+
+      expect(res.status).toBe(400);
+      expect(res.body.success).toBe(false);
+      expect(res.body.message).toMatch(/username is already taken/i);
     });
 
     it('should accept location string along with dateOfBirth and return structured location and age', async () => {
@@ -104,16 +203,92 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.data.location).toEqual({
         city: 'Indore',
         state: 'Madhya Pradesh',
+        country: null,
+        county: null,
         name: 'Indore, Madhya Pradesh',
         label: 'Indore, Madhya Pradesh',
+        fullLocation: 'Indore, Madhya Pradesh',
+        formattedLocation: 'Indore, Madhya Pradesh',
         latitude: null,
         longitude: null,
       });
       expect(res.body.data.city).toBe('Indore, Madhya Pradesh');
+      expect(res.body.data.state).toBe('Madhya Pradesh');
+      expect(res.body.data.country).toBeNull();
+      expect(res.body.data.county).toBeNull();
+      expect(res.body.data.fullLocation).toBe('Indore, Madhya Pradesh');
 
       // Verify in DB
       const userInDb = await User.findByPk(testUser.id);
       expect(userInDb?.city).toBe('Indore, Madhya Pradesh');
+    });
+
+    it('saves the location and about-me values the user entered', async () => {
+      const payload = {
+        fullName: 'Madsudan Patel',
+        username: 'madupatel',
+        nickName: 'Madu',
+        dateOfBirth: '1996-10-09',
+        gender: 'male',
+        about: 'Creative mind with a love for design.',
+        location: 'Mumbai, Maharashtra',
+        latitude: 19.076,
+        longitude: 72.8777,
+        drinking: 'Socially',
+        education: 'Graduate',
+        height: '5\'10"',
+        religion: 'Hindu',
+        sexuality: 'Straight',
+        smoking: 'Never',
+        weight: '70 kg',
+        eyeColor: 'Brown',
+        hairColor: 'Black',
+        living: 'With family',
+        relationship: 'Single',
+        children: 'No',
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.fullName).toBe('Madsudan Patel');
+      expect(res.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
+      expect(res.body.data.location.city).toBe('Mumbai');
+      expect(res.body.data.location.state).toBe('Maharashtra');
+      expect(res.body.data.location.country).toBeNull();
+      expect(res.body.data.latitude).toBe(19.076);
+      expect(res.body.data.longitude).toBe(72.8777);
+      expect(res.body.data.location.latitude).toBe(19.076);
+      expect(res.body.data.location.longitude).toBe(72.8777);
+      expect(res.body.data.moreAboutMe.drinking).toBe('Socially');
+      expect(res.body.data.moreAboutMe.education).toBe('Graduate');
+      expect(res.body.data.moreAboutMe.height).toBe('5\'10"');
+      expect(res.body.data.moreAboutMe.religion).toBe('Hindu');
+      expect(res.body.data.moreAboutMe.items.map((item: { key: string; value: string }) => item.key)).toEqual([
+        'drinking',
+        'education',
+        'height',
+        'religion',
+        'sexuality',
+        'smoking',
+        'weight',
+        'eyeColor',
+        'hairColor',
+        'living',
+        'relationship',
+        'children',
+      ]);
+      expect(res.body.data.moreAboutMe.items.every((item: { value: string | null }) => item.value)).toBe(true);
+
+      const userInDb = await User.findByPk(testUser.id);
+      expect(userInDb?.city).toBe('Mumbai, Maharashtra');
+      expect(userInDb?.latitude).toBe(19.076);
+      expect(userInDb?.longitude).toBe(72.8777);
+      expect(userInDb?.drinking).toBe('Socially');
+      expect(userInDb?.children).toBe('No');
     });
 
     it('should accept location object with coordinates and return structured location', async () => {
@@ -135,8 +310,15 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(res.body.success).toBe(true);
       expect(res.body.data.location.city).toBe('Mumbai');
       expect(res.body.data.location.state).toBe('Maharashtra');
+      expect(res.body.data.location.country).toBeNull();
+      expect(res.body.data.location.county).toBeNull();
+      expect(res.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
       expect(res.body.data.location.latitude).toBe(19.076);
       expect(res.body.data.location.longitude).toBe(72.8777);
+      expect(res.body.data.state).toBe('Maharashtra');
+      expect(res.body.data.country).toBeNull();
+      expect(res.body.data.county).toBeNull();
+      expect(res.body.data.fullLocation).toBe('Mumbai, Maharashtra');
       expect(res.body.data.latitude).toBe(19.076);
       expect(res.body.data.longitude).toBe(72.8777);
 
@@ -148,8 +330,66 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
       expect(getRes.status).toBe(200);
       expect(getRes.body.data.location.city).toBe('Mumbai');
       expect(getRes.body.data.location.state).toBe('Maharashtra');
+      expect(getRes.body.data.location.country).toBeNull();
+      expect(getRes.body.data.location.county).toBeNull();
+      expect(getRes.body.data.location.fullLocation).toBe('Mumbai, Maharashtra');
+      expect(getRes.body.data.profile.location.city).toBe('Mumbai');
+      expect(getRes.body.data.profile.location.state).toBe('Maharashtra');
+      expect(getRes.body.data.profile.location.country).toBeNull();
+      expect(getRes.body.data.profile.location.county).toBeNull();
+      expect(getRes.body.data.profile.location.fullLocation).toBe('Mumbai, Maharashtra');
+      expect(getRes.body.data.profile.state).toBe('Maharashtra');
+      expect(getRes.body.data.profile.country).toBeNull();
+      expect(getRes.body.data.profile.county).toBeNull();
+      expect(getRes.body.data.profile.fullLocation).toBe('Mumbai, Maharashtra');
       expect(getRes.body.data.location.latitude).toBe(19.076);
       expect(getRes.body.data.location.longitude).toBe(72.8777);
+    });
+
+    it('should accept full location object with county and country and return structured full location', async () => {
+      const payload = {
+        location: {
+          city: 'Austin',
+          county: 'Travis County',
+          state: 'Texas',
+          country: 'United States',
+          latitude: 30.2672,
+          longitude: -97.7431,
+        },
+      };
+
+      const res = await request(app)
+        .patch('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`)
+        .send(payload);
+
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.location.city).toBe('Austin');
+      expect(res.body.data.location.county).toBe('Travis County');
+      expect(res.body.data.location.state).toBe('Texas');
+      expect(res.body.data.location.country).toBe('United States');
+      expect(res.body.data.location.fullLocation).toBe('Austin, Travis County, Texas, United States');
+      expect(res.body.data.state).toBe('Texas');
+      expect(res.body.data.country).toBe('United States');
+      expect(res.body.data.county).toBe('Travis County');
+      expect(res.body.data.fullLocation).toBe('Austin, Travis County, Texas, United States');
+
+      // Verify in GET /api/v1/users/profile
+      const getRes = await request(app)
+        .get('/api/v1/users/profile')
+        .set('Authorization', `Bearer ${authToken}`);
+
+      expect(getRes.status).toBe(200);
+      expect(getRes.body.data.profile.location.city).toBe('Austin');
+      expect(getRes.body.data.profile.location.county).toBe('Travis County');
+      expect(getRes.body.data.profile.location.state).toBe('Texas');
+      expect(getRes.body.data.profile.location.country).toBe('United States');
+      expect(getRes.body.data.profile.location.fullLocation).toBe('Austin, Travis County, Texas, United States');
+      expect(getRes.body.data.profile.state).toBe('Texas');
+      expect(getRes.body.data.profile.country).toBe('United States');
+      expect(getRes.body.data.profile.county).toBe('Travis County');
+      expect(getRes.body.data.profile.fullLocation).toBe('Austin, Travis County, Texas, United States');
     });
   });
 
@@ -687,7 +927,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           verificationId,
-          otp: '000000',
+          otp: '999999',
         });
 
       expect(res.status).toBe(401);
@@ -990,7 +1230,7 @@ describe('User Profile Onboarding API (PATCH /api/v1/users/profile)', () => {
         .set('Authorization', `Bearer ${authToken}`)
         .send({
           verificationId,
-          otp: '000000',
+          otp: '999999',
         });
 
       expect(res.status).toBe(401);

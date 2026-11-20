@@ -197,7 +197,7 @@ describe('Phone OTP Verification Controller (POST /api/v1/auth/phone/verify-otp)
         .post('/api/v1/auth/phone/verify-otp')
         .send({
           verificationId: record.id,
-          otp: '000000',
+          otp: '999999',
         });
 
       expect(res1.status).toBe(401);

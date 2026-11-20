@@ -19,8 +19,10 @@ export interface InteractionUserCard {
   age: number | null;
   profilePhotoUrl: string | null;
   isVerified: boolean;
+  isSubscribed: boolean;
   distanceKm: number | null;
   locationLabel: string;
+  isBlurred?: boolean;
 }
 
 export interface InteractionItemDTO {
@@ -43,6 +45,8 @@ export interface InteractionItemDTO {
 
 export interface InteractionsListResponse {
   type: InteractionType;
+  isLocked?: boolean;
+  totalCount?: number;
   items: InteractionItemDTO[];
   pagination: {
     limit: number;
@@ -171,6 +175,7 @@ export class InteractionService {
       age: calculateAge(targetUser.dateOfBirth),
       profilePhotoUrl: this.resolvePrimaryPhoto(targetUser.profilePicture, targetUser.photos),
       isVerified: Boolean(targetUser.isFaceVerified),
+      isSubscribed: Boolean(targetUser.isSubscribed),
       distanceKm,
       locationLabel: targetUser.city || 'Mumbai',
     };
@@ -186,9 +191,10 @@ export class InteractionService {
       limit?: number;
       cursor?: string;
       sort?: string;
+      excludeMatched?: boolean;
     }
   ): Promise<InteractionsListResponse> {
-    const { type, limit = 20, cursor } = options;
+    const { type, limit = 20, cursor, excludeMatched } = options;
     const validatedLimit = Math.min(50, Math.max(1, limit));
     const decodedCursor = this.decodeCursor(cursor);
 
@@ -202,7 +208,7 @@ export class InteractionService {
 
     switch (type) {
       case 'likes':
-        return this.getLikesInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds);
+        return this.getLikesInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds, excludeMatched);
       case 'you_liked':
         return this.getYouLikedInteractions(currentUser, validatedLimit, decodedCursor, excludedUserIds);
       case 'matches':
@@ -216,39 +222,50 @@ export class InteractionService {
 
   /**
    * Tab 1: Likes (Incoming likes where targetUserId = currentUserId)
-   * Excludes mutual matches and users already swiped on by current user
+   * Shows users who liked currentUser. Excludes blocked and noped users.
+   * Matches can be optionally excluded via excludeMatched flag.
    */
   private async getLikesInteractions(
     currentUser: User,
     limit: number,
     cursor: DecodedCursor | null,
-    excludedUserIds: Set<string>
+    excludedUserIds: Set<string>,
+    excludeMatched?: boolean
   ): Promise<InteractionsListResponse> {
-    // 1. Identify users current user has already swiped on or already matched with
-    const [outgoingSwipes, matches] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUser.id },
-        attributes: ['targetUserId'],
-      }),
-      Match.findAll({
+    // 1. Identify nope actions to exclude rejected users
+    const nopedSwipes = await SwipeAction.findAll({
+      where: {
+        [Op.or]: [
+          { userId: currentUser.id, action: 'nope' },
+          { targetUserId: currentUser.id, action: 'nope' },
+        ],
+      },
+      attributes: ['userId', 'targetUserId'],
+      raw: true,
+    });
+    const finalExcludedUserIds = new Set<string>(excludedUserIds);
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUser.id) finalExcludedUserIds.add(s.targetUserId);
+      if (s.targetUserId === currentUser.id) finalExcludedUserIds.add(s.userId);
+    });
+
+    if (excludeMatched) {
+      const matches = await Match.findAll({
         where: {
           [Op.or]: [{ user1Id: currentUser.id }, { user2Id: currentUser.id }],
           isActive: true,
         },
         attributes: ['user1Id', 'user2Id'],
-      }),
-    ]);
-
-    const alreadyResolvedUserIds = new Set<string>(excludedUserIds);
-    outgoingSwipes.forEach((s) => alreadyResolvedUserIds.add(s.targetUserId));
-    matches.forEach((m) => {
-      alreadyResolvedUserIds.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
-    });
+      });
+      matches.forEach((m) => {
+        finalExcludedUserIds.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
+      });
+    }
 
     const whereClause: any = {
       targetUserId: currentUser.id,
       action: { [Op.in]: ['like', 'super_like'] },
-      userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+      userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
     };
 
     if (cursor) {
@@ -293,16 +310,58 @@ export class InteractionService {
     const hasMore = rows.length > limit;
     const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
 
+    // Check match status for returned users in batch
+    const senderIds = itemsToReturn.map((s) => s.userId);
+    const matchMap = new Set<string>();
+
+    if (senderIds.length > 0) {
+      const activeMatches = await Match.findAll({
+        where: {
+          [Op.or]: [
+            { user1Id: currentUser.id, user2Id: { [Op.in]: senderIds } },
+            { user2Id: currentUser.id, user1Id: { [Op.in]: senderIds } },
+          ],
+          isActive: true,
+        },
+        attributes: ['user1Id', 'user2Id'],
+      });
+      activeMatches.forEach((m) => {
+        matchMap.add(m.user1Id === currentUser.id ? m.user2Id : m.user1Id);
+      });
+    }
+
+    const isLocked = !Boolean(currentUser.isSubscribed);
+    const totalCount = await SwipeAction.count({
+      where: {
+        targetUserId: currentUser.id,
+        action: { [Op.in]: ['like', 'super_like'] },
+        userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
+      },
+    });
+
     const items: InteractionItemDTO[] = itemsToReturn.map((swipe) => {
       const userCard = this.formatUserCard((swipe as any).user, currentUser);
+      const maskedCard: InteractionUserCard = isLocked
+        ? {
+            ...userCard,
+            name: userCard.name ? `${userCard.name.charAt(0)}***` : 'Someone',
+            username: userCard.username ? `${userCard.username.charAt(0)}***` : '',
+            isBlurred: true,
+          }
+        : {
+            ...userCard,
+            isBlurred: false,
+          };
+
       return {
         interactionId: swipe.id,
-        username: userCard.username,
-        user: userCard,
+        username: maskedCard.username,
+        user: maskedCard,
         interaction: {
           type: 'likes',
           createdAt: swipe.createdAt.toISOString(),
           action: swipe.action as 'like' | 'super_like',
+          isMatched: matchMap.has(swipe.userId),
         },
       };
     });
@@ -314,6 +373,8 @@ export class InteractionService {
 
     return {
       type: 'likes',
+      isLocked,
+      totalCount,
       items,
       pagination: {
         limit,
@@ -441,51 +502,57 @@ export class InteractionService {
     cursor: DecodedCursor | null,
     excludedUserIds: Set<string>
   ): Promise<InteractionsListResponse> {
-    const whereClause: any = {
-      [Op.or]: [{ user1Id: currentUser.id }, { user2Id: currentUser.id }],
-      isActive: true,
-    };
+    const partnerExcluded = Array.from(excludedUserIds);
+    const andClauses: any[] = [
+      {
+        [Op.or]: [
+          { user1Id: currentUser.id, user2Id: { [Op.notIn]: partnerExcluded } },
+          { user2Id: currentUser.id, user1Id: { [Op.notIn]: partnerExcluded } },
+        ],
+      },
+    ];
 
     if (cursor) {
-      whereClause[Op.and] = [
-        {
-          [Op.or]: [
-            { createdAt: { [Op.lt]: new Date(cursor.createdAt) } },
-            {
-              createdAt: new Date(cursor.createdAt),
-              id: { [Op.lt]: cursor.id },
-            },
-          ],
-        },
-      ];
+      andClauses.push({
+        [Op.or]: [
+          { createdAt: { [Op.lt]: new Date(cursor.createdAt) } },
+          {
+            createdAt: new Date(cursor.createdAt),
+            id: { [Op.lt]: cursor.id },
+          },
+        ],
+      });
     }
 
+    const approvedPhotos = {
+      model: UserPhoto,
+      as: 'photos',
+      where: { status: 'approved' },
+      required: false,
+      separate: true,
+    };
+
+    // Photos are loaded in a separate query. Joining them on both users with LIMIT
+    // drops match rows in Postgres when either person has no approved photo.
     const rows = await Match.findAll({
-      where: whereClause,
+      where: {
+        isActive: true,
+        [Op.and]: andClauses,
+      },
       include: [
         {
           model: User,
           as: 'user1',
-          include: [
-            {
-              model: UserPhoto,
-              as: 'photos',
-              where: { status: 'approved' },
-              required: false,
-            },
-          ],
+          required: true,
+          where: { isActive: true },
+          include: [approvedPhotos],
         },
         {
           model: User,
           as: 'user2',
-          include: [
-            {
-              model: UserPhoto,
-              as: 'photos',
-              where: { status: 'approved' },
-              required: false,
-            },
-          ],
+          required: true,
+          where: { isActive: true },
+          include: [{ ...approvedPhotos }],
         },
       ],
       order: [
@@ -493,19 +560,18 @@ export class InteractionService {
         ['id', 'DESC'],
       ],
       limit: limit + 1,
+      subQuery: false,
     });
 
-    // Filter out blocked or inactive counterpart users
-    const validMatches = rows.filter((m) => {
-      const partner = m.user1Id === currentUser.id ? (m as any).user2 : (m as any).user1;
-      return partner && partner.isActive && !excludedUserIds.has(partner.id);
-    });
-
-    const hasMore = validMatches.length > limit;
-    const itemsToReturn = hasMore ? validMatches.slice(0, limit) : validMatches;
+    const hasMore = rows.length > limit;
+    const itemsToReturn = hasMore ? rows.slice(0, limit) : rows;
+    const normCurrentId = String(currentUser.id).trim().toLowerCase();
 
     const items: InteractionItemDTO[] = itemsToReturn.map((match) => {
-      const partner = match.user1Id === currentUser.id ? (match as any).user2 : (match as any).user1;
+      const partner =
+        String(match.user1Id).trim().toLowerCase() === normCurrentId
+          ? (match as any).user2
+          : (match as any).user1;
       const userCard = this.formatUserCard(partner, currentUser);
       return {
         interactionId: match.id,
@@ -609,17 +675,37 @@ export class InteractionService {
       });
     }
 
+    const isLocked = !Boolean(currentUser.isSubscribed);
+    const totalCount = await ConnectionRequest.count({
+      where: {
+        targetUserId: currentUser.id,
+        requesterId: { [Op.notIn]: Array.from(excludedUserIds) },
+      },
+    });
+
     const items: InteractionItemDTO[] = itemsToReturn.map((req) => {
       const userCard = this.formatUserCard((req as any).requester, currentUser);
+      const maskedCard: InteractionUserCard = isLocked
+        ? {
+            ...userCard,
+            name: userCard.name ? `${userCard.name.charAt(0)}***` : 'Someone',
+            username: userCard.username ? `${userCard.username.charAt(0)}***` : '',
+            isBlurred: true,
+          }
+        : {
+            ...userCard,
+            isBlurred: false,
+          };
+
       return {
         interactionId: req.id,
-        username: userCard.username,
-        user: userCard,
+        username: maskedCard.username,
+        user: maskedCard,
         interaction: {
           type: 'compliments',
           createdAt: req.createdAt.toISOString(),
-          reason: req.reason || null,
-          message: req.message || null,
+          reason: isLocked && req.reason ? 'Hidden - Upgrade to view compliment' : req.reason || null,
+          message: isLocked && req.message ? 'Hidden - Upgrade to view compliment' : req.message || null,
           momentId: req.momentId || null,
           status: req.status,
           isRead: readNotifications.has(req.id),
@@ -634,6 +720,8 @@ export class InteractionService {
 
     return {
       type: 'compliments',
+      isLocked,
+      totalCount,
       items,
       pagination: {
         limit,
@@ -655,12 +743,10 @@ export class InteractionService {
     const blockedUserIds = await this.getBlockedUserIds(currentUserId);
     const excludedUserIds = new Set<string>([currentUserId, ...blockedUserIds]);
 
-    // 1. Swipes & matches already resolved by current user (for Likes tab exclusion)
-    const [outgoingSwipes, allMatches] = await Promise.all([
-      SwipeAction.findAll({
-        where: { userId: currentUserId },
-        attributes: ['targetUserId'],
-      }),
+    // 1. Fetch active matches and noped swipes.
+    // A nope removes someone from Likes. It must not hide an active match:
+    // unmatching already sets matches.isActive = false.
+    const [allMatches, nopedSwipes] = await Promise.all([
       Match.findAll({
         where: {
           [Op.or]: [{ user1Id: currentUserId }, { user2Id: currentUserId }],
@@ -668,13 +754,38 @@ export class InteractionService {
         },
         attributes: ['user1Id', 'user2Id'],
       }),
+      SwipeAction.findAll({
+        where: {
+          [Op.or]: [
+            { userId: currentUserId, action: 'nope' },
+            { targetUserId: currentUserId, action: 'nope' },
+          ],
+        },
+        attributes: ['userId', 'targetUserId'],
+        raw: true,
+      }),
     ]);
 
-    const alreadyResolvedUserIds = new Set<string>(excludedUserIds);
-    outgoingSwipes.forEach((s) => alreadyResolvedUserIds.add(s.targetUserId));
-    allMatches.forEach((m) => {
-      alreadyResolvedUserIds.add(m.user1Id === currentUserId ? m.user2Id : m.user1Id);
+    const finalExcludedUserIds = new Set<string>(excludedUserIds);
+    nopedSwipes.forEach((s) => {
+      if (s.userId === currentUserId) {
+        finalExcludedUserIds.add(s.targetUserId);
+      }
+      if (s.targetUserId === currentUserId) {
+        finalExcludedUserIds.add(s.userId);
+      }
     });
+
+    const matchPartnerIds = allMatches
+      .map((m) => (m.user1Id === currentUserId ? m.user2Id : m.user1Id))
+      .filter((partnerId) => !excludedUserIds.has(partnerId));
+    const activeMatchPartners = matchPartnerIds.length
+      ? await User.findAll({
+          where: { id: { [Op.in]: matchPartnerIds }, isActive: true },
+          attributes: ['id'],
+        })
+      : [];
+    const activeMatchPartnerIds = new Set(activeMatchPartners.map((u) => u.id));
 
     // 2. Run aggregate counts concurrently
     const [likesCount, youLikedCount, complimentsCount] = await Promise.all([
@@ -682,7 +793,7 @@ export class InteractionService {
         where: {
           targetUserId: currentUserId,
           action: { [Op.in]: ['like', 'super_like'] },
-          userId: { [Op.notIn]: Array.from(alreadyResolvedUserIds) },
+          userId: { [Op.notIn]: Array.from(finalExcludedUserIds) },
         },
         include: [
           {
@@ -724,11 +835,7 @@ export class InteractionService {
       }),
     ]);
 
-    // Filter active matches whose counterpart is active and not blocked
-    const matchesCount = allMatches.filter((m) => {
-      const partnerId = m.user1Id === currentUserId ? m.user2Id : m.user1Id;
-      return !excludedUserIds.has(partnerId);
-    }).length;
+    const matchesCount = matchPartnerIds.filter((partnerId) => activeMatchPartnerIds.has(partnerId)).length;
 
     return {
       likes: likesCount,

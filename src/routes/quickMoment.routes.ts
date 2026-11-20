@@ -9,16 +9,20 @@ import {
   getQuickMomentReactionsHandler,
   reactQuickMomentHandler,
   replyQuickMomentHandler,
+  getQuickMomentRepliesHandler,
   markViewedHandler,
+  markUserMomentsViewedHandler,
   getViewersHandler,
   createQuickMomentHandler,
   deleteQuickMomentHandler,
   getPresignedUploadUrlHandler,
+  getQuickMomentStatsHandler,
 } from '../controllers/quickMoment.controller';
 import {
   createQuickMomentSchema,
   reactQuickMomentSchema,
   replyQuickMomentSchema,
+  getQuickMomentRepliesSchema,
   getQuickMomentReactionsSchema,
   getTargetUserQuickMomentsSchema,
   getPresignedUploadUrlSchema,
@@ -32,6 +36,10 @@ router.use(authenticate);
 // 1. Screen 1: Story tray / bar (GET /api/v1/quick-moments/tray and /api/v1/quick-moments)
 router.get('/tray', (req, res) => getTrayHandler(req, res));
 router.get('/', (req, res) => getTrayHandler(req, res));
+
+// 1b. User Quick Moments stats & counts (GET /api/v1/quick-moments/stats and /counts)
+router.get('/stats', (req, res) => getQuickMomentStatsHandler(req, res));
+router.get('/counts', (req, res) => getQuickMomentStatsHandler(req, res));
 
 // 2. Screen 2: View own active Quick Moments slides (GET /api/v1/quick-moments/me)
 router.get('/me', (req, res) => getMyQuickMomentsHandler(req, res));
@@ -80,7 +88,18 @@ router.post(
   (req, res) => replyQuickMomentHandler(req, res)
 );
 
-// 9. Mark Quick Moment as viewed / seen (POST /api/v1/quick-moments/:momentId/view)
+// 8b. Reply list for the owner activity sheet
+// GET /api/v1/quick-moments/:momentId/replies?page=1&limit=30
+router.get(
+  '/:momentId/replies',
+  validate(getQuickMomentRepliesSchema),
+  (req, res) => getQuickMomentRepliesHandler(req, res)
+);
+
+// 9. Mark Quick Moment as viewed / seen (POST /api/v1/quick-moments/:momentId/view, POST /api/v1/quick-moments/user/:userId/view, POST /api/v1/quick-moments/view)
+router.post('/user/:userId/view', (req, res) => markUserMomentsViewedHandler(req, res));
+router.post('/view/:momentId', (req, res) => markViewedHandler(req, res));
+router.post('/view', (req, res) => markViewedHandler(req, res));
 router.post('/:momentId/view', (req, res) => markViewedHandler(req, res));
 
 // 10. Get viewers of a Quick Moment (GET /api/v1/quick-moments/:momentId/viewers)

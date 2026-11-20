@@ -6,6 +6,7 @@ import {
   ConnectionServiceError,
 } from '../services/connection.service';
 import { notificationService } from '../services/notification.service';
+import { readVoipToken } from '../utils/voipToken';
 import { CONNECTION_REASONS } from '../schemas/connection.schema';
 import { User } from '../models';
 
@@ -111,18 +112,26 @@ export const registerDeviceTokenHandler = async (
       req.body.deviceToken ||
       req.body.fcmToken ||
       req.body.token ||
-      req.body.device_token;
+      req.body.device_token ||
+      req.body.fcm_token ||
+      req.body.registrationToken ||
+      req.body.registration_token ||
+      req.body.pushToken ||
+      req.body.push_token;
 
-    const platform = (req.body.platform || 'android').toLowerCase() as
-      | 'ios'
-      | 'android'
-      | 'web';
+    const platform = (
+      req.body.platform ||
+      req.body.deviceType ||
+      req.body.device_type ||
+      'android'
+    ).toLowerCase() as 'ios' | 'android' | 'web';
     const deviceId = req.body.deviceId;
 
     const result = await notificationService.registerDeviceToken(userId, {
       deviceToken: rawToken,
       platform,
       deviceId,
+      voipToken: readVoipToken(req.body),
     });
 
     return sendSuccess(res, 'Device token registered successfully', result, 200);

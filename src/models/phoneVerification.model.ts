@@ -23,6 +23,7 @@ export interface PhoneVerificationAttributes {
   maxResends: number;
   lastResentAt?: Date | null;
   consumedAt?: Date | null;
+  providerSession?: string | null;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -41,6 +42,7 @@ export interface PhoneVerificationCreationAttributes
     | 'maxResends'
     | 'lastResentAt'
     | 'consumedAt'
+    | 'providerSession'
   > {}
 
 export class PhoneVerification
@@ -61,14 +63,16 @@ export class PhoneVerification
   declare public maxResends: number;
   declare public lastResentAt: Date | null;
   declare public consumedAt: Date | null;
+  declare public providerSession: string | null;
 
   declare public readonly createdAt: Date;
   declare public readonly updatedAt: Date;
 
   // Never leak sensitive data (OTP hash) when serializing
-  public toJSON(): Omit<PhoneVerificationAttributes, 'otpHash'> {
+  public toJSON(): Omit<PhoneVerificationAttributes, 'otpHash' | 'providerSession'> {
     const values = { ...this.get() };
     delete (values as any).otpHash;
+    delete (values as any).providerSession;
     return values;
   }
 }
@@ -137,6 +141,10 @@ PhoneVerification.init(
     },
     consumedAt: {
       type: DataTypes.DATE,
+      allowNull: true,
+    },
+    providerSession: {
+      type: DataTypes.TEXT,
       allowNull: true,
     },
   },

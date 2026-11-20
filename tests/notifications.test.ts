@@ -11,6 +11,9 @@ import {
 } from '../src/models';
 import { generateToken } from '../src/utils/jwt';
 import * as firebaseConfig from '../src/config/firebase';
+import { notificationService } from '../src/services/notification.service';
+import { notifyIncomingCallPush } from '../src/services/callPush.service';
+import * as apnsVoip from '../src/services/apnsVoip.service';
 
 describe('FlirtTime Notifications & FCM APIs', () => {
   let userA: User;
@@ -135,6 +138,38 @@ describe('FlirtTime Notifications & FCM APIs', () => {
         where: { deviceToken: 'token_to_unregister' },
       });
       expect(device?.isActive).toBe(false);
+    });
+
+    it('stores a PushKit voip token and keeps it when a later register omits it', async () => {
+      const first = await request(app)
+        .post('/api/v1/devices/register')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          token: 'fcm_token_with_voip',
+          platform: 'ios',
+          deviceId: 'iphone_callkit',
+          voipToken: '<abc 123>',
+        });
+
+      expect(first.status).toBe(200);
+      expect(first.body.data.hasVoipToken).toBe(true);
+
+      const stored = await UserDevice.findOne({ where: { deviceToken: 'fcm_token_with_voip' } });
+      expect(stored?.voipToken).toBe('abc123');
+
+      const second = await request(app)
+        .post('/api/v1/devices/register')
+        .set('Authorization', `Bearer ${tokenA}`)
+        .send({
+          token: 'fcm_token_with_voip',
+          platform: 'ios',
+          deviceId: 'iphone_callkit',
+        });
+
+      expect(second.status).toBe(200);
+      expect(second.body.data.hasVoipToken).toBe(true);
+      const kept = await UserDevice.findOne({ where: { deviceToken: 'fcm_token_with_voip' } });
+      expect(kept?.voipToken).toBe('abc123');
     });
   });
 
@@ -436,6 +471,218 @@ describe('FlirtTime Notifications & FCM APIs', () => {
       });
       expect(notif).not.toBeNull();
       expect(notif?.title).toBe('New Like');
+    });
+  });
+
+  describe('7. Background incoming call VoIP and Android ring', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('sends an APNs VoIP push for iOS and does not also FCM that phone', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_ios_callee',
+        platform: 'ios',
+        voipToken: 'pushkit-token-1',
+        isActive: true,
+      });
+
+      const sendVoip = jest.spyOn(apnsVoip, 'sendVoipPushToTokens').mockResolvedValue({
+        successCount: 1,
+        failureCount: 0,
+        invalidTokens: [],
+        failedTokens: [],
+      });
+      jest.spyOn(apnsVoip, 'getApnsVoipStatus').mockReturnValue({
+        ready: true,
+        production: false,
+        topic: 'com.flirttime.app.voip',
+        missing: [],
+      });
+      mockSendEachForMulticast.mockClear();
+
+      await notifyIncomingCallPush({
+        calleeId: userB.id,
+        callId: 'call-audio-1',
+        conversationId: 'conv-1',
+        channelName: 'channel-audio',
+        callType: 'audio',
+        callerId: userA.id,
+        callerName: 'Cindy Crawford',
+        callerAvatar: '',
+      });
+
+      expect(sendVoip).toHaveBeenCalledTimes(1);
+      expect(sendVoip.mock.calls[0][0]).toEqual(['pushkit-token-1']);
+      expect(sendVoip.mock.calls[0][1]).toEqual(
+        expect.objectContaining({
+          type: 'incoming_call',
+          callType: 'audio',
+          callId: 'call-audio-1',
+          channelName: 'channel-audio',
+          callerName: 'Cindy Crawford',
+        })
+      );
+      expect(mockSendEachForMulticast).not.toHaveBeenCalled();
+    });
+
+    it('rings Android in the background on the incoming_calls channel for audio and video', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_android_callee',
+        platform: 'android',
+        isActive: true,
+      });
+
+      for (const callType of ['audio', 'video'] as const) {
+        mockSendEachForMulticast.mockClear();
+        await notifyIncomingCallPush({
+          calleeId: userB.id,
+          callId: `call-${callType}`,
+          channelName: `channel-${callType}`,
+          callType,
+          callerId: userA.id,
+          callerName: 'Cindy Crawford',
+        });
+
+        expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
+        const message = mockSendEachForMulticast.mock.calls[0][0];
+        expect(message.tokens).toEqual(['fcm_android_callee']);
+        expect(message.android.priority).toBe('high');
+        expect(message.android.notification.channelId).toBe('incoming_calls');
+        expect(message.data.type).toBe('incoming_call');
+        expect(message.data.callType).toBe(callType);
+        expect(message.data.hasVideo).toBe(callType === 'video' ? 'true' : 'false');
+        expect(message.data.silent).toBe('false');
+      }
+    });
+  });
+
+  describe('8. Silent incoming call pushes', () => {
+    it('sends audio and video call pushes as data-only with no sound or banner', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_call_token_user_b',
+        platform: 'android',
+        isActive: true,
+      });
+
+      for (const callType of ['audio', 'video'] as const) {
+        mockSendEachForMulticast.mockClear();
+        const result = await notificationService.dispatchNotification(userB.id, {
+          type: 'incoming_call',
+          title: 'Cindy Crawford',
+          body: callType === 'video' ? 'Incoming video call' : 'Incoming voice call',
+          senderId: userA.id,
+          entityId: `call-${callType}`,
+          idempotencyKey: `incoming_call:call-${callType}`,
+          data: {
+            type: 'incoming_call',
+            callId: `call-${callType}`,
+            callType,
+            callerId: userA.id,
+            channelName: `channel-${callType}`,
+          },
+          navigation: { type: 'incoming_call', targetId: `call-${callType}` },
+        });
+
+        expect(result.pushStatus).toBe('sent_to_fcm');
+        expect(mockSendEachForMulticast).toHaveBeenCalledTimes(1);
+        const message = mockSendEachForMulticast.mock.calls[0][0];
+        expect(message.notification).toBeUndefined();
+        expect(message.android.notification).toBeUndefined();
+        expect(message.android.priority).toBe('high');
+        expect(message.apns.payload.aps.alert).toBeUndefined();
+        expect(message.apns.payload.aps.sound).toBeUndefined();
+        expect(message.apns.payload.aps.contentAvailable).toBe(true);
+        expect(message.apns.headers['apns-push-type']).toBe('background');
+        expect(message.data.silent).toBe('true');
+        expect(message.data.callType).toBe(callType);
+        expect(message.data.type).toBe('incoming_call');
+      }
+    });
+
+    it('keeps a normal alert with sound for non-call notifications', async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_like_token_user_b',
+        platform: 'ios',
+        isActive: true,
+      });
+
+      await notificationService.dispatchNotification(userB.id, {
+        type: 'like',
+        title: 'New Like',
+        body: 'Someone liked you',
+        senderId: userA.id,
+        entityId: 'like-1',
+      });
+
+      const message = mockSendEachForMulticast.mock.calls[0][0];
+      expect(message.notification).toEqual({ title: 'New Like', body: 'Someone liked you' });
+      expect(message.android.notification.sound).toBe('default');
+      expect(message.apns.payload.aps.sound).toBe('default');
+      expect(message.data.silent).toBeUndefined();
+    });
+  });
+
+  describe('9. Moment notification payload includes momentId', () => {
+    const momentId = '6f1c2a30-7b4e-4d2a-9c11-0a1b2c3d4e5f';
+
+    beforeEach(async () => {
+      await UserDevice.create({
+        userId: userB.id,
+        deviceToken: 'fcm_moment_token_user_b',
+        platform: 'ios',
+        isActive: true,
+      });
+    });
+
+    it('includes momentId for comment, comment like, and gift pushes and the in-app payload', async () => {
+      await notificationService.sendCommentNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        comment: 'Nice moment',
+        momentId,
+        commentId: '11111111-1111-4111-8111-111111111111',
+      });
+
+      await notificationService.sendCommentLikeNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        commentId: '22222222-2222-4222-8222-222222222222',
+        momentId,
+        commentSnippet: 'Nice moment',
+      });
+
+      await notificationService.sendMomentGiftNotification(userB.id, {
+        senderId: userA.id,
+        senderName: 'Cindy',
+        momentId,
+        giftName: 'Rose',
+        giftCode: 'rose',
+        quantity: 1,
+        totalCoins: 10,
+      });
+
+      expect(mockSendEachForMulticast).toHaveBeenCalledTimes(3);
+      for (const call of mockSendEachForMulticast.mock.calls) {
+        const message = call[0];
+        expect(message.data.momentId).toBe(momentId);
+        expect(message.apns.payload.momentId).toBe(momentId);
+      }
+
+      const res = await request(app)
+        .get('/api/v1/notifications?limit=20&timezone=UTC')
+        .set('Authorization', `Bearer ${tokenB}`);
+
+      expect(res.status).toBe(200);
+      const items = res.body.data.notifications;
+      expect(items).toHaveLength(3);
+      for (const item of items) {
+        expect(item.data.momentId).toBe(momentId);
+      }
     });
   });
 });

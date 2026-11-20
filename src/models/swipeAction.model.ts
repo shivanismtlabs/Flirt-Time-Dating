@@ -72,6 +72,10 @@ SwipeAction.init(
       {
         fields: ['targetUserId', 'action'],
       },
+      {
+        fields: ['userId', 'createdAt'],
+        name: 'idx_swipe_actions_user_created_at',
+      },
     ],
   }
 );

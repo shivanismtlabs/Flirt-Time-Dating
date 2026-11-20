@@ -1,6 +1,7 @@
 import { Op } from 'sequelize';
 import { sequelize, User, CoinPackage, CoinPurchase, CoinTransaction } from '../models';
 import { iapService, IAPServiceError } from './iap.service';
+import { notificationOutboxService } from './notificationOutbox.service';
 
 export interface VerifyCoinPurchaseInput {
   platform: 'ios' | 'android';
@@ -14,6 +15,8 @@ export interface VerifyCoinPurchaseInput {
   purchaseToken?: string;
   orderId?: string;
   packageName?: string;
+  isForeground?: boolean;
+  is_foreground?: boolean;
 }
 
 export interface VerifyPurchaseResult {
@@ -71,6 +74,9 @@ export interface PurchaseHistoryResult {
 export interface WalletBalanceResult {
   userId: string;
   coins: number;
+  isSubscribed: boolean;
+  subscriptionExpiresAt?: Date | null;
+  activeSubscriptionPlanId?: number | null;
   currency: string;
   recentTransactions: Array<{
     id: string;
@@ -179,7 +185,7 @@ export class CoinPurchaseService {
             coinsCredited: existingFast.totalCoins,
             baseCoins: existingFast.coins,
             bonusCoins: existingFast.bonusCoins,
-            currentBalance: typeof user?.coins === 'number' ? user.coins : 500,
+            currentBalance: typeof user?.coins === 'number' ? user.coins : 0,
             status: existingFast.status,
             storeTransactionId: existingFast.storeTransactionId,
             environment: existingFast.environment,
@@ -256,6 +262,7 @@ export class CoinPurchaseService {
       purchase: CoinPurchase;
       currentBalance: number;
       previousBalance: number;
+      outboxId?: string;
     };
 
     try {
@@ -277,8 +284,8 @@ export class CoinPurchaseService {
           return {
             alreadyProcessed: true,
             purchase: duplicateInTx,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
-            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
+            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
           };
         }
 
@@ -291,7 +298,7 @@ export class CoinPurchaseService {
           throw new CoinPurchaseServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
         }
 
-        const balanceBefore = typeof user.coins === 'number' ? user.coins : 500;
+        const balanceBefore = typeof user.coins === 'number' ? user.coins : 0;
         const balanceAfter = balanceBefore + totalCoins;
 
         // Create purchase record
@@ -337,11 +344,35 @@ export class CoinPurchaseService {
         user.coins = balanceAfter;
         await user.save({ transaction: t });
 
+        // Create notification outbox entry ATOMICALLY in the same transaction
+        const isForeground = Boolean(input.isForeground ?? input.is_foreground);
+        const outbox = await notificationOutboxService.createOutboxEntry(
+          {
+            recipientId: user.id,
+            type: 'coin_purchase',
+            title: 'Coins Added! 🪙',
+            body: `Your purchase of ${pkg.name} was successful. ${totalCoins} coins have been added to your wallet.`,
+            entityId: purchase.id,
+            idempotencyKey: `coin_purchase_${purchase.id}`,
+            data: {
+              purchaseId: purchase.id,
+              packageName: pkg.name,
+              coinsCredited: totalCoins,
+              currentBalance: balanceAfter,
+              type: 'coin_purchase',
+              navType: 'wallet',
+              isForeground,
+            },
+          },
+          t
+        );
+
         return {
           alreadyProcessed: false,
           purchase,
           currentBalance: balanceAfter,
           previousBalance: balanceBefore,
+          outboxId: outbox?.id,
         };
       });
     } catch (txErr: any) {
@@ -375,8 +406,8 @@ export class CoinPurchaseService {
           txResult = {
             alreadyProcessed: true,
             purchase: existingAfterRace,
-            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
-            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 500,
+            currentBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
+            previousBalance: typeof userNow?.coins === 'number' ? userNow.coins : 0,
           };
         } else {
           // If still not found after transient lock, retry the transaction once
@@ -396,8 +427,8 @@ export class CoinPurchaseService {
               return {
                 alreadyProcessed: true,
                 purchase: dupRetry,
-                currentBalance: typeof uNow?.coins === 'number' ? uNow.coins : 500,
-                previousBalance: typeof uNow?.coins === 'number' ? uNow.coins : 500,
+                currentBalance: typeof uNow?.coins === 'number' ? uNow.coins : 0,
+                previousBalance: typeof uNow?.coins === 'number' ? uNow.coins : 0,
               };
             }
 
@@ -406,7 +437,7 @@ export class CoinPurchaseService {
               throw new CoinPurchaseServiceError('Authenticated user not found', 404, 'USER_NOT_FOUND');
             }
 
-            const balBefore = typeof retryUser.coins === 'number' ? retryUser.coins : 500;
+            const balBefore = typeof retryUser.coins === 'number' ? retryUser.coins : 0;
             const balAfter = balBefore + totalCoins;
 
             const newPurch = await CoinPurchase.create(
@@ -449,11 +480,34 @@ export class CoinPurchaseService {
             retryUser.coins = balAfter;
             await retryUser.save({ transaction: retryTx });
 
+            const isForeground = Boolean(input.isForeground ?? input.is_foreground);
+            const retryOutbox = await notificationOutboxService.createOutboxEntry(
+              {
+                recipientId: retryUser.id,
+                type: 'coin_purchase',
+                title: 'Coins Added! 🪙',
+                body: `Your purchase of ${pkg.name} was successful. ${totalCoins} coins have been added to your wallet.`,
+                entityId: newPurch.id,
+                idempotencyKey: `coin_purchase_${newPurch.id}`,
+                data: {
+                  purchaseId: newPurch.id,
+                  packageName: pkg.name,
+                  coinsCredited: totalCoins,
+                  currentBalance: balAfter,
+                  type: 'coin_purchase',
+                  navType: 'wallet',
+                  isForeground,
+                },
+              },
+              retryTx
+            );
+
             return {
               alreadyProcessed: false,
               purchase: newPurch,
               currentBalance: balAfter,
               previousBalance: balBefore,
+              outboxId: retryOutbox?.id,
             };
           });
         }
@@ -484,6 +538,17 @@ export class CoinPurchaseService {
       } catch (_consumeErr) {
         // Safe to swallow: coins are already safely credited in the database.
         // Acknowledged flag remains false for safe background or manual retry.
+      }
+    }
+
+    // 7. Dispatch Notification via Transactional Outbox (strictly when not already processed)
+    if (!isAlready && txResult.outboxId) {
+      try {
+        await notificationOutboxService.processOutboxItem(txResult.outboxId);
+      } catch (outboxErr: any) {
+        // Safe to swallow: transaction is already committed, coins credited.
+        // Outbox record remains with status 'pending' (or 'failed' if maxAttempts reached) for retry.
+        console.warn(`[CoinPurchase Notification] Outbox dispatch deferred for outboxId=${txResult.outboxId}:`, outboxErr?.message);
       }
     }
 
@@ -581,7 +646,10 @@ export class CoinPurchaseService {
 
     return {
       userId: user.id,
-      coins: typeof user.coins === 'number' ? user.coins : 500,
+      coins: typeof user.coins === 'number' ? user.coins : 0,
+      isSubscribed: !!user.isSubscribed,
+      subscriptionExpiresAt: user.subscriptionExpiresAt || null,
+      activeSubscriptionPlanId: user.activeSubscriptionPlanId || null,
       currency: 'INR',
       recentTransactions: recentLedger.map((t) => ({
         id: t.id,
@@ -640,6 +708,75 @@ export class CoinPurchaseService {
       message: 'Could not acknowledge purchase at this time. Please retry later.',
       acknowledged: false,
     };
+  }
+
+  /**
+   * Handles refund or revocation of a coin purchase (e.g. from App Store / Google Play notification)
+   */
+  public async handlePurchaseRefundOrRevocation(
+    identifier: { storeTransactionId?: string; purchaseToken?: string },
+    reason = 'Store refund or revocation'
+  ): Promise<{ handled: boolean; purchaseId?: string; coinsDeducted?: number }> {
+    const { storeTransactionId, purchaseToken } = identifier;
+    if (!storeTransactionId && !purchaseToken) {
+      return { handled: false };
+    }
+
+    const isPostgres = sequelize.getDialect() === 'postgres';
+
+    return await sequelize.transaction(async (t) => {
+      const purchase = await CoinPurchase.findOne({
+        where: {
+          [Op.or]: [
+            ...(storeTransactionId ? [{ storeTransactionId }] : []),
+            ...(purchaseToken ? [{ purchaseToken }] : []),
+          ],
+        },
+        transaction: t,
+        lock: isPostgres ? t.LOCK.UPDATE : undefined,
+      });
+
+      if (!purchase || purchase.status === 'refunded' || purchase.status === 'revoked') {
+        return { handled: false };
+      }
+
+      const user = await User.findByPk(purchase.userId, {
+        transaction: t,
+        lock: isPostgres ? t.LOCK.UPDATE : undefined,
+      });
+
+      const coinsToDeduct = purchase.totalCoins;
+      const balanceBefore = typeof user?.coins === 'number' ? user.coins : 0;
+      const balanceAfter = Math.max(0, balanceBefore - coinsToDeduct);
+
+      if (user) {
+        user.coins = balanceAfter;
+        await user.save({ transaction: t });
+
+        await CoinTransaction.create(
+          {
+            userId: user.id,
+            type: 'refund',
+            amount: -coinsToDeduct,
+            balanceBefore,
+            balanceAfter,
+            referenceId: purchase.id,
+            referenceType: 'coin_refund',
+            description: `Refund / Revocation for purchase ${purchase.id}: ${reason}`,
+          },
+          { transaction: t }
+        );
+      }
+
+      purchase.status = 'refunded';
+      await purchase.save({ transaction: t });
+
+      return {
+        handled: true,
+        purchaseId: purchase.id,
+        coinsDeducted: coinsToDeduct,
+      };
+    });
   }
 }
 

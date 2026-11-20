@@ -1,89 +1,143 @@
-# Mandatory API Response Standards for All Future FlirtTime APIs
+# Global API Response Standard — FlirtTime Backend
 
-## Critical Rule
-- **Existing APIs**: Never modify or break existing, already-integrated API responses unless explicitly requested.
-- **New APIs**: From now on, whenever creating any new API or adding a new endpoint to the existing FlirtTime backend, strictly follow the standards below.
+This document defines the mandatory API response standards for every new or modified API in the existing production FlirtTime backend.
 
 ---
 
-### 1. Standard Response Structure
+## 1. No Duplicate or Redundant Fields
 
-Every new API must follow the same response envelope:
+Never return multiple fields representing the same value unless each field has a clearly documented, separate purpose.
 
-#### Success:
+### Bad response:
+```json
+{
+  "id": "123",
+  "commentId": "123",
+  "replyId": "123",
+  "comment": "Hello",
+  "message": "Hello",
+  "text": "Hello",
+  "reply": "Hello",
+  "createdAt": "...",
+  "created_at": "..."
+}
+```
+
+### Good response:
+```json
+{
+  "id": "123",
+  "text": "Hello",
+  "createdAt": "..."
+}
+```
+
+- Choose field names according to the resource and existing API conventions.
+- Do not include `commentId`, `replyId`, `message`, `text`, or other aliases together when they contain identical information and have no distinct purpose.
+
+---
+
+## 2. Use One Consistent Naming Convention
+
+- Follow the existing public API convention, strictly `camelCase`.
+- Do not expose both `createdAt` and `created_at`.
+- Do not return database column names and API aliases together unnecessarily.
+- Keep internal database field names separate from the public response DTO.
+
+---
+
+## 3. Return Only Necessary Data
+
+Include only fields required by the client for the requested operation.
+
+- Do not return complete database models.
+- Do not include internal IDs, duplicate user objects, unused metadata, debug information, or unrelated entities.
+- Do not repeat the same user information at multiple levels without a real use case.
+- Avoid returning empty or redundant fields unless the frontend contract requires them.
+- Exclude sensitive information, credentials, tokens, private contact details, and internal implementation data.
+- For list APIs, return compact objects; include detailed nested objects only when required by the feature.
+
+---
+
+## 4. Standard Response Envelope
+
+Follow the existing API response convention. For new endpoints, use:
+
+### Success:
 ```json
 {
   "success": true,
-  "message": "Data fetched successfully",
+  "message": "Operation completed successfully",
   "data": {}
 }
 ```
 
-#### Error:
+### Failure:
 ```json
 {
   "success": false,
-  "message": "Something went wrong",
+  "message": "A clear error message",
   "data": null
 }
 ```
 
-Include validation errors or pagination metadata only when required, following the existing project conventions.
+- Include pagination metadata only for paginated endpoints.
+- Do not wrap the same data multiple times or duplicate `success`, `message`, or `data` fields (e.g. no `data.data`).
 
 ---
 
-### 2. Clean and Non-Duplicate Response Data
+## 5. Define a Response DTO for Every API
 
-- Return only the fields required by the API's purpose and its consuming frontend/mobile screen.
-- Never return the same information under multiple keys.
-- Use one canonical camelCase field name consistently.
-- Do not create duplicate aliases such as `eyeColor` and `eyecolor`, or `hairColor` and `haircolor`.
-- Do not repeat the same profile information at the root and inside nested objects without a genuine requirement.
-- Avoid redundant IDs, URLs, timestamps, counts, and derived fields.
-- For media, return only the necessary media identifier, canonical image URL, thumbnail URL, media type, and other required metadata.
-- Do not expose entire database models or unnecessary database columns.
-- Do not include internal fields, secrets, tokens, password hashes, OTPs, or sensitive implementation details in public responses.
+Before implementing an endpoint:
+1. Define the exact request and response contract.
+2. Identify the minimum required fields.
+3. Map database entities to an explicit response DTO.
+4. Remove duplicate aliases and unused properties.
+5. Validate the actual serialized JSON response.
+6. Add response-shape tests that prevent redundant fields from returning.
 
----
-
-### 3. Correct and Meaningful Data Structure
-
-- Keep related fields grouped in appropriate nested objects.
-- Use arrays for collections and objects for individual resources.
-- Return `[]` for empty collections and `null` for optional values that are genuinely unavailable.
-- Maintain consistent field names and data types across related APIs.
-- Do not introduce unnecessary nesting such as `data.data`.
-- Include only relevant fields; do not add properties merely for the sake of making responses look uniform.
+*Never use unrestricted ORM model serialization as the public API response.*
 
 ---
 
-### 4. Reuse Existing Backend Architecture
+## 6. Preserve Existing Production APIs
 
-- Reuse the existing response helper (`src/utils/response.ts`: `sendSuccess`, `sendError`), DTOs, serializers, validation, and error-handling conventions.
-- Do not create duplicate response utilities.
-- Keep controllers clean and avoid returning raw Sequelize models.
-- Preserve existing authentication, authorization, business logic, API routes, database behavior, and integrations.
-- Do not modify already integrated API response contracts unless explicitly requested.
-
----
-
-### 5. Verification Checklist Before Completing Every New API
-
-Before implementing an endpoint, determine the exact response fields required by its consumer. Before marking it complete:
-
-1. Review the response JSON for duplicate or unnecessary fields.
-2. Verify field names and types against related existing APIs.
-3. Confirm the response follows the standard envelope.
-4. Add or update response-contract tests.
-5. Verify success, error, null, and empty-list scenarios where applicable.
-6. Confirm that no sensitive information or unintended database fields are exposed.
+- Do not blindly remove fields from existing APIs because the mobile application may already depend on them.
+- Inspect frontend usage and existing API contracts before changing response structures.
+- For new APIs, use the clean standard immediately.
+- For existing APIs, remove redundant fields only after confirming compatibility; use a versioned or coordinated migration when necessary.
+- Do not change database schemas or unrelated business logic just to clean response JSON.
+- Do not create duplicate endpoints or duplicate serializers.
+- Keep authentication, authorization, transactions, validations, and existing functionality intact.
 
 ---
 
-### 6. Important Rules
+## 7. Automated Validation
 
-- These standards apply to every future API, endpoint, and new feature developed in this project.
-- Do not create an API first and clean its response later. Design the response structure correctly from the beginning.
-- Do not add compatibility aliases or duplicate keys unless explicitly required and approved.
-- Do not change existing APIs or frontend/mobile integrations as part of implementing a new API.
-- If an existing project convention conflicts with these standards, explain the conflict and choose a backward-compatible solution instead of silently breaking functionality.
+Add tests that verify:
+- No duplicate aliases with identical meanings.
+- No `snake_case`/`camelCase` duplicates.
+- No unexpected ORM fields.
+- Correct response envelope and data types.
+- Only documented fields are returned.
+- Existing mobile app integrations remain compatible.
+
+*Note: Do not compare values alone to decide whether fields are redundant: two fields may legitimately contain the same value while representing different concepts.*
+
+---
+
+## 8. Required Workflow
+
+Before coding any new API:
+1. Inspect related existing APIs and frontend usage.
+2. Reuse existing models, services, validators, and response utilities (`src/utils/response.ts`).
+3. Define the minimal response DTO.
+4. Implement the API using existing architectural conventions.
+5. Test the actual JSON response and relevant regression cases.
+
+After implementation, report:
+- The endpoint and HTTP method
+- Final response example
+- Removed redundant fields / aliases
+- Compatibility considerations
+- Actual test results

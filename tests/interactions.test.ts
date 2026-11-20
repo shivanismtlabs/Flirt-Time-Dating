@@ -53,6 +53,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       latitude: 19.076,
       longitude: 72.8777,
       isActive: true,
+      isSubscribed: true,
       role: 'user',
     });
 
@@ -188,7 +189,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(item.interaction.action).toBe('like');
     });
 
-    it('should exclude mutual matches from Likes tab', async () => {
+    it('should include mutual matches with isMatched: true in Likes tab by default, and exclude when excludeMatched=true', async () => {
       // User B and currentUser liked each other -> Match created
       await SwipeAction.create({
         userId: userB.id,
@@ -216,13 +217,24 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
         action: 'like',
       });
 
-      const res = await request(app)
+      // Default: both User C and matched User B are returned
+      const resAll = await request(app)
         .get('/api/v1/interactions?type=likes')
         .set('Authorization', `Bearer ${tokenCurrent}`);
 
-      expect(res.status).toBe(200);
-      expect(res.body.data.items).toHaveLength(1);
-      expect(res.body.data.items[0].user.id).toBe(userC.id);
+      expect(resAll.status).toBe(200);
+      expect(resAll.body.data.items).toHaveLength(2);
+      const bItem = resAll.body.data.items.find((i: any) => i.user.id === userB.id);
+      expect(bItem.interaction.isMatched).toBe(true);
+
+      // When excludeMatched=true
+      const resFiltered = await request(app)
+        .get('/api/v1/interactions?type=likes&excludeMatched=true')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(resFiltered.status).toBe(200);
+      expect(resFiltered.body.data.items).toHaveLength(1);
+      expect(resFiltered.body.data.items[0].user.id).toBe(userC.id);
     });
 
     it('should exclude inactive or blocked users from Likes tab', async () => {
@@ -360,6 +372,64 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(res.status).toBe(200);
       expect(res.body.data.items).toHaveLength(0);
     });
+
+    it('should return the matched person when both profiles have approved photos', async () => {
+      await UserPhoto.bulkCreate([
+        {
+          userId: currentUser.id,
+          imageUrl: 'https://flirttime-media.s3.amazonaws.com/profiles/alex.jpg',
+          isPrimary: true,
+          status: 'approved',
+        },
+        {
+          userId: userB.id,
+          imageUrl: 'https://flirttime-media.s3.amazonaws.com/profiles/cindy-2.jpg',
+          isPrimary: true,
+          status: 'approved',
+        },
+      ]);
+
+      const [u1, u2] = [currentUser.id, userB.id].sort();
+      await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'like',
+        isActive: true,
+      });
+
+      const res = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].user.id).toBe(userB.id);
+      expect(res.body.data.items[0].user.name).toBe('Cindy');
+      expect(res.body.data.items[0].user.profilePhotoUrl).toEqual(expect.any(String));
+    });
+
+    it('should keep an active match visible when an older nope swipe still exists', async () => {
+      const [u1, u2] = [currentUser.id, userB.id].sort();
+      await Match.create({
+        user1Id: u1,
+        user2Id: u2,
+        matchedBy: 'like',
+        isActive: true,
+      });
+      await SwipeAction.create({
+        userId: currentUser.id,
+        targetUserId: userB.id,
+        action: 'nope',
+      });
+
+      const res = await request(app)
+        .get('/api/v1/interactions?limit=20&type=matches')
+        .set('Authorization', `Bearer ${tokenCurrent}`);
+
+      expect(res.status).toBe(200);
+      expect(res.body.data.items).toHaveLength(1);
+      expect(res.body.data.items[0].user.name).toBe('Cindy');
+    });
   });
 
   describe('5. Compliments Tab', () => {
@@ -443,7 +513,7 @@ describe('FlirtTime Interactions API (GET /api/v1/interactions)', () => {
       expect(res.status).toBe(200);
       expect(res.body.success).toBe(true);
       expect(res.body.data).toEqual({
-        likes: 1, // User C (User B is already matched)
+        likes: 2, // User C + User B (incoming likes preserved)
         you_liked: 2, // User D + User B
         matches: 1, // User B
         compliments: 1, // User B

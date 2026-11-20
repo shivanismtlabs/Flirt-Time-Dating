@@ -9,6 +9,7 @@ import {
   subscriptionHistoryQuerySchema,
 } from '../schemas/subscriptionPurchase.schema';
 import { IAPServiceError } from '../services/iap.service';
+import { sendSuccess, sendError } from '../utils/response';
 
 /**
  * Controller to verify an in-app subscription purchase from Apple or Google
@@ -56,13 +57,14 @@ export const verifySubscriptionPurchaseHandler = async (
           id: result.plan.id,
           name: result.plan.name,
           duration_days: result.plan.duration_days,
-          billing_cycle: result.plan.billing_cycle,
+          billing_cycle: subscriptionPurchaseService.resolveBillingCycle(result.plan, result.subscription.productId),
           productId: result.subscription.productId,
         },
         status: result.subscription.status,
         isEntitled: result.isEntitled,
-        startsAt: result.subscription.startsAt,
-        expiresAt: result.subscription.expiresAt,
+        isSubscribed: result.isEntitled,
+        startsAt: result.subscription.startsAt instanceof Date ? result.subscription.startsAt.toISOString() : result.subscription.startsAt,
+        expiresAt: result.subscription.expiresAt instanceof Date ? result.subscription.expiresAt.toISOString() : result.subscription.expiresAt,
         autoRenewing: result.subscription.autoRenewing,
         bonusCoinsCredited: result.bonusCoinsCredited,
         currentBalance: result.currentBalance,
@@ -98,35 +100,19 @@ export const getMySubscriptionHandler = async (
   try {
     const userId = req.user?.id;
     if (!userId) {
-      return res.status(401).json({
-        status: false,
-        message: 'Unauthorized: Authentication required',
-        errorCode: 'UNAUTHORIZED',
-      });
+      return sendError(res, 'Unauthorized: Authentication required', 401);
     }
 
     const data = await subscriptionPurchaseService.getMySubscription(userId);
 
-    return res.status(200).json({
-      status: true,
-      success: true,
-      message: 'Current subscription retrieved successfully',
-      data,
-    });
+    return sendSuccess(res, 'Current subscription retrieved successfully', data, 200);
   } catch (error: any) {
     if (error instanceof SubscriptionPurchaseServiceError) {
-      return res.status(error.statusCode).json({
-        status: false,
-        message: error.message,
-        errorCode: error.errorCode,
-      });
+      return sendError(res, error.message, error.statusCode);
     }
 
     console.error('[MySubscription Controller Error]:', error?.message || error);
-    return res.status(500).json({
-      status: false,
-      message: 'Internal server error while retrieving current subscription',
-    });
+    return sendError(res, 'Internal server error while retrieving current subscription', 500);
   }
 };
 

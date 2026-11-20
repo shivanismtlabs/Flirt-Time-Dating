@@ -27,13 +27,31 @@ export const getFirebaseApp = (): App => {
     return firebaseApp;
   }
 
-  // 1. Service Account JSON file path (configured or default candidate locations)
+  // 1. Raw Service Account JSON in environment variable (FIREBASE_SERVICE_ACCOUNT_JSON or FIREBASE_SERVICE_ACCOUNT_KEY)
+  const rawServiceAccountJson =
+    process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (rawServiceAccountJson) {
+    try {
+      const serviceAccount = JSON.parse(rawServiceAccountJson);
+      firebaseApp = initializeApp({
+        credential: cert(serviceAccount),
+        projectId: serviceAccount.project_id || env.FIREBASE_PROJECT_ID || 'flirttime-de302',
+      });
+      console.log('[Firebase] Initialized Admin SDK with credentials from environment variable');
+      return firebaseApp;
+    } catch (jsonErr: any) {
+      console.error('[Firebase] Failed to parse FIREBASE_SERVICE_ACCOUNT_JSON:', jsonErr.message);
+    }
+  }
+
+  // 2. Service Account JSON file path (configured or default candidate locations)
   const candidatePaths = [
     env.FIREBASE_SERVICE_ACCOUNT_PATH,
     'firebase-service-account.json',
     path.resolve(process.cwd(), 'firebase-service-account.json'),
     path.resolve(__dirname, '../../firebase-service-account.json'),
     path.resolve(__dirname, '../../../firebase-service-account.json'),
+    path.resolve(__dirname, '../config/firebase-service-account.json'),
   ].filter(Boolean) as string[];
 
   for (const candidate of candidatePaths) {
@@ -46,7 +64,7 @@ export const getFirebaseApp = (): App => {
         const serviceAccount = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
         firebaseApp = initializeApp({
           credential: cert(serviceAccount),
-          projectId: serviceAccount.project_id || env.FIREBASE_PROJECT_ID,
+          projectId: serviceAccount.project_id || env.FIREBASE_PROJECT_ID || 'flirttime-de302',
         });
         console.log(`[Firebase] Initialized Admin SDK with credentials from ${fullPath}`);
         return firebaseApp;
@@ -56,22 +74,38 @@ export const getFirebaseApp = (): App => {
     }
   }
 
-  // 2. Individual Environment Variables
-  if (env.FIREBASE_PROJECT_ID && env.FIREBASE_CLIENT_EMAIL && env.FIREBASE_PRIVATE_KEY) {
-    firebaseApp = initializeApp({
-      credential: cert({
-        projectId: env.FIREBASE_PROJECT_ID,
-        clientEmail: env.FIREBASE_CLIENT_EMAIL,
-        privateKey: env.FIREBASE_PRIVATE_KEY,
-      }),
-    });
-    return firebaseApp;
+  // 3. Individual Environment Variables
+  const projectId = env.FIREBASE_PROJECT_ID || 'flirttime-de302';
+  const clientEmail = env.FIREBASE_CLIENT_EMAIL;
+  let privateKey = env.FIREBASE_PRIVATE_KEY;
+
+  if (clientEmail && privateKey) {
+    privateKey = privateKey
+      .replace(/^["']|["']$/g, '')
+      .replace(/\\n/g, '\n');
+
+    try {
+      firebaseApp = initializeApp({
+        credential: cert({
+          projectId,
+          clientEmail,
+          privateKey,
+        }),
+      });
+      console.log(`[Firebase] Initialized Admin SDK with credentials for project: ${projectId}`);
+      return firebaseApp;
+    } catch (certErr: any) {
+      console.error('[Firebase] Failed to initialize with environment credentials:', certErr.message);
+    }
   }
 
-  // 3. Fallback to default project configuration
+  // 4. Fallback to default project configuration with clear warning
+  console.warn(
+    '⚠️ [Firebase] No service account key found! To send FCM push notifications to flirttime-de302, place firebase-service-account.json in the project root or set FIREBASE_SERVICE_ACCOUNT_JSON in .env'
+  );
   try {
     firebaseApp = initializeApp({
-      projectId: env.FIREBASE_PROJECT_ID || 'flirttime',
+      projectId: env.FIREBASE_PROJECT_ID || 'flirttime-de302',
     });
     return firebaseApp;
   } catch (err: any) {

@@ -7,6 +7,13 @@ import {
   extractS3Key,
 } from './s3.service';
 import { extractAudioDuration } from '../utils/audioDuration';
+import {
+  isOnboardingStep,
+  nextOnboardingStep,
+  OnboardingStepName,
+  resolveCurrentStep,
+  stepRank,
+} from '../utils/onboardingStep';
 
 export class OnboardingServiceError extends Error {
   public statusCode: number;
@@ -23,7 +30,6 @@ export class OnboardingServiceError extends Error {
 
 export class OnboardingService {
   public static readonly MIN_PHOTOS_COUNT = 3;
-  public static readonly MAX_PHOTOS_COUNT = 5;
   private static readonly MAX_AUDIO_DURATION_SECONDS = 60; // 60s max voice prompt
 
   /**
@@ -201,19 +207,11 @@ export class OnboardingService {
 
     const totalCount = files.length + validKeys.length;
 
-    if (totalCount < OnboardingService.MIN_PHOTOS_COUNT) {
+    if (totalCount < 1) {
       throw new OnboardingServiceError(
-        `You must upload at least ${OnboardingService.MIN_PHOTOS_COUNT} photos (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
+        'No photos provided. Please upload at least one photo.',
         400,
-        'MIN_PHOTOS_REQUIRED'
-      );
-    }
-
-    if (totalCount > OnboardingService.MAX_PHOTOS_COUNT) {
-      throw new OnboardingServiceError(
-        `Maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed (minimum ${OnboardingService.MIN_PHOTOS_COUNT} and maximum ${OnboardingService.MAX_PHOTOS_COUNT} photos allowed)`,
-        400,
-        'MAX_PHOTOS_EXCEEDED'
+        'PHOTOS_REQUIRED'
       );
     }
 
@@ -373,6 +371,13 @@ export class OnboardingService {
         status: p.status,
       }));
 
+      if (savedPhotos.length >= OnboardingService.MIN_PHOTOS_COUNT) {
+        await this.moveToNextStep(user, 'photos');
+      } else if (stepRank(user.onboardingStep) < stepRank('photos')) {
+        user.onboardingStep = 'photos';
+        await user.save();
+      }
+
       return {
         photos: formatted,
         photo: formatted[0],
@@ -526,6 +531,12 @@ export class OnboardingService {
 
         // Update user's main profilePicture column
         user.profilePicture = s3Key;
+        if (user.isFaceVerified || user.onboardingStep === 'completed') {
+          user.onboardingStep = 'completed';
+          user.isProfileComplete = true;
+        } else {
+          user.onboardingStep = 'gesture';
+        }
         await user.save({ transaction });
 
         return {
@@ -536,6 +547,7 @@ export class OnboardingService {
           imageUrl: formatMediaUrl(photo.imageUrl),
           thumbnailUrl: formatThumbnailUrl(photo.imageUrl),
           isPrimary: photo.isPrimary,
+          currentStep: user.onboardingStep,
         };
       });
 
@@ -703,45 +715,74 @@ export class OnboardingService {
   public async getProgress(userId: string) {
     const user = await this.getUserOrThrow(userId);
 
-    const [interestCount, photoCount] = await Promise.all([
-      UserInterest.count({ where: { userId } }),
-      UserPhoto.count({ where: { userId } }),
-    ]);
-
+    const photoCount = await UserPhoto.count({ where: { userId } });
     const steps = {
       basicInfo: !!(user.fullName && user.dateOfBirth && user.gender),
-      preferences: !!user.lookingFor,
-      genderPreference: !!user.genderPreference,
-      religion: user.religion !== undefined, // Optional/can be skipped
-      interests: interestCount >= 1,
-      photos: photoCount >= OnboardingService.MIN_PHOTOS_COUNT,
-      audio: !!user.voicePromptUrl, // Optional
-      faceVerification: !!user.isFaceVerified,
+      photos: photoCount >= 1 || !!user.profilePicture,
+      gesture: !!user.isFaceVerified,
     };
 
-    // Required steps for complete onboarding
-    const requiredSteps = [
-      steps.basicInfo,
-      steps.preferences,
-      steps.genderPreference,
-      steps.interests,
-      steps.photos,
-    ];
+    const currentStep = resolveCurrentStep(user.onboardingStep, steps);
+    const isCompleted = currentStep === 'completed';
+    const completedCount = [steps.basicInfo, steps.photos, steps.gesture].filter(Boolean).length;
+    const completionPercentage = isCompleted
+      ? 100
+      : Math.round((completedCount / 3) * 100);
 
-    const completedRequired = requiredSteps.filter(Boolean).length;
-    const completionPercentage = Math.round((completedRequired / requiredSteps.length) * 100);
-    const isCompleted = completedRequired === requiredSteps.length;
-
+    let dirty = false;
+    if (user.onboardingStep !== currentStep) {
+      user.onboardingStep = currentStep;
+      dirty = true;
+    }
     if (isCompleted && !user.isProfileComplete) {
       user.isProfileComplete = true;
+      dirty = true;
+    }
+    if (dirty) {
       await user.save();
     }
 
     return {
       isCompleted,
       completionPercentage,
+      currentStep,
       steps,
     };
+  }
+
+  public async saveCurrentStep(userId: string, step: string) {
+    if (!isOnboardingStep(step)) {
+      throw new OnboardingServiceError('Invalid onboarding step', 400, 'INVALID_ONBOARDING_STEP');
+    }
+
+    const user = await this.getUserOrThrow(userId);
+    user.onboardingStep = step;
+    if (step === 'completed') {
+      user.isProfileComplete = true;
+    }
+    await user.save();
+
+    const progress = await this.getProgress(userId);
+    return { currentStep: progress.currentStep };
+  }
+
+  /**
+   * Moves the saved screen forward after a step is stored.
+   * A later screen is left in place.
+   */
+  private async moveToNextStep(user: User, completedStep: OnboardingStepName) {
+    if (user.isFaceVerified || user.onboardingStep === 'completed') {
+      user.onboardingStep = 'completed';
+      user.isProfileComplete = true;
+      await user.save();
+      return;
+    }
+
+    const next = nextOnboardingStep(completedStep);
+    if (stepRank(user.onboardingStep) < stepRank(next)) {
+      user.onboardingStep = next;
+    }
+    await user.save();
   }
 }
 

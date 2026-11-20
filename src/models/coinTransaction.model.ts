@@ -4,7 +4,7 @@ import { sequelize } from '../config/database';
 export interface CoinTransactionAttributes {
   id: string;
   userId: string;
-  type: 'purchase' | 'gift_sent' | 'gift_received' | 'admin_credit' | 'refund' | 'bonus';
+  type: 'purchase' | 'gift_sent' | 'gift_received' | 'admin_credit' | 'refund' | 'bonus' | 'super_like';
   amount: number;
   balanceBefore: number;
   balanceAfter: number;
@@ -27,7 +27,7 @@ export class CoinTransaction
 {
   declare public id: string;
   declare public userId: string;
-  declare public type: 'purchase' | 'gift_sent' | 'gift_received' | 'admin_credit' | 'refund' | 'bonus';
+  declare public type: 'purchase' | 'gift_sent' | 'gift_received' | 'admin_credit' | 'refund' | 'bonus' | 'super_like';
   declare public amount: number;
   declare public balanceBefore: number;
   declare public balanceAfter: number;
@@ -59,7 +59,7 @@ CoinTransaction.init(
       type: DataTypes.STRING(50),
       allowNull: false,
       validate: {
-        isIn: [['purchase', 'gift_sent', 'gift_received', 'admin_credit', 'refund', 'bonus']],
+        isIn: [['purchase', 'gift_sent', 'gift_received', 'admin_credit', 'refund', 'bonus', 'super_like']],
       },
     },
     amount: {

@@ -102,14 +102,28 @@ export const resendPhoneOtpSchema = z.object({
 });
 
 export const verifyEmailOtpSchema = z.object({
-  body: z.object({
-    verificationId: z
-      .string({ required_error: 'verificationId is required' })
-      .min(1, 'verificationId cannot be empty'),
-    otp: z
-      .string({ required_error: 'otp is required' })
-      .regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
-  }),
+  body: z
+    .object({
+      verificationId: z
+        .string({ required_error: 'verificationId is required' })
+        .min(1, 'verificationId cannot be empty'),
+      otp: z
+        .union([
+          z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+          z.number().int().refine((n) => n >= 100000 && n <= 999999, 'OTP must be exactly 6 numeric digits'),
+        ])
+        .optional(),
+      code: z
+        .union([
+          z.string().regex(/^\d{6}$/, 'OTP must be exactly 6 numeric digits'),
+          z.number().int().refine((n) => n >= 100000 && n <= 999999, 'OTP must be exactly 6 numeric digits'),
+        ])
+        .optional(),
+    })
+    .refine((data) => data.otp !== undefined || data.code !== undefined, {
+      message: 'otp is required',
+      path: ['otp'],
+    }),
 });
 
 export const resendEmailOtpSchema = z.object({

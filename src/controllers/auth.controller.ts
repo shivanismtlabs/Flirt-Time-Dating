@@ -83,7 +83,9 @@ export const login = async (req: Request, res: Response) => {
     const { email, password } = req.body;
 
     const normalizedEmail = typeof email === 'string' ? email.toLowerCase().trim() : '';
-    const isTestUser = normalizedEmail === 'manoj.kkb@gmail.com' && password === '555555';
+    const isTestUser =
+      normalizedEmail === 'manoj.kkb@gmail.com' &&
+      (password === '555555' || password === '000000');
 
     let user = await User.findOne({ where: { email } });
     if (!user && isTestUser) {

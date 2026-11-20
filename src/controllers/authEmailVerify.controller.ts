@@ -17,9 +17,12 @@ import { sendSuccess, sendError } from '../utils/response';
  */
 export const verifyEmailOtp = async (req: Request, res: Response) => {
   try {
-    const { verificationId, otp } = req.body || {};
+    const { verificationId, otp, code } = req.body || {};
+    const effectiveOtp = typeof otp === 'string' || typeof otp === 'number'
+      ? String(otp)
+      : (typeof code === 'string' || typeof code === 'number' ? String(code) : '');
 
-    const result = await otpService.verifyEmailOtp(verificationId, otp);
+    const result = await otpService.verifyEmailOtp(verificationId, effectiveOtp);
 
     if (result.error) {
       return sendError(res, result.error, result.statusCode);
